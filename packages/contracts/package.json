@@ -1,0 +1,13 @@
+{
+  "name": "@ros/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "echo 'pending'",
+    "test": "echo 'no runtime tests yet'",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": { "typescript": "^5.7.2" }
+}

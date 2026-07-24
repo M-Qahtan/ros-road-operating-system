@@ -1,0 +1,12 @@
+{
+  "name": "@ros/operations-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "echo 'dashboard implementation starts after core domain'",
+    "dev": "echo 'dashboard implementation starts after core domain'",
+    "lint": "echo 'pending'",
+    "test": "echo 'pending'",
+    "typecheck": "echo 'pending'"
+  }
+}
