@@ -7,7 +7,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "echo 'lint configured in foundation follow-up'",
+    "lint": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/**/*.spec.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
