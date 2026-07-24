@@ -1,0 +1,19 @@
+{
+  "name": "@ros/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --watch dist/main.js",
+    "lint": "echo 'lint configured in foundation follow-up'",
+    "test": "node --test dist/**/*.spec.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ros/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

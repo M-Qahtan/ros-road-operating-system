@@ -1,0 +1,23 @@
+name: Risk or safety concern
+description: Record a product, safety, security, data or operational risk
+title: "[Risk] "
+labels: ["risk"]
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Failure scenario
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and affected parties
+    validations:
+      required: true
+  - type: textarea
+    id: control
+    attributes:
+      label: Proposed controls
+    validations:
+      required: true
