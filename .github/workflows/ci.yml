@@ -24,9 +24,9 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
+      - run: pnpm build
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm build
       - run: pnpm test
 
   postgres-integration:
