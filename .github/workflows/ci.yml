@@ -108,3 +108,24 @@ jobs:
           docker compose -f infrastructure/docker/docker-compose.yml logs --no-color
       - if: always()
         run: docker compose -f infrastructure/docker/docker-compose.yml down -v
+
+  riyadh-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Run deterministic Riyadh vertical slice
+        run: pnpm simulate:riyadh | tee riyadh-pilot-result.json
+      - name: Upload pilot evidence package
+        uses: actions/upload-artifact@v4
+        with:
+          name: riyadh-pilot-evidence
+          path: |
+            riyadh-pilot-result.json
+            docs/08-pilot-riyadh/pilot-e2e-readiness.md
+          if-no-files-found: error
