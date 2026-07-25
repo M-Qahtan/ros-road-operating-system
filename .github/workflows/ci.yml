@@ -54,3 +54,57 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Validate migrations and persistence invariants
         run: bash scripts/run-postgres-integration.sh
+      - name: Prove backup and clean restore
+        run: |
+          createdb -h localhost -U ros ros_restore
+          BACKUP_DIR="$RUNNER_TEMP/backups" bash scripts/postgres-backup.sh
+          BACKUP_FILE=$(find "$RUNNER_TEMP/backups" -name '*.dump' -type f | head -1)
+          RESTORE_DATABASE_URL=postgresql://ros:ros-integration-password@localhost:5432/ros_restore BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh
+        env:
+          PGPASSWORD: ros-integration-password
+
+  staging-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      POSTGRES_USER: ros
+      POSTGRES_PASSWORD: C1RosPgA9x7Lm4Qv2Np8Z
+      POSTGRES_DB: ros
+      DATABASE_URL: postgresql://ros:C1RosPgA9x7Lm4Qv2Np8Z@postgres:5432/ros
+      REDIS_PASSWORD: R7RedisA4x9Lm2Qv8Np6K
+      REDIS_URL: redis://:R7RedisA4x9Lm2Qv8Np6K@redis:6379
+      MINIO_ROOT_USER: ros-ci
+      MINIO_ROOT_PASSWORD: M8MinioA4x9Lm2Qv7Np6K
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_ACCESS_KEY: ros-ci
+      OBJECT_STORAGE_SECRET_KEY: O9ObjectA4x7Lm2Qv8Np6Kz5Ty3Rs8Bc1
+      OBJECT_STORAGE_BUCKET: ros-evidence
+      JWT_SECRET: J4JwtA9x7Lm2Qv8Np6Kz5Ty3Rs1Bc0De
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate secrets and compose configuration
+        run: |
+          bash scripts/validate-environment.sh
+          docker compose -f infrastructure/docker/docker-compose.yml config --quiet
+      - name: Start dependency and application stack
+        run: docker compose -f infrastructure/docker/docker-compose.yml up -d --build
+      - name: Verify services, liveness and readiness
+        run: |
+          for attempt in $(seq 1 20); do
+            if timeout 5s docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/health', {signal: AbortSignal.timeout(2000)}).then(r=>{if(!r.ok)process.exit(1)})"; then
+              break
+            fi
+            if [[ "$attempt" == "20" ]]; then exit 1; fi
+            sleep 2
+          done
+          docker compose -f infrastructure/docker/docker-compose.yml ps --status running --services | sort > "$RUNNER_TEMP/running"
+          printf 'api\nminio\npostgres\nredis\n' > "$RUNNER_TEMP/expected"
+          diff -u "$RUNNER_TEMP/expected" "$RUNNER_TEMP/running"
+          timeout 10s docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/ready', {signal: AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1);return r.text()}).then(console.log)"
+      - name: Show diagnostics on failure
+        if: failure()
+        run: |
+          docker compose -f infrastructure/docker/docker-compose.yml ps
+          docker compose -f infrastructure/docker/docker-compose.yml logs --no-color
+      - if: always()
+        run: docker compose -f infrastructure/docker/docker-compose.yml down -v
