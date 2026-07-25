@@ -38,8 +38,8 @@ export class OperationsDashboardController {
   ) {}
 
   get state(): DashboardState { return this.current; }
-  canAuthorizeClosure(): boolean { return this.session.roles.includes('SUPERVISOR'); }
-  canTransition(): boolean { return this.session.roles.some((role) => role === 'OPERATOR' || role === 'SUPERVISOR'); }
+  canAuthorizeClosure(): boolean { return !this.current.stale && this.session.roles.includes('SUPERVISOR'); }
+  canTransition(): boolean { return !this.current.stale && this.session.roles.some((role) => role === 'OPERATOR' || role === 'SUPERVISOR'); }
 
   async load(): Promise<DashboardState> {
     this.current = { ...this.current, phase: 'loading', error: null };
@@ -88,7 +88,7 @@ export class OperationsDashboardController {
 
   async transition(nextStatus: RoadEventStatusContract, reason: string): Promise<DashboardState> {
     const selected = this.requireSelected();
-    if (!this.canTransition()) throw new Error('لا تملك صلاحية تغيير حالة الحدث');
+    if (!this.canTransition()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تنفيذ قرار حرج' : 'لا تملك صلاحية تغيير حالة الحدث');
     const normalizedReason = this.requireReason(reason);
     const request: TransitionRoadEventRequest = { expectedVersion: selected.version, nextStatus, reason: normalizedReason };
     const updated = await this.gateway.transition(selected.id, request);
@@ -97,7 +97,7 @@ export class OperationsDashboardController {
 
   async authorizeClosure(reason: string): Promise<DashboardState> {
     const selected = this.requireSelected();
-    if (!this.canAuthorizeClosure()) throw new Error('تفويض إغلاق S3/S4 متاح للمشرف فقط');
+    if (!this.canAuthorizeClosure()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تفويض الإغلاق' : 'تفويض إغلاق S3/S4 متاح للمشرف فقط');
     const request: AuthorizeClosureRequest = {
       expectedVersion: selected.version,
       reason: this.requireReason(reason),
@@ -146,7 +146,6 @@ export function deriveHumanSafetyStatus(event: RoadEventResponse, timeline: read
 
 export function attachedSignalIds(timeline: readonly AuditTimelineEntryContract[]): readonly string[] {
   return timeline.flatMap((entry) => {
-    if (!entry.action.includes('signal')) return [];
     const candidate = entry.afterState?.signalId;
     return typeof candidate === 'string' ? [candidate] : [];
   });
