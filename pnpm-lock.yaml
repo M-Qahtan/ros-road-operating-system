@@ -33,7 +33,15 @@ importers:
 
   apps/mobile: {}
 
-  apps/operations-dashboard: {}
+  apps/operations-dashboard:
+    dependencies:
+      '@ros/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/contracts:
     devDependencies:

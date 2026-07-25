@@ -2,7 +2,18 @@
   "name": "@ros/operations-dashboard",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "echo 'dashboard implementation starts after core domain'"
+    "build": "tsc -p tsconfig.json",
+    "dev": "node dist/server.js",
+    "lint": "pnpm --filter @ros/contracts build && tsc -p tsconfig.json --noEmit",
+    "test": "node --test $(find dist -name '*.spec.js' -print | sort)",
+    "typecheck": "pnpm --filter @ros/contracts build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ros/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
   }
 }
