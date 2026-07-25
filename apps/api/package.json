@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "node --watch dist/main.js",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/**/*.spec.js",
+    "test": "node --test $(find dist -name '*.spec.js' -print | sort)",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
