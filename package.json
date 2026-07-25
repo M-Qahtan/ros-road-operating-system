@@ -12,7 +12,8 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "verify": "node scripts/verify-repository.mjs"
+    "verify": "node scripts/verify-repository.mjs",
+    "simulate:riyadh": "pnpm --filter @ros/api simulate:riyadh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
