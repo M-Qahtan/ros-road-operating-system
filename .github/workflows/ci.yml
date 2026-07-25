@@ -87,11 +87,14 @@ jobs:
           bash scripts/validate-environment.sh
           docker compose -f infrastructure/docker/docker-compose.yml config --quiet
       - name: Start dependency and application stack
-        run: docker compose -f infrastructure/docker/docker-compose.yml up -d --build --wait --wait-timeout 120
-      - name: Verify liveness and readiness
+        run: docker compose -f infrastructure/docker/docker-compose.yml up -d --build
+      - name: Verify services, liveness and readiness
         run: |
-          curl --connect-timeout 2 --max-time 5 --fail --silent --show-error http://127.0.0.1:3000/health
-          curl --connect-timeout 2 --max-time 5 --fail --silent --show-error http://127.0.0.1:3000/ready
+          docker compose -f infrastructure/docker/docker-compose.yml ps --status running --services | sort > "$RUNNER_TEMP/running"
+          printf 'api\nminio\npostgres\nredis\n' > "$RUNNER_TEMP/expected"
+          diff -u "$RUNNER_TEMP/expected" "$RUNNER_TEMP/running"
+          docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/health', {signal: AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1);return r.text()}).then(console.log)"
+          docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/ready', {signal: AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1);return r.text()}).then(console.log)"
       - name: Show diagnostics on failure
         if: failure()
         run: |
