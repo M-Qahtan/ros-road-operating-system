@@ -20,6 +20,10 @@ for migration in database/migrations/*.sql; do
 done
 
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/seeds/0001_local_road_events.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/tests/road_event_persistence.sql
 
-echo "PostgreSQL/PostGIS RoadEvent persistence integration checks passed"
+for test_file in database/tests/*.sql; do
+  echo "Running ${test_file}"
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$test_file"
+done
+
+echo "PostgreSQL/PostGIS integration checks passed"
