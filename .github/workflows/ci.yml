@@ -90,17 +90,17 @@ jobs:
         run: docker compose -f infrastructure/docker/docker-compose.yml up -d --build
       - name: Verify services, liveness and readiness
         run: |
-          for attempt in $(seq 1 30); do
-            if docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/health', {signal: AbortSignal.timeout(2000)}).then(r=>{if(!r.ok)process.exit(1)})"; then
+          for attempt in $(seq 1 20); do
+            if timeout 5s docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/health', {signal: AbortSignal.timeout(2000)}).then(r=>{if(!r.ok)process.exit(1)})"; then
               break
             fi
-            if [[ "$attempt" == "30" ]]; then exit 1; fi
+            if [[ "$attempt" == "20" ]]; then exit 1; fi
             sleep 2
           done
           docker compose -f infrastructure/docker/docker-compose.yml ps --status running --services | sort > "$RUNNER_TEMP/running"
           printf 'api\nminio\npostgres\nredis\n' > "$RUNNER_TEMP/expected"
           diff -u "$RUNNER_TEMP/expected" "$RUNNER_TEMP/running"
-          docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/ready', {signal: AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1);return r.text()}).then(console.log)"
+          timeout 10s docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/ready', {signal: AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1);return r.text()}).then(console.log)"
       - name: Show diagnostics on failure
         if: failure()
         run: |
