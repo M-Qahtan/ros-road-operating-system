@@ -28,3 +28,29 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: ros
+          POSTGRES_PASSWORD: ros-integration-password
+          POSTGRES_DB: ros
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ros -d ros"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://ros:ros-integration-password@localhost:5432/ros
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Validate migrations and persistence invariants
+        run: bash scripts/run-postgres-integration.sh
