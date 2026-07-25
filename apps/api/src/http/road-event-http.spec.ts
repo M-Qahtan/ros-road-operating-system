@@ -36,12 +36,16 @@ function request(overrides: Partial<HttpRequest>): HttpRequest {
   };
 }
 
+const validCreateBody = {
+  id: EVENT_ID,
+  occurredAt: '2026-07-25T03:00:00.000Z',
+  latitude: 24.7136,
+  longitude: 46.6753
+};
+
 test('HTTP create and detail endpoints return stable envelopes', async () => {
   const handle = fixture();
-  const created = await handle(request({
-    method: 'POST',
-    body: { id: EVENT_ID, occurredAt: '2026-07-25T03:00:00.000Z', latitude: 24.7136, longitude: 46.6753 }
-  }));
+  const created = await handle(request({ method: 'POST', body: validCreateBody }));
   assert.equal(created.status, 201);
   assert.equal((created.body as { success: boolean }).success, true);
 
@@ -52,7 +56,11 @@ test('HTTP create and detail endpoints return stable envelopes', async () => {
 
 test('HTTP authorization, validation, conflict and not-found errors are explicit', async () => {
   const handle = fixture();
-  const forbidden = await handle(request({ headers: { 'x-actor-id': ACTOR_ID, 'x-ros-roles': 'AUDITOR' }, method: 'POST', body: {} }));
+  const forbidden = await handle(request({
+    headers: { 'x-actor-id': ACTOR_ID, 'x-ros-roles': 'AUDITOR', 'idempotency-key': 'forbidden-key-0001' },
+    method: 'POST',
+    body: validCreateBody
+  }));
   assert.equal(forbidden.status, 403);
 
   const invalid = await handle(request({ method: 'POST', body: { id: 'bad' } }));
@@ -61,15 +69,14 @@ test('HTTP authorization, validation, conflict and not-found errors are explicit
   const missing = await handle(request({ method: 'GET', path: '/api/v1/road-events/99999999-9999-4999-8999-999999999999' }));
   assert.equal(missing.status, 404);
 
-  const body = { id: EVENT_ID, occurredAt: '2026-07-25T03:00:00.000Z', latitude: 24.7136, longitude: 46.6753 };
-  await handle(request({ method: 'POST', body }));
-  const conflict = await handle(request({ method: 'POST', body: { ...body, latitude: 25 } }));
+  await handle(request({ method: 'POST', body: validCreateBody }));
+  const conflict = await handle(request({ method: 'POST', body: { ...validCreateBody, latitude: 25 } }));
   assert.equal(conflict.status, 409);
 });
 
 test('timeline requires auditor or supervisor permission', async () => {
   const handle = fixture();
-  await handle(request({ method: 'POST', body: { id: EVENT_ID, occurredAt: '2026-07-25T03:00:00.000Z', latitude: 24.7136, longitude: 46.6753 } }));
+  await handle(request({ method: 'POST', body: validCreateBody }));
 
   const denied = await handle(request({ method: 'GET', path: `/api/v1/road-events/${EVENT_ID}/timeline` }));
   assert.equal(denied.status, 403);
