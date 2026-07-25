@@ -9,6 +9,7 @@ import {
   MemorySignalAttachmentAdapter,
   RoleMatrixAuthorizationAdapter
 } from './local-adapters.js';
+import { AuthenticatedActor } from './ports.js';
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
@@ -27,10 +28,10 @@ function createFixture() {
   return { repository, signals, service };
 }
 
-const operator = { actorId: ACTOR_ID, roles: ['OPERATOR'] as const };
-const supervisor = { actorId: ACTOR_ID, roles: ['SUPERVISOR'] as const };
+const operator: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'] };
+const supervisor: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['SUPERVISOR'] };
 
-function context(key: string, actor = operator) {
+function context(key: string, actor: AuthenticatedActor = operator) {
   return { actor, traceId: TRACE_ID, idempotencyKey: key };
 }
 
