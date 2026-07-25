@@ -8,7 +8,8 @@
     "dev": "node --watch dist/main.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "node --test $(find dist -name '*.spec.js' -print | sort)",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "simulate:riyadh": "pnpm build && node dist/e2e/run-riyadh-pilot.js"
   },
   "dependencies": {
     "@ros/contracts": "workspace:*",
