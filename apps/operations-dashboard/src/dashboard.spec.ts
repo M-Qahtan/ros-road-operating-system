@@ -49,10 +49,12 @@ test('permission and stale states are explicit and fail closed', async () => {
   await controller.select(roadEvent.id);
   assert.equal(controller.canTransition(), false);
   assert.equal(controller.canAuthorizeClosure(), false);
-  const later = new Date('2026-07-25T03:10:02.000Z');
-  const staleController = new OperationsDashboardController(new FakeGateway(), { roles: ['AUDITOR'], staleAfterMs: 1000 }, () => later);
+
+  const staleController = new OperationsDashboardController(new FakeGateway(), { roles: ['SUPERVISOR'], staleAfterMs: 1000 }, () => new Date('2026-07-25T03:10:00.000Z'));
   await staleController.load();
-  const html = renderDashboard({ ...staleController.state, stale: true }, { canTransition: false, canAuthorizeClosure: false, now: later });
+  await staleController.select(roadEvent.id);
+  const staleState = { ...staleController.state, stale: true };
+  const html = renderDashboard(staleState, { canTransition: false, canAuthorizeClosure: false, now: new Date('2026-07-25T03:10:02.000Z') });
   assert.match(html, /البيانات قديمة/);
   assert.match(html, /disabled/);
 });
