@@ -13,7 +13,7 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "verify": "node scripts/verify-repository.mjs",
-    "simulate:riyadh": "pnpm --filter @ros/api simulate:riyadh"
+    "simulate:riyadh": "pnpm build && node apps/api/dist/e2e/run-riyadh-pilot.js"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
