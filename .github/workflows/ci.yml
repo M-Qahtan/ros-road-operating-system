@@ -90,10 +90,17 @@ jobs:
         run: docker compose -f infrastructure/docker/docker-compose.yml up -d --build
       - name: Verify liveness and readiness
         run: |
-          for attempt in $(seq 1 30); do curl -fsS http://localhost:3000/health && break || sleep 2; done
-          curl -fsS http://localhost:3000/ready
+          healthy=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/health; then healthy=true; break; fi
+            sleep 2
+          done
+          [[ "$healthy" == "true" ]]
+          curl --fail --silent --show-error http://127.0.0.1:3000/ready
       - name: Show diagnostics on failure
         if: failure()
-        run: docker compose -f infrastructure/docker/docker-compose.yml logs --no-color
+        run: |
+          docker compose -f infrastructure/docker/docker-compose.yml ps
+          docker compose -f infrastructure/docker/docker-compose.yml logs --no-color
       - if: always()
         run: docker compose -f infrastructure/docker/docker-compose.yml down -v
