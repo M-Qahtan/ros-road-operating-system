@@ -24,9 +24,17 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
+      - name: Build workspace
+        run: pnpm build > build.log 2>&1
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-build-log
+          path: build.log
+          if-no-files-found: error
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm build
       - run: pnpm test
 
   postgres-integration:
@@ -108,3 +116,28 @@ jobs:
           docker compose -f infrastructure/docker/docker-compose.yml logs --no-color
       - if: always()
         run: docker compose -f infrastructure/docker/docker-compose.yml down -v
+
+  riyadh-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Run deterministic Riyadh vertical slice
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm simulate:riyadh | tee riyadh-pilot-result.json
+      - name: Upload pilot evidence package
+        uses: actions/upload-artifact@v4
+        with:
+          name: riyadh-pilot-evidence
+          path: |
+            riyadh-pilot-result.json
+            artifacts/riyadh-pilot/result.json
+            docs/08-pilot-riyadh/pilot-e2e-readiness.md
+          if-no-files-found: error
