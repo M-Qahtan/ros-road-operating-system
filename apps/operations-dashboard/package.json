@@ -6,9 +6,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "node dist/server.js",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "lint": "pnpm --filter @ros/contracts build && tsc -p tsconfig.json --noEmit",
     "test": "node --test $(find dist -name '*.spec.js' -print | sort)",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "pnpm --filter @ros/contracts build && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@ros/contracts": "workspace:*"
