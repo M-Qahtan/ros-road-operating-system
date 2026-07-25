@@ -1,11 +1,5 @@
 {
   "name": "@ros/observability",
   "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "build": "echo 'observability adapter follows API foundation'",
-    "lint": "echo 'pending'",
-    "test": "echo 'pending'",
-    "typecheck": "echo 'pending'"
-  }
+  "private": true
 }

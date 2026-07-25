@@ -1,11 +1,12 @@
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { parsePort } from './config.js';
+import { applySecurityHeaders, resolveTraceId } from './request-security.js';
 
-const port = Number(process.env.PORT ?? 3000);
+const port = parsePort(process.env.PORT);
 
-const server = createServer((request, response) => {
-  const traceId = request.headers['x-trace-id']?.toString() ?? randomUUID();
-  response.setHeader('content-type', 'application/json');
+const server = createServer({ maxHeaderSize: 16 * 1024 }, (request, response) => {
+  const traceId = resolveTraceId(request.headers['x-trace-id']);
+  applySecurityHeaders(response);
   response.setHeader('x-trace-id', traceId);
 
   if (request.url === '/health' && request.method === 'GET') {
@@ -17,6 +18,11 @@ const server = createServer((request, response) => {
   response.writeHead(404);
   response.end(JSON.stringify({ success: false, error: { code: 'NOT_FOUND' }, traceId }));
 });
+
+server.requestTimeout = 10_000;
+server.headersTimeout = 5_000;
+server.keepAliveTimeout = 5_000;
+server.maxRequestsPerSocket = 100;
 
 server.listen(port, () => {
   console.log(JSON.stringify({ level: 'info', message: 'ROS API listening', port }));

@@ -3,10 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "echo 'mobile implementation starts after API contracts'",
-    "dev": "echo 'mobile implementation starts after API contracts'",
-    "lint": "echo 'pending'",
-    "test": "echo 'pending'",
-    "typecheck": "echo 'pending'"
+    "dev": "echo 'mobile implementation starts after API contracts'"
   }
 }
