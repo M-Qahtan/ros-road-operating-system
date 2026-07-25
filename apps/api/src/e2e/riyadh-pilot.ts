@@ -158,7 +158,7 @@ export async function runRiyadhPilotSimulation(): Promise<RiyadhPilotResult> {
   if (page.total !== 1 || detail.status !== RoadEventStatus.Closed) throw new Error('dashboard read model did not reach final state');
   return {
     roadEventId: EVENT_ID,
-    finalStatus: current.status,
+    finalStatus: current.status as RoadEventStatus,
     finalVersion: current.version,
     attachedSignals: signals.attachments.length,
     notifications: outbox.values().length,
@@ -168,7 +168,7 @@ export async function runRiyadhPilotSimulation(): Promise<RiyadhPilotResult> {
     duplicateSignalStable: signals.attachments.length === 2,
     recoverySucceeded,
     auditActions: timeline.map((entry) => entry.action),
-    dashboard: { status: detail.status, severity: detail.severity.level, stale: false },
+    dashboard: { status: detail.status as RoadEventStatus, severity: detail.severity.level as SeverityLevel, stale: false },
     performanceMs: { create: createMs, list: listMs, detail: detailMs }
   };
 }
