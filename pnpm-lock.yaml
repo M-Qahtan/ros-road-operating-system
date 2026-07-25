@@ -20,6 +20,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@ros/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@ros/domain':
         specifier: workspace:*
         version: link:../../packages/domain

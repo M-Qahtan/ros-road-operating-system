@@ -1,0 +1,134 @@
+openapi: 3.1.0
+info:
+  title: ROS RoadEvent API
+  version: 0.1.0
+  description: Safety-first command/query API for the Riyadh MVP. Local identity headers model claims that will later be supplied by OIDC middleware.
+servers:
+  - url: http://localhost:3000
+components:
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://identity.example.invalid/.well-known/openid-configuration
+  parameters:
+    TraceId:
+      in: header
+      name: X-Trace-Id
+      schema: { type: string, maxLength: 64 }
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    EventId:
+      in: path
+      name: roadEventId
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    Severity:
+      type: object
+      required: [level, score, confidence, reasonCodes, requiresHumanReview]
+      properties:
+        level: { type: string, enum: [S0, S1, S2, S3, S4] }
+        score: { type: number, minimum: 0, maximum: 100 }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        reasonCodes: { type: array, minItems: 1, items: { type: string } }
+        requiresHumanReview: { type: boolean }
+    RoadEvent:
+      type: object
+      required: [id, status, severity, latitude, longitude, occurredAt, version, closureAuthorization]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DETECTED, VALIDATING, CONFIRMED, SAFETY_ASSESSMENT, RESPONSE_COORDINATION, ROAD_CLEARANCE, RECOVERY, CLOSED, FALSE_POSITIVE, DUPLICATE, UNDER_REVIEW, TRANSFERRED_TO_AUTHORITY]
+        severity: { $ref: '#/components/schemas/Severity' }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        occurredAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+        closureAuthorization:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [actorId, reason, authorizedAt]
+              properties:
+                actorId: { type: string, format: uuid }
+                reason: { type: string }
+                authorizedAt: { type: string, format: date-time }
+    Envelope:
+      type: object
+      required: [success, data, error, traceId]
+      properties:
+        success: { type: boolean }
+        data: {}
+        error:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [code, message]
+              properties:
+                code: { type: string }
+                message: { type: string }
+        traceId: { type: string }
+security:
+  - oidc: []
+paths:
+  /api/v1/road-events:
+    post:
+      summary: Create a RoadEvent
+      parameters:
+        - $ref: '#/components/parameters/TraceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Envelope' } } } }
+        '400': { description: Validation error }
+        '403': { description: Forbidden }
+        '409': { description: Duplicate or idempotency conflict }
+    get:
+      summary: List RoadEvents
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: severity, schema: { type: string } }
+        - { in: query, name: occurredFrom, schema: { type: string, format: date-time } }
+        - { in: query, name: occurredTo, schema: { type: string, format: date-time } }
+        - { in: query, name: limit, schema: { type: integer, default: 20, minimum: 1, maximum: 100 } }
+        - { in: query, name: offset, schema: { type: integer, default: 0, minimum: 0 } }
+      responses:
+        '200': { description: Paginated RoadEvents }
+        '403': { description: Forbidden }
+  /api/v1/road-events/{roadEventId}:
+    get:
+      summary: Get RoadEvent details
+      parameters: [ { $ref: '#/components/parameters/EventId' } ]
+      responses:
+        '200': { description: RoadEvent details }
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+  /api/v1/road-events/{roadEventId}/severity:
+    post:
+      summary: Reassess severity
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: Updated }, '400': { description: Validation error }, '403': { description: Forbidden }, '409': { description: Version conflict } }
+  /api/v1/road-events/{roadEventId}/transition:
+    post:
+      summary: Transition or close RoadEvent
+      description: Closing S3/S4 is rejected until a supervisor authorization has been persisted.
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: Updated }, '400': { description: Illegal transition }, '403': { description: Forbidden }, '409': { description: Conflict or human authorization required } }
+  /api/v1/road-events/{roadEventId}/closure-authorization:
+    post:
+      summary: Authorize closure as supervisor
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: Authorized }, '403': { description: Supervisor role required }, '409': { description: Version conflict } }
+  /api/v1/road-events/{roadEventId}/signals:
+    post:
+      summary: Attach a correlated signal
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: Attached }, '400': { description: Validation error }, '403': { description: Forbidden }, '404': { description: RoadEvent not found } }
+  /api/v1/road-events/{roadEventId}/timeline:
+    get:
+      summary: Read immutable audit timeline
+      parameters: [ { $ref: '#/components/parameters/EventId' } ]
+      responses: { '200': { description: Timeline }, '403': { description: Auditor or supervisor role required }, '404': { description: RoadEvent not found } }
