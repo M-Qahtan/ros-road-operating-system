@@ -54,3 +54,46 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Validate migrations and persistence invariants
         run: bash scripts/run-postgres-integration.sh
+      - name: Prove backup and clean restore
+        run: |
+          createdb -h localhost -U ros ros_restore
+          BACKUP_DIR="$RUNNER_TEMP/backups" bash scripts/postgres-backup.sh
+          BACKUP_FILE=$(find "$RUNNER_TEMP/backups" -name '*.dump' -type f | head -1)
+          RESTORE_DATABASE_URL=postgresql://ros:ros-integration-password@localhost:5432/ros_restore BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh
+        env:
+          PGPASSWORD: ros-integration-password
+
+  staging-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      POSTGRES_USER: ros
+      POSTGRES_PASSWORD: ci-postgres-secret-value-12345
+      POSTGRES_DB: ros
+      DATABASE_URL: postgresql://ros:ci-postgres-secret-value-12345@postgres:5432/ros
+      REDIS_PASSWORD: ci-redis-secret-value-123456789
+      REDIS_URL: redis://:ci-redis-secret-value-123456789@redis:6379
+      MINIO_ROOT_USER: ros-ci
+      MINIO_ROOT_PASSWORD: ci-minio-secret-value-123456789
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_ACCESS_KEY: ros-ci
+      OBJECT_STORAGE_SECRET_KEY: ci-object-secret-value-123456789
+      OBJECT_STORAGE_BUCKET: ros-evidence
+      JWT_SECRET: ci-jwt-secret-value-12345678901234567890
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate secrets and compose configuration
+        run: |
+          bash scripts/validate-environment.sh
+          docker compose -f infrastructure/docker/docker-compose.yml config --quiet
+      - name: Start dependency and application stack
+        run: docker compose -f infrastructure/docker/docker-compose.yml up -d --build
+      - name: Verify liveness and readiness
+        run: |
+          for attempt in $(seq 1 30); do curl -fsS http://localhost:3000/health && break || sleep 2; done
+          curl -fsS http://localhost:3000/ready
+      - name: Show diagnostics on failure
+        if: failure()
+        run: docker compose -f infrastructure/docker/docker-compose.yml logs --no-color
+      - if: always()
+        run: docker compose -f infrastructure/docker/docker-compose.yml down -v
