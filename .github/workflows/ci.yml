@@ -27,18 +27,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
-      - name: Capture test diagnostics
-        id: tests
-        continue-on-error: true
-        run: pnpm test > test.log 2>&1
-      - uses: actions/upload-artifact@v4
-        if: steps.tests.outcome == 'failure'
-        with:
-          name: test-diagnostics
-          path: test.log
-      - name: Enforce test result
-        if: steps.tests.outcome == 'failure'
-        run: cat test.log && exit 1
+      - run: pnpm test
 
   postgres-integration:
     runs-on: ubuntu-latest
