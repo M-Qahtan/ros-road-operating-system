@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ros/contracts": "workspace:*",
     "@ros/domain": "workspace:*"
   },
   "devDependencies": {
