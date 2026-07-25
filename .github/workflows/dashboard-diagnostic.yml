@@ -1,0 +1,33 @@
+name: Dashboard diagnostic
+on:
+  pull_request:
+    paths:
+      - 'apps/operations-dashboard/**'
+      - 'packages/contracts/**'
+      - 'pnpm-lock.yaml'
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Capture TypeScript output
+        run: |
+          set +e
+          pnpm --filter @ros/operations-dashboard lint > dashboard-lint.txt 2>&1
+          status=$?
+          cat dashboard-lint.txt
+          echo "$status" > dashboard-lint-status.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-lint-diagnostic
+          path: |
+            dashboard-lint.txt
+            dashboard-lint-status.txt
