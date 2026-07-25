@@ -17,17 +17,21 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - name: Capture TypeScript output
+      - name: Capture dashboard checks
         run: |
           set +e
-          pnpm --filter @ros/operations-dashboard lint > dashboard-lint.txt 2>&1
-          status=$?
-          cat dashboard-lint.txt
-          echo "$status" > dashboard-lint-status.txt
+          pnpm --filter @ros/operations-dashboard lint > dashboard-check.txt 2>&1
+          lint_status=$?
+          pnpm --filter @ros/operations-dashboard build >> dashboard-check.txt 2>&1
+          build_status=$?
+          pnpm --filter @ros/operations-dashboard test >> dashboard-check.txt 2>&1
+          test_status=$?
+          cat dashboard-check.txt
+          printf 'lint=%s\nbuild=%s\ntest=%s\n' "$lint_status" "$build_status" "$test_status" > dashboard-check-status.txt
           exit 0
       - uses: actions/upload-artifact@v4
         with:
-          name: dashboard-lint-diagnostic
+          name: dashboard-check-diagnostic
           path: |
-            dashboard-lint.txt
-            dashboard-lint-status.txt
+            dashboard-check.txt
+            dashboard-check-status.txt
