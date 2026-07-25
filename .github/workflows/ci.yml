@@ -24,21 +24,21 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
-      - name: Capture lint diagnostics
-        id: lint
-        continue-on-error: true
-        run: pnpm lint > lint.log 2>&1
-      - uses: actions/upload-artifact@v4
-        if: steps.lint.outcome == 'failure'
-        with:
-          name: lint-diagnostics
-          path: lint.log
-      - name: Enforce lint result
-        if: steps.lint.outcome == 'failure'
-        run: cat lint.log && exit 1
+      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
-      - run: pnpm test
+      - name: Capture test diagnostics
+        id: tests
+        continue-on-error: true
+        run: pnpm test > test.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: steps.tests.outcome == 'failure'
+        with:
+          name: test-diagnostics
+          path: test.log
+      - name: Enforce test result
+        if: steps.tests.outcome == 'failure'
+        run: cat test.log && exit 1
 
   postgres-integration:
     runs-on: ubuntu-latest
