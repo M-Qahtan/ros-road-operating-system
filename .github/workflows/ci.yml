@@ -24,7 +24,18 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
-      - run: pnpm lint
+      - name: Capture lint diagnostics
+        id: lint
+        continue-on-error: true
+        run: pnpm lint > lint.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: steps.lint.outcome == 'failure'
+        with:
+          name: lint-diagnostics
+          path: lint.log
+      - name: Enforce lint result
+        if: steps.lint.outcome == 'failure'
+        run: cat lint.log && exit 1
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
