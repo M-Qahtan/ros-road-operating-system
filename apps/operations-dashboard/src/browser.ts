@@ -2,8 +2,9 @@ import { HttpRoadEventGateway } from './api-client.js';
 import { OperationsDashboardController } from './dashboard.js';
 import { renderDashboard } from './render.js';
 
-const root = document.querySelector<HTMLElement>('#app');
-if (root === null) throw new Error('Dashboard root is missing');
+const rootElement = document.querySelector<HTMLElement>('#app');
+if (rootElement === null) throw new Error('Dashboard root is missing');
+const appRoot: HTMLElement = rootElement;
 
 const roles = (document.documentElement.dataset.roles ?? 'OPERATOR').split(',') as ('OPERATOR' | 'SUPERVISOR' | 'AUDITOR' | 'INTEGRATION_SERVICE')[];
 const controller = new OperationsDashboardController(
@@ -13,17 +14,17 @@ const controller = new OperationsDashboardController(
 
 function paint(): void {
   controller.refreshStaleness();
-  root.innerHTML = renderDashboard(controller.state, {
+  appRoot.innerHTML = renderDashboard(controller.state, {
     canTransition: controller.canTransition(),
     canAuthorizeClosure: controller.canAuthorizeClosure(),
     now: new Date()
   });
-  root.querySelector('#refresh-button')?.addEventListener('click', () => { void reload(); });
-  root.querySelectorAll<HTMLElement>('[data-event-id]').forEach((button) => {
+  appRoot.querySelector('#refresh-button')?.addEventListener('click', () => { void reload(); });
+  appRoot.querySelectorAll<HTMLElement>('[data-event-id]').forEach((button) => {
     button.addEventListener('click', () => { void select(button.dataset.eventId ?? ''); });
   });
-  root.querySelector<HTMLFormElement>('#transition-form')?.addEventListener('submit', (event) => { void transition(event); });
-  root.querySelector<HTMLFormElement>('#closure-form')?.addEventListener('submit', (event) => { void authorizeClosure(event); });
+  appRoot.querySelector<HTMLFormElement>('#transition-form')?.addEventListener('submit', (event) => { void transition(event); });
+  appRoot.querySelector<HTMLFormElement>('#closure-form')?.addEventListener('submit', (event) => { void authorizeClosure(event); });
 }
 
 async function reload(): Promise<void> { await controller.load(); paint(); }
