@@ -9,7 +9,10 @@ import {
 import { parsePort } from './config.js';
 import { createRoadEventHttpHandler } from './http/road-event-http.js';
 import { applySecurityHeaders, resolveTraceId } from './request-security.js';
+import { evaluateReadiness, validateRuntimeEnvironment } from './runtime/operational-readiness.js';
+import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
 
+validateRuntimeEnvironment(process.env);
 const port = parsePort(process.env.PORT);
 const repository = new MemoryRoadEventRepository();
 const application = new RoadEventApplicationService(
@@ -41,28 +44,37 @@ const server = createServer({ maxHeaderSize: 16 * 1024 }, async (request, respon
 
   if (request.url === '/health' && request.method === 'GET') {
     response.writeHead(200);
-    response.end(JSON.stringify({ status: 'ok', service: 'ros-api', traceId }));
+    response.end(JSON.stringify({ status: 'alive', service: 'ros-api', traceId }));
+    return;
+  }
+
+  if (request.url === '/ready' && request.method === 'GET') {
+    const readiness = evaluateReadiness(process.env);
+    response.writeHead(readiness.status === 'ready' ? 200 : 503);
+    response.end(JSON.stringify({ ...readiness, service: 'ros-api', traceId }));
     return;
   }
 
   try {
-    const url = new URL(request.url ?? '/', 'http://localhost');
-    const query: Record<string, string | undefined> = {};
-    for (const [key, value] of url.searchParams.entries()) query[key] = value;
-    const headers: Record<string, string | undefined> = {};
-    for (const [key, value] of Object.entries(request.headers)) {
-      if (typeof value === 'string') headers[key] = value;
-    }
-    const result = await handleRoadEvent({
-      method: request.method ?? 'GET',
-      path: url.pathname,
-      query,
-      headers,
-      body: request.method === 'GET' || request.method === 'HEAD' ? null : await readJsonBody(request),
-      traceId
+    await withTraceBoundary('http.road_event', traceId, async () => {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      const query: Record<string, string | undefined> = {};
+      for (const [key, value] of url.searchParams.entries()) query[key] = value;
+      const headers: Record<string, string | undefined> = {};
+      for (const [key, value] of Object.entries(request.headers)) {
+        if (typeof value === 'string') headers[key] = value;
+      }
+      const result = await handleRoadEvent({
+        method: request.method ?? 'GET',
+        path: url.pathname,
+        query,
+        headers,
+        body: request.method === 'GET' || request.method === 'HEAD' ? null : await readJsonBody(request),
+        traceId
+      });
+      response.writeHead(result.status);
+      response.end(JSON.stringify(result.body));
     });
-    response.writeHead(result.status);
-    response.end(JSON.stringify(result.body));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Invalid request';
     response.writeHead(400);
@@ -76,11 +88,7 @@ server.keepAliveTimeout = 5_000;
 server.maxRequestsPerSocket = 100;
 
 server.listen(port, () => {
-  console.log(JSON.stringify({
-    level: 'info',
-    message: 'ROS API listening',
-    port,
-    persistence: 'memory-development-adapter',
-    warning: 'Production composition must inject PostgresRoadEventRepository and OIDC claims adapter'
+  console.log(structuredLog('info', 'ROS API listening', {
+    operation: `listen:${port}`
   }));
 });
