@@ -68,18 +68,18 @@ jobs:
     timeout-minutes: 20
     env:
       POSTGRES_USER: ros
-      POSTGRES_PASSWORD: ci-postgres-secret-value-12345
+      POSTGRES_PASSWORD: C1RosPgA9x7Lm4Qv2Np8Z
       POSTGRES_DB: ros
-      DATABASE_URL: postgresql://ros:ci-postgres-secret-value-12345@postgres:5432/ros
-      REDIS_PASSWORD: ci-redis-secret-value-123456789
-      REDIS_URL: redis://:ci-redis-secret-value-123456789@redis:6379
+      DATABASE_URL: postgresql://ros:C1RosPgA9x7Lm4Qv2Np8Z@postgres:5432/ros
+      REDIS_PASSWORD: R7RedisA4x9Lm2Qv8Np6K
+      REDIS_URL: redis://:R7RedisA4x9Lm2Qv8Np6K@redis:6379
       MINIO_ROOT_USER: ros-ci
-      MINIO_ROOT_PASSWORD: ci-minio-secret-value-123456789
+      MINIO_ROOT_PASSWORD: M8MinioA4x9Lm2Qv7Np6K
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
       OBJECT_STORAGE_ACCESS_KEY: ros-ci
-      OBJECT_STORAGE_SECRET_KEY: ci-object-secret-value-123456789
+      OBJECT_STORAGE_SECRET_KEY: O9ObjectA4x7Lm2Qv8Np6Kz5Ty3
       OBJECT_STORAGE_BUCKET: ros-evidence
-      JWT_SECRET: ci-jwt-secret-value-12345678901234567890
+      JWT_SECRET: J4JwtA9x7Lm2Qv8Np6Kz5Ty3Rs1Bc0De
     steps:
       - uses: actions/checkout@v4
       - name: Validate secrets and compose configuration
