@@ -1,0 +1,4 @@
+CI / verify
+CI / postgres-integration
+CI / staging-smoke
+CI / riyadh-e2e
