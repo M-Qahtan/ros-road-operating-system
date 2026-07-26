@@ -1,0 +1,69 @@
+name: Riyadh Safety Failure Modes
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/e2e/**'
+      - 'docs/08-pilot-riyadh/**'
+      - '.github/workflows/riyadh-safety.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/src/e2e/**'
+      - 'docs/08-pilot-riyadh/**'
+      - '.github/workflows/riyadh-safety.yml'
+
+concurrency:
+  group: riyadh-safety-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  failure-mode-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace
+        run: pnpm build
+      - name: Run all deterministic safety tests
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm --filter @ros/api test 2>&1 | tee riyadh-failure-mode-tests.log
+      - name: Create traceable evidence manifest
+        shell: bash
+        run: |
+          mkdir -p artifacts/riyadh-safety
+          cat > artifacts/riyadh-safety/manifest.json <<EOF
+          {
+            "commitSha": "${GITHUB_SHA}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "runId": "${GITHUB_RUN_ID}",
+            "runAttempt": "${GITHUB_RUN_ATTEMPT}",
+            "repository": "${GITHUB_REPOSITORY}",
+            "ref": "${GITHUB_REF}",
+            "suite": "Riyadh deterministic failure-mode safety",
+            "machineAuthority": "none",
+            "scope": "Riyadh MVP"
+          }
+          EOF
+          sha256sum riyadh-failure-mode-tests.log docs/08-pilot-riyadh/failure-mode-traceability.md > artifacts/riyadh-safety/checksums.sha256
+      - name: Upload safety evidence package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: riyadh-safety-${{ github.sha }}
+          path: |
+            riyadh-failure-mode-tests.log
+            artifacts/riyadh-safety/manifest.json
+            artifacts/riyadh-safety/checksums.sha256
+            docs/08-pilot-riyadh/failure-mode-traceability.md
+          if-no-files-found: error
