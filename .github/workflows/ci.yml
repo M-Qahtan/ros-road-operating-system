@@ -30,7 +30,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: workspace-build-log
+          name: workspace-build-log-${{ github.sha }}
           path: build.log
           if-no-files-found: error
       - run: pnpm lint
@@ -64,12 +64,26 @@ jobs:
         run: bash scripts/run-postgres-integration.sh
       - name: Prove backup and clean restore
         run: |
+          set -o pipefail
+          mkdir -p artifacts/reliability
           createdb -h localhost -U ros ros_restore
           BACKUP_DIR="$RUNNER_TEMP/backups" bash scripts/postgres-backup.sh
           BACKUP_FILE=$(find "$RUNNER_TEMP/backups" -name '*.dump' -type f | head -1)
-          RESTORE_DATABASE_URL=postgresql://ros:ros-integration-password@localhost:5432/ros_restore BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh
+          started=$(date +%s)
+          RESTORE_DATABASE_URL=postgresql://ros:ros-integration-password@localhost:5432/ros_restore BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh | tee artifacts/reliability/postgres-restore.log
+          finished=$(date +%s)
+          elapsed=$((finished-started))
+          test "$elapsed" -le 1800
+          printf '{"commitSha":"%s","status":"passed","rpoMinutes":5,"rtoTargetSeconds":1800,"restoreElapsedSeconds":%s}\n' "$GITHUB_SHA" "$elapsed" > artifacts/reliability/postgres-recovery.json
         env:
           PGPASSWORD: ros-integration-password
+      - name: Upload recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-recovery-evidence-${{ github.sha }}
+          path: artifacts/reliability
+          if-no-files-found: error
 
   staging-smoke:
     runs-on: ubuntu-latest
@@ -109,6 +123,15 @@ jobs:
           printf 'api\nminio\npostgres\nredis\n' > "$RUNNER_TEMP/expected"
           diff -u "$RUNNER_TEMP/expected" "$RUNNER_TEMP/running"
           timeout 10s docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/ready', {signal: AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1);return r.text()}).then(console.log)"
+      - name: Run safe dependency fault injection
+        run: bash scripts/run-safe-fault-injection.sh
+      - name: Upload fault-injection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safe-fault-injection-${{ github.sha }}
+          path: artifacts/reliability/fault-injection.json
+          if-no-files-found: error
       - name: Show diagnostics on failure
         if: failure()
         run: |
@@ -135,9 +158,37 @@ jobs:
       - name: Upload pilot evidence package
         uses: actions/upload-artifact@v4
         with:
-          name: riyadh-pilot-evidence
+          name: riyadh-pilot-evidence-${{ github.sha }}
           path: |
             riyadh-pilot-result.json
             artifacts/riyadh-pilot/result.json
             docs/08-pilot-riyadh/pilot-e2e-readiness.md
+          if-no-files-found: error
+
+  operational-readiness:
+    if: always()
+    needs: [verify, postgres-integration, staging-smoke, riyadh-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require all release evidence jobs
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          POSTGRES_RESULT: ${{ needs.postgres-integration.result }}
+          STAGING_RESULT: ${{ needs.staging-smoke.result }}
+          RIYADH_RESULT: ${{ needs.riyadh-e2e.result }}
+        run: |
+          test "$VERIFY_RESULT" = success
+          test "$POSTGRES_RESULT" = success
+          test "$STAGING_RESULT" = success
+          test "$RIYADH_RESULT" = success
+      - name: Enforce operational readiness gate
+        run: bash scripts/verify-operational-readiness.sh
+      - name: Upload readiness decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-readiness-${{ github.sha }}
+          path: artifacts/reliability/operational-readiness.json
           if-no-files-found: error
