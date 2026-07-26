@@ -12,6 +12,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CI_EVIDENCE_SCHEMA: ros-ci-evidence/v1
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -26,16 +29,36 @@ jobs:
       - run: pnpm verify
       - name: Build workspace
         run: pnpm build > build.log 2>&1
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: workspace-build-log
-          path: build.log
-          if-no-files-found: error
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Write verification evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          cat > verify-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "verify",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "commit_sha": "${GITHUB_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build.log
+            verify-evidence.json
+          if-no-files-found: error
+          retention-days: 30
 
   postgres-integration:
     runs-on: ubuntu-latest
@@ -70,6 +93,31 @@ jobs:
           RESTORE_DATABASE_URL=postgresql://ros:ros-integration-password@localhost:5432/ros_restore BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh
         env:
           PGPASSWORD: ros-integration-password
+      - name: Write PostgreSQL evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          cat > postgres-integration-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "postgres-integration",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "commit_sha": "${GITHUB_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+      - name: Upload PostgreSQL evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-integration-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: postgres-integration-evidence.json
+          if-no-files-found: error
+          retention-days: 30
 
   staging-smoke:
     runs-on: ubuntu-latest
@@ -109,11 +157,36 @@ jobs:
           printf 'api\nminio\npostgres\nredis\n' > "$RUNNER_TEMP/expected"
           diff -u "$RUNNER_TEMP/expected" "$RUNNER_TEMP/running"
           timeout 10s docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/ready', {signal: AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1);return r.text()}).then(console.log)"
-      - name: Show diagnostics on failure
-        if: failure()
+      - name: Capture diagnostics
+        if: always()
+        shell: bash
         run: |
-          docker compose -f infrastructure/docker/docker-compose.yml ps
-          docker compose -f infrastructure/docker/docker-compose.yml logs --no-color
+          docker compose -f infrastructure/docker/docker-compose.yml ps > staging-compose-ps.log 2>&1 || true
+          docker compose -f infrastructure/docker/docker-compose.yml logs --no-color > staging-compose.log 2>&1 || true
+          cat > staging-smoke-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "staging-smoke",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "commit_sha": "${GITHUB_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+      - name: Upload staging smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-smoke-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            staging-compose-ps.log
+            staging-compose.log
+            staging-smoke-evidence.json
+          if-no-files-found: error
+          retention-days: 30
       - if: always()
         run: docker compose -f infrastructure/docker/docker-compose.yml down -v
 
@@ -132,12 +205,32 @@ jobs:
         run: |
           set -o pipefail
           pnpm simulate:riyadh | tee riyadh-pilot-result.json
+      - name: Write Riyadh E2E evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          cat > riyadh-e2e-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "riyadh-e2e",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "commit_sha": "${GITHUB_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
       - name: Upload pilot evidence package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: riyadh-pilot-evidence
+          name: riyadh-e2e-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             riyadh-pilot-result.json
             artifacts/riyadh-pilot/result.json
             docs/08-pilot-riyadh/pilot-e2e-readiness.md
-          if-no-files-found: error
+            riyadh-e2e-evidence.json
+          if-no-files-found: warn
+          retention-days: 30
