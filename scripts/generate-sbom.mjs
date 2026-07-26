@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 
@@ -46,7 +46,7 @@ mkdirSync(dirname(output), { recursive: true });
 const bom = {
   bomFormat: 'CycloneDX',
   specVersion: '1.5',
-  serialNumber: `urn:uuid:${crypto.randomUUID()}`,
+  serialNumber: `urn:uuid:${randomUUID()}`,
   version: 1,
   metadata: {
     timestamp: new Date().toISOString(),
