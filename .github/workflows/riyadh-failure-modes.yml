@@ -1,0 +1,35 @@
+name: Riyadh Failure-Mode Safety
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  riyadh-failure-modes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Run deterministic failure-mode suite
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm simulate:riyadh:failures | tee riyadh-failure-mode-result.json
+      - name: Upload traceable safety evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: riyadh-failure-mode-evidence-${{ github.sha }}
+          path: |
+            riyadh-failure-mode-result.json
+            artifacts/riyadh-failure-modes/result.json
+            docs/08-pilot-riyadh/failure-mode-traceability.md
+          if-no-files-found: error
