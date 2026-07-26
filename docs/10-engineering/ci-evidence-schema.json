@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ros.example/schemas/ci-evidence-v1.json",
+  "title": "ROS CI evidence manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "job",
+    "repository",
+    "workflow",
+    "event",
+    "ref",
+    "commit_sha",
+    "run_id",
+    "run_attempt"
+  ],
+  "properties": {
+    "schema": { "const": "ros-ci-evidence/v1" },
+    "job": {
+      "enum": ["verify", "postgres-integration", "staging-smoke", "riyadh-e2e"]
+    },
+    "repository": { "type": "string", "minLength": 1 },
+    "workflow": { "type": "string", "minLength": 1 },
+    "event": { "type": "string", "minLength": 1 },
+    "ref": { "type": "string", "minLength": 1 },
+    "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "run_id": { "type": "string", "pattern": "^[0-9]+$" },
+    "run_attempt": { "type": "string", "pattern": "^[0-9]+$" }
+  }
+}
