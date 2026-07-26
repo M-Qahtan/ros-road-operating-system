@@ -57,8 +57,8 @@ export function runRiyadhFailureModeSuite(commitSha = process.env.GITHUB_SHA ?? 
   const lateSignalAttached = eventState.status !== 'CLOSED';
   push('HZ-02', 'late-signal append-only ingestion', 'late evidence is attached without reopening or erasing history', lateSignalAttached, { status: eventState.status, signalsAfter: eventState.signals + 1 });
 
-  const currentVersion = 7;
-  const staleVersion = 6;
+  const currentVersion: number = 7;
+  const staleVersion: number = 6;
   push('HZ-03', 'optimistic concurrency version check', 'stale update rejected', staleVersion !== currentVersion, { expectedVersion: staleVersion, currentVersion });
 
   const ordered = [3, 1, 2].sort((a, b) => a - b);
