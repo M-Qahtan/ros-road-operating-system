@@ -77,7 +77,7 @@ jobs:
           createdb -h localhost -U ros ros_restore
           BACKUP_DIR="$RUNNER_TEMP/backups" bash scripts/postgres-backup.sh
           BACKUP_FILE=$(find "$RUNNER_TEMP/backups" -name '*.dump' -type f | head -1)
-          RESTORE_DATABASE_URL="$DATABASE_URL" BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh
+          RESTORE_DATABASE_URL="postgresql://ros:${CI_POSTGRES_PASSWORD}@localhost:5432/ros_restore" BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh
         env:
           PGPASSWORD: ${{ env.CI_POSTGRES_PASSWORD }}
 
