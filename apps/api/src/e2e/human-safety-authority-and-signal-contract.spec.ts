@@ -48,7 +48,7 @@ const context = {
 test('high-risk authorization is bound to the authorizing and executing supervisor', () => {
   const allowed = decideHumanSafetyTransition(current, 'RESOLVED', context);
   assert.equal(allowed.allowed, true);
-  assert.equal(allowed.authorityPolicyVersion, 'ros-eye.authority.v1');
+  assert.equal(allowed.authorityPolicyVersion, 'ros-eye.authority.v2');
   assert.equal(allowed.evaluatedAuthority, 'RESOLVE');
 
   const otherSupervisor = decideHumanSafetyTransition(current, 'RESOLVED', {
@@ -82,8 +82,39 @@ test('auditor and simulated channel fail closed for operational transitions', ()
     });
     assert.equal(result.allowed, false);
     assert.equal(result.reasonCode, 'actor_not_authorized');
-    assert.equal(result.authorityPolicyVersion, 'ros-eye.authority.v1');
+    assert.equal(result.authorityPolicyVersion, 'ros-eye.authority.v2');
   }
+});
+
+test('channel indicator authority cannot change contact outcome state', () => {
+  for (const requestedState of ['RESPONDED', 'NO_RESPONSE', 'UNREACHABLE'] as const) {
+    const result = decideHumanSafetyTransition({
+      ...current,
+      state: 'CONTACTING' as const,
+      severity: 'S2' as const,
+      highRiskResolutionAuthorization: null
+    }, requestedState, {
+      ...context,
+      actorRoles: ['SIMULATED_CHANNEL'] as const
+    });
+    assert.equal(result.allowed, false);
+    assert.equal(result.requiredAuthority, 'UPDATE_CONTACT_OUTCOME');
+    assert.equal(result.reasonCode, 'actor_not_authorized');
+  }
+});
+
+test('operator may record a contact outcome through explicit operational authority', () => {
+  const result = decideHumanSafetyTransition({
+    ...current,
+    state: 'CONTACTING' as const,
+    severity: 'S2' as const,
+    highRiskResolutionAuthorization: null
+  }, 'RESPONDED', {
+    ...context,
+    actorRoles: ['OPERATOR'] as const
+  });
+  assert.equal(result.allowed, true);
+  assert.equal(result.evaluatedAuthority, 'UPDATE_CONTACT_OUTCOME');
 });
 
 test('operator may escalate a resolved case but cannot use another actor high-risk authorization', () => {
@@ -159,4 +190,63 @@ test('source and payload mismatch routes to human review', () => {
   assert.equal(result.accepted, false);
   assert.equal(result.disposition, 'HUMAN_REVIEW');
   assert.equal(result.reasonCode, 'source_payload_mismatch');
+});
+
+test('invalid signatures and malformed identifiers fail closed', () => {
+  const signal = validPhoneSignal();
+  const invalidSignature = validateHumanSafetySignalEnvelope({
+    ...signal,
+    integrity: { ...signal.integrity, signatureStatus: 'INVALID' }
+  });
+  assert.deepEqual(invalidSignature, { accepted: false, disposition: 'QUARANTINE', reasonCode: 'invalid_signature' });
+
+  const missingReplayToken = validateHumanSafetySignalEnvelope({
+    ...signal,
+    integrity: { ...signal.integrity, replayToken: '  ' }
+  });
+  assert.equal(missingReplayToken.accepted, false);
+  assert.equal(missingReplayToken.reasonCode, 'invalid_integrity_metadata');
+});
+
+test('unverified signature and excessive clock skew require human review', () => {
+  const signal = validPhoneSignal();
+  const unverified = validateHumanSafetySignalEnvelope({
+    ...signal,
+    integrity: { ...signal.integrity, signatureStatus: 'UNVERIFIED' }
+  });
+  assert.equal(unverified.disposition, 'HUMAN_REVIEW');
+
+  const skewed = validateHumanSafetySignalEnvelope({
+    ...signal,
+    integrity: { ...signal.integrity, clockSkewMs: 300_001 }
+  });
+  assert.deepEqual(skewed, { accepted: false, disposition: 'HUMAN_REVIEW', reasonCode: 'clock_skew_exceeded' });
+});
+
+test('invalid chronology, probabilities, coordinates and indicator codes are quarantined', () => {
+  const signal = validPhoneSignal();
+  const cases = [
+    { ...signal, occurredAt: 'not-a-date' },
+    { ...signal, occurredAt: '2026-07-27T12:01:00.000Z', receivedAt: '2026-07-27T12:00:00.000Z' },
+    { ...signal, payload: { ...signal.payload, accelerationMagnitude: Number.NaN } },
+    { ...signal, location: { latitude: 91, longitude: 46.6, accuracyMeters: 1, classification: 'PRECISE_RESTRICTED' } },
+    { ...signal, sourceType: 'PERSON', payload: { kind: 'PERSON_REPORT', indicatorCodes: ['UNKNOWN_INDICATOR'] } }
+  ];
+  for (const candidate of cases) {
+    const result = validateHumanSafetySignalEnvelope(candidate);
+    assert.equal(result.accepted, false);
+    assert.equal(result.disposition, 'QUARANTINE');
+  }
+});
+
+test('purpose, consent, classification and retention must remain coherent', () => {
+  const signal = validPhoneSignal();
+  for (const candidate of [
+    { ...signal, consentBasis: 'SIMULATION' },
+    { ...signal, dataClassification: 'OPERATIONAL' },
+    { ...signal, retentionClass: 'SIMULATION_ONLY' }
+  ]) {
+    const result = validateHumanSafetySignalEnvelope(candidate);
+    assert.deepEqual(result, { accepted: false, disposition: 'QUARANTINE', reasonCode: 'purpose_classification_mismatch' });
+  }
 });
