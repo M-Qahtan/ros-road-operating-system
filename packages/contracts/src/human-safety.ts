@@ -184,6 +184,16 @@ export function decideHumanSafetyTransition(
 
   if (requestedState === 'RESOLVED' && HIGH_RISK.has(current.severity)) {
     const authorization = current.highRiskResolutionAuthorization;
+    const occurredAtMs = parseTimestamp(context.occurredAt);
+    const authorizedAtMs = authorization === null ? null : parseTimestamp(authorization.authorizedAt);
+    const expiresAtMs = authorization === null ? null : parseTimestamp(authorization.expiresAt);
+    const authorizationChronologyValid = authorization !== null &&
+      authorizedAtMs !== null &&
+      expiresAtMs !== null &&
+      occurredAtMs !== null &&
+      authorizedAtMs <= occurredAtMs &&
+      occurredAtMs < expiresAtMs &&
+      authorizedAtMs < expiresAtMs;
     const authorizationFresh = authorization !== null &&
       authorization.caseId === current.id &&
       authorization.decision === 'RESOLVE' &&
@@ -193,7 +203,7 @@ export function decideHumanSafetyTransition(
       authorization.indicatorRevision === current.indicatorRevision &&
       authorization.connectivity === context.connectivity &&
       authorization.dependenciesHealthy === context.dependenciesHealthy &&
-      Date.parse(authorization.expiresAt) > Date.parse(context.occurredAt);
+      authorizationChronologyValid;
     const actorAuthorized = context.actorRoles.some((role) => role === 'SUPERVISOR' || role === 'SAFETY_LEAD');
     if (!authorizationFresh || !actorAuthorized) {
       return decision(false, 'HUMAN_REVIEW', 'human_safety.high_risk_resolution_rejected', 'AUTHORIZE_HIGH_RISK_RESOLUTION', 'HUMAN_REVIEW', authorization === null ? 'human_authority_required' : 'stale_or_invalid_authorization');
@@ -201,6 +211,11 @@ export function decideHumanSafetyTransition(
   }
 
   return decision(true, requestedState, `human_safety.transitioned.${requestedState.toLowerCase()}`, null, 'REJECT', 'approved');
+}
+
+function parseTimestamp(value: string): number | null {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function decision(
