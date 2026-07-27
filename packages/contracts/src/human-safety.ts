@@ -57,23 +57,37 @@ export interface StructuredSafetyIndicator {
   readonly requiresHumanReview: boolean;
 }
 
+export interface HighRiskResolutionAuthorization {
+  readonly caseId: string;
+  readonly decision: 'RESOLVE';
+  readonly actorId: string;
+  readonly role: 'SUPERVISOR' | 'SAFETY_LEAD';
+  readonly reason: string;
+  readonly authorizedAt: string;
+  readonly expiresAt: string;
+  readonly caseVersion: number;
+  readonly severityAssessmentVersion: number;
+  readonly evidenceRevision: number;
+  readonly indicatorRevision: number;
+  readonly connectivity: 'HEALTHY' | 'DEGRADED' | 'LOST';
+  readonly dependenciesHealthy: boolean;
+}
+
 export interface HumanSafetyCaseContract {
   readonly id: string;
   readonly roadEventId: string;
   readonly state: HumanSafetyCaseState;
   readonly severity: 'S0' | 'S1' | 'S2' | 'S3' | 'S4';
   readonly version: number;
+  readonly severityAssessmentVersion: number;
+  readonly evidenceRevision: number;
+  readonly indicatorRevision: number;
   readonly openedAt: string;
   readonly nextDeadlineAt: string | null;
   readonly activeChannel: HumanSafetyChannel | null;
   readonly assignedActorId: string | null;
   readonly indicators: readonly StructuredSafetyIndicator[];
-  readonly highRiskResolutionAuthorization: {
-    readonly actorId: string;
-    readonly role: 'SUPERVISOR' | 'SAFETY_LEAD';
-    readonly reason: string;
-    readonly authorizedAt: string;
-  } | null;
+  readonly highRiskResolutionAuthorization: HighRiskResolutionAuthorization | null;
 }
 
 export interface HumanSafetyTransitionContext {
@@ -147,7 +161,7 @@ export const HUMAN_SAFETY_ALLOWED_TRANSITIONS: Readonly<Record<HumanSafetyCaseSt
 const HIGH_RISK = new Set(['S3', 'S4']);
 
 export function decideHumanSafetyTransition(
-  current: Pick<HumanSafetyCaseContract, 'state' | 'severity' | 'highRiskResolutionAuthorization'>,
+  current: Pick<HumanSafetyCaseContract, 'id' | 'state' | 'severity' | 'version' | 'severityAssessmentVersion' | 'evidenceRevision' | 'indicatorRevision' | 'highRiskResolutionAuthorization'>,
   requestedState: HumanSafetyCaseState,
   context: HumanSafetyTransitionContext
 ): HumanSafetyTransitionDecision {
@@ -169,10 +183,20 @@ export function decideHumanSafetyTransition(
   }
 
   if (requestedState === 'RESOLVED' && HIGH_RISK.has(current.severity)) {
-    const authorized = current.highRiskResolutionAuthorization !== null &&
-      context.actorRoles.some((role) => role === 'SUPERVISOR' || role === 'SAFETY_LEAD');
-    if (!authorized) {
-      return decision(false, 'HUMAN_REVIEW', 'human_safety.high_risk_resolution_rejected', 'AUTHORIZE_HIGH_RISK_RESOLUTION', 'HUMAN_REVIEW', 'human_authority_required');
+    const authorization = current.highRiskResolutionAuthorization;
+    const authorizationFresh = authorization !== null &&
+      authorization.caseId === current.id &&
+      authorization.decision === 'RESOLVE' &&
+      authorization.caseVersion === current.version &&
+      authorization.severityAssessmentVersion === current.severityAssessmentVersion &&
+      authorization.evidenceRevision === current.evidenceRevision &&
+      authorization.indicatorRevision === current.indicatorRevision &&
+      authorization.connectivity === context.connectivity &&
+      authorization.dependenciesHealthy === context.dependenciesHealthy &&
+      Date.parse(authorization.expiresAt) > Date.parse(context.occurredAt);
+    const actorAuthorized = context.actorRoles.some((role) => role === 'SUPERVISOR' || role === 'SAFETY_LEAD');
+    if (!authorizationFresh || !actorAuthorized) {
+      return decision(false, 'HUMAN_REVIEW', 'human_safety.high_risk_resolution_rejected', 'AUTHORIZE_HIGH_RISK_RESOLUTION', 'HUMAN_REVIEW', authorization === null ? 'human_authority_required' : 'stale_or_invalid_authorization');
     }
   }
 
