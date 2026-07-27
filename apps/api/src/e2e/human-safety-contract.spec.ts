@@ -47,6 +47,15 @@ function authorizedCase() {
   };
 }
 
+function resolvedCase() {
+  const current = authorizedCase();
+  return {
+    ...current,
+    state: 'RESOLVED' as const,
+    version: current.version + 1
+  };
+}
+
 const supervisorContext = {
   ...baseContext,
   actorId: SUPERVISOR_ID,
@@ -175,6 +184,61 @@ test('connectivity or dependency state changes invalidate authorization', () => 
   });
   assert.equal(degraded.allowed, false);
   assert.equal(degraded.reasonCode, 'stale_or_invalid_authorization');
+});
+
+test('late high-risk signal reactivates a resolved case into escalation with a distinct audit action', () => {
+  const result = decideHumanSafetyTransition(resolvedCase(), 'ESCALATED', {
+    ...baseContext,
+    reactivationCause: 'LATE_HIGH_RISK_SIGNAL'
+  });
+  assert.equal(result.allowed, true);
+  assert.equal(result.nextState, 'ESCALATED');
+  assert.equal(result.auditAction, 'human_safety.resolved_case_escalated');
+  assert.equal(result.reasonCode, 'reactivated_late_high_risk_signal');
+});
+
+test('contradictory indicator reopens a resolved case for human review', () => {
+  const result = decideHumanSafetyTransition(resolvedCase(), 'HUMAN_REVIEW', {
+    ...baseContext,
+    evidenceQuality: 'CONFLICTING',
+    reactivationCause: 'CONTRADICTORY_INDICATOR'
+  });
+  assert.equal(result.allowed, true);
+  assert.equal(result.nextState, 'HUMAN_REVIEW');
+  assert.equal(result.auditAction, 'human_safety.resolved_case_reopened_for_review');
+});
+
+test('evidence correction after resolution requires explicit reactivation cause', () => {
+  const denied = decideHumanSafetyTransition(resolvedCase(), 'HUMAN_REVIEW', baseContext);
+  assert.equal(denied.allowed, false);
+  assert.equal(denied.reasonCode, 'reactivation_cause_required');
+
+  const allowed = decideHumanSafetyTransition(resolvedCase(), 'HUMAN_REVIEW', {
+    ...baseContext,
+    reactivationCause: 'EVIDENCE_CORRECTION'
+  });
+  assert.equal(allowed.allowed, true);
+  assert.equal(allowed.reasonCode, 'reactivated_evidence_correction');
+});
+
+test('resolved case cannot silently return to an ordinary lifecycle state', () => {
+  const result = decideHumanSafetyTransition(resolvedCase(), 'MONITORED', {
+    ...baseContext,
+    reactivationCause: 'DEPENDENCY_RECOVERY_FINDING'
+  });
+  assert.equal(result.allowed, false);
+  assert.equal(result.reasonCode, 'invalid_transition');
+});
+
+test('reactivation does not make the prior resolution authorization current again', () => {
+  const reactivated = resolvedCase();
+  const result = decideHumanSafetyTransition({
+    ...reactivated,
+    state: 'MONITORED',
+    version: reactivated.version + 1
+  }, 'RESOLVED', supervisorContext);
+  assert.equal(result.allowed, false);
+  assert.equal(result.reasonCode, 'stale_or_invalid_authorization');
 });
 
 test('invalid lifecycle jumps are rejected', () => {
