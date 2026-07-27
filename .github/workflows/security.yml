@@ -1,0 +1,65 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Enable package manager
+        run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Block critical vulnerable dependencies
+        run: pnpm audit --audit-level=critical
+
+  repository-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Enable package manager
+        run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Scan tracked files for credentials
+        run: node scripts/scan-secrets.mjs
+      - name: Block critical vulnerable dependencies
+        run: pnpm audit --audit-level=critical
+      - name: Generate CycloneDX SBOM
+        run: node scripts/generate-sbom.mjs artifacts/security/sbom-${GITHUB_SHA}.cdx.json
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: security-evidence-${{ github.sha }}
+          path: artifacts/security/
+          if-no-files-found: error
+          retention-days: 90
