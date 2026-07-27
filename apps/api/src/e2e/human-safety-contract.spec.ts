@@ -47,6 +47,12 @@ function authorizedCase() {
   };
 }
 
+const supervisorContext = {
+  ...baseContext,
+  actorId: SUPERVISOR_ID,
+  actorRoles: ['SUPERVISOR'] as const
+};
+
 test('conflicting evidence cannot resolve a human safety case', () => {
   const result = decideHumanSafetyTransition({ ...baseCase, state: 'MONITORED', severity: 'S2', highRiskResolutionAuthorization: null }, 'RESOLVED', {
     ...baseContext,
@@ -81,22 +87,14 @@ test('S3 resolution requires recorded, current human authority', () => {
   assert.equal(denied.allowed, false);
   assert.equal(denied.requiredAuthority, 'AUTHORIZE_HIGH_RISK_RESOLUTION');
 
-  const allowed = decideHumanSafetyTransition(authorizedCase(), 'RESOLVED', {
-    ...baseContext,
-    actorId: SUPERVISOR_ID,
-    actorRoles: ['SUPERVISOR'] as const
-  });
+  const allowed = decideHumanSafetyTransition(authorizedCase(), 'RESOLVED', supervisorContext);
   assert.equal(allowed.allowed, true);
   assert.equal(allowed.nextState, 'RESOLVED');
 });
 
 test('new evidence invalidates a prior high-risk resolution authorization', () => {
   const current = authorizedCase();
-  const result = decideHumanSafetyTransition({ ...current, evidenceRevision: current.evidenceRevision + 1 }, 'RESOLVED', {
-    ...baseContext,
-    actorId: SUPERVISOR_ID,
-    actorRoles: ['SUPERVISOR'] as const
-  });
+  const result = decideHumanSafetyTransition({ ...current, evidenceRevision: current.evidenceRevision + 1 }, 'RESOLVED', supervisorContext);
   assert.equal(result.allowed, false);
   assert.equal(result.nextState, 'HUMAN_REVIEW');
   assert.equal(result.reasonCode, 'stale_or_invalid_authorization');
@@ -116,9 +114,7 @@ test('severity reassessment invalidates a prior high-risk resolution authorizati
 test('expired or cross-case authorization is rejected', () => {
   const current = authorizedCase();
   const expired = decideHumanSafetyTransition(current, 'RESOLVED', {
-    ...baseContext,
-    actorId: SUPERVISOR_ID,
-    actorRoles: ['SUPERVISOR'] as const,
+    ...supervisorContext,
     occurredAt: '2026-07-27T04:16:00.000Z'
   });
   assert.equal(expired.allowed, false);
@@ -127,20 +123,54 @@ test('expired or cross-case authorization is rejected', () => {
   const wrongCase = decideHumanSafetyTransition({
     ...current,
     highRiskResolutionAuthorization: { ...current.highRiskResolutionAuthorization, caseId: 'another-case' }
-  }, 'RESOLVED', {
-    ...baseContext,
-    actorId: SUPERVISOR_ID,
-    actorRoles: ['SUPERVISOR'] as const
-  });
+  }, 'RESOLVED', supervisorContext);
   assert.equal(wrongCase.allowed, false);
+});
+
+test('future-dated authorization fails closed to human review', () => {
+  const current = authorizedCase();
+  const result = decideHumanSafetyTransition({
+    ...current,
+    highRiskResolutionAuthorization: {
+      ...current.highRiskResolutionAuthorization,
+      authorizedAt: '2026-07-27T04:11:00.000Z',
+      expiresAt: '2026-07-27T04:20:00.000Z'
+    }
+  }, 'RESOLVED', supervisorContext);
+  assert.equal(result.allowed, false);
+  assert.equal(result.nextState, 'HUMAN_REVIEW');
+  assert.equal(result.reasonCode, 'stale_or_invalid_authorization');
+});
+
+test('invalid authorization timestamps fail closed', () => {
+  const current = authorizedCase();
+  for (const authorization of [
+    { ...current.highRiskResolutionAuthorization, authorizedAt: 'not-a-date' },
+    { ...current.highRiskResolutionAuthorization, expiresAt: 'not-a-date' },
+    { ...current.highRiskResolutionAuthorization, authorizedAt: '2026-07-27T04:15:00.000Z', expiresAt: '2026-07-27T04:15:00.000Z' },
+    { ...current.highRiskResolutionAuthorization, authorizedAt: '2026-07-27T04:16:00.000Z', expiresAt: '2026-07-27T04:15:00.000Z' }
+  ]) {
+    const result = decideHumanSafetyTransition({ ...current, highRiskResolutionAuthorization: authorization }, 'RESOLVED', supervisorContext);
+    assert.equal(result.allowed, false);
+    assert.equal(result.nextState, 'HUMAN_REVIEW');
+    assert.equal(result.reasonCode, 'stale_or_invalid_authorization');
+  }
+});
+
+test('invalid transition occurrence timestamp fails closed for high-risk resolution', () => {
+  const result = decideHumanSafetyTransition(authorizedCase(), 'RESOLVED', {
+    ...supervisorContext,
+    occurredAt: 'invalid-transition-time'
+  });
+  assert.equal(result.allowed, false);
+  assert.equal(result.nextState, 'HUMAN_REVIEW');
+  assert.equal(result.reasonCode, 'stale_or_invalid_authorization');
 });
 
 test('connectivity or dependency state changes invalidate authorization', () => {
   const current = authorizedCase();
   const degraded = decideHumanSafetyTransition(current, 'RESOLVED', {
-    ...baseContext,
-    actorId: SUPERVISOR_ID,
-    actorRoles: ['SUPERVISOR'] as const,
+    ...supervisorContext,
     connectivity: 'DEGRADED'
   });
   assert.equal(degraded.allowed, false);
