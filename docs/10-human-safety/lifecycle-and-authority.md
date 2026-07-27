@@ -26,6 +26,27 @@
 | MONITORED | HUMAN_REVIEW | stale, contradictory, or deteriorating state | SYSTEM/OPERATOR | immediate | `human_safety.monitoring_review_required` | critical actions disabled on stale data |
 | MONITORED | ESCALATED | worsening indicators or missed monitoring deadline | SYSTEM/OPERATOR | immediate | `human_safety.monitoring_escalated` | human queue required |
 | MONITORED | RESOLVED | trusted evidence, healthy dependencies, no unresolved deadline; S3/S4 has current human authorization | SUPERVISOR/SAFETY_LEAD for S3/S4 | explicit | `human_safety.resolved` | reject and return to review/escalation |
+| RESOLVED | HUMAN_REVIEW | explicit `reactivationCause` for late high-risk signal, contradictory indicator, evidence correction, or dependency-recovery finding | SYSTEM/OPERATOR | immediate | `human_safety.resolved_case_reopened_for_review` | missing cause rejects; prior resolution record remains immutable |
+| RESOLVED | ESCALATED | explicit `LATE_HIGH_RISK_SIGNAL` or other approved reactivation cause requiring immediate escalation | SYSTEM/OPERATOR | immediate | `human_safety.resolved_case_escalated` | missing cause rejects; prior authorization is not inherited |
+
+## Post-resolution reactivation policy
+
+`RESOLVED` is immutable as a historical outcome, but it is not allowed to suppress new safety information. A new material signal or correction creates a new case version and a distinct audit event that moves the active lifecycle to `HUMAN_REVIEW` or `ESCALATED` only.
+
+Approved reactivation causes are:
+
+- `LATE_HIGH_RISK_SIGNAL`
+- `CONTRADICTORY_INDICATOR`
+- `EVIDENCE_CORRECTION`
+- `DEPENDENCY_RECOVERY_FINDING`
+
+Rules:
+
+1. Reactivation without a classified cause is rejected.
+2. The prior `RESOLVED` event and its evidence remain append-only and are never rewritten.
+3. Any prior high-risk resolution authorization becomes stale because the case version changes and must never be inherited.
+4. Reactivation cannot jump directly to ordinary monitoring or a second resolution.
+5. Every reactivation records actor, reason, trace ID, case version, timestamp, and the classified cause.
 
 ## Authority matrix
 
@@ -41,6 +62,7 @@
 | Authorize S3/S4 resolution | deny | deny | allow | allow | deny |
 | Resolve S0–S2 | policy constrained | allow | allow | allow | deny |
 | Resolve S3–S4 | deny | deny | allow with recorded reason | allow with recorded reason | deny |
+| Reactivate a resolved case toward review/escalation | approved cause only | allow with reason | allow | allow | deny |
 | Diagnose, prescribe, determine legal fault | deny | outside ROS | outside ROS | outside ROS | deny |
 | Dispatch real authority | deny | external approved process | external approved process | external approved process | deny |
 
@@ -53,4 +75,4 @@
 
 ## Resolution authorization rules
 
-A high-risk authorization is valid only for the current case version and severity assessment. New contradictory evidence, severity reassessment, stale data, dependency failure, or case-version change invalidates prior authorization and returns the case to review.
+A high-risk authorization is valid only for the current case version and severity assessment. New contradictory evidence, severity reassessment, stale data, dependency failure, case-version change, or post-resolution reactivation invalidates prior authorization and returns the case to review.
