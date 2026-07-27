@@ -38,6 +38,12 @@ export type HumanSafetyAuthority =
   | 'AUTHORIZE_HIGH_RISK_RESOLUTION'
   | 'RESOLVE';
 
+export type HumanSafetyReactivationCause =
+  | 'LATE_HIGH_RISK_SIGNAL'
+  | 'CONTRADICTORY_INDICATOR'
+  | 'EVIDENCE_CORRECTION'
+  | 'DEPENDENCY_RECOVERY_FINDING';
+
 export type SafetyIndicatorCode =
   | 'PERSON_RESPONDED'
   | 'PERSON_NOT_RESPONDING'
@@ -99,6 +105,7 @@ export interface HumanSafetyTransitionContext {
   readonly connectivity: 'HEALTHY' | 'DEGRADED' | 'LOST';
   readonly evidenceQuality: 'TRUSTED' | 'AMBIGUOUS' | 'CONFLICTING' | 'MISSING';
   readonly dependenciesHealthy: boolean;
+  readonly reactivationCause?: HumanSafetyReactivationCause;
 }
 
 export interface HumanSafetyTransitionDecision {
@@ -155,10 +162,16 @@ export const HUMAN_SAFETY_ALLOWED_TRANSITIONS: Readonly<Record<HumanSafetyCaseSt
   ESCALATED: ['TRANSFERRED', 'MONITORED'],
   TRANSFERRED: ['MONITORED'],
   MONITORED: ['HUMAN_REVIEW', 'ESCALATED', 'RESOLVED'],
-  RESOLVED: []
+  RESOLVED: ['HUMAN_REVIEW', 'ESCALATED']
 });
 
 const HIGH_RISK = new Set(['S3', 'S4']);
+const REACTIVATION_CAUSES = new Set<HumanSafetyReactivationCause>([
+  'LATE_HIGH_RISK_SIGNAL',
+  'CONTRADICTORY_INDICATOR',
+  'EVIDENCE_CORRECTION',
+  'DEPENDENCY_RECOVERY_FINDING'
+]);
 
 export function decideHumanSafetyTransition(
   current: Pick<HumanSafetyCaseContract, 'id' | 'state' | 'severity' | 'version' | 'severityAssessmentVersion' | 'evidenceRevision' | 'indicatorRevision' | 'highRiskResolutionAuthorization'>,
@@ -168,6 +181,24 @@ export function decideHumanSafetyTransition(
   const allowedTargets = HUMAN_SAFETY_ALLOWED_TRANSITIONS[current.state];
   if (!allowedTargets.includes(requestedState)) {
     return decision(false, current.state, 'human_safety.transition_rejected', null, 'REJECT', 'invalid_transition');
+  }
+
+  if (current.state === 'RESOLVED') {
+    const cause = context.reactivationCause;
+    if (cause === undefined || !REACTIVATION_CAUSES.has(cause)) {
+      return decision(false, current.state, 'human_safety.reactivation_rejected', null, 'REJECT', 'reactivation_cause_required');
+    }
+    if (!['HUMAN_REVIEW', 'ESCALATED'].includes(requestedState)) {
+      return decision(false, current.state, 'human_safety.reactivation_rejected', null, 'REJECT', 'unsafe_reactivation_target');
+    }
+    return decision(
+      true,
+      requestedState,
+      requestedState === 'ESCALATED' ? 'human_safety.resolved_case_escalated' : 'human_safety.resolved_case_reopened_for_review',
+      null,
+      requestedState === 'ESCALATED' ? 'ESCALATE' : 'HUMAN_REVIEW',
+      `reactivated_${cause.toLowerCase()}`
+    );
   }
 
   if (!context.dependenciesHealthy && requestedState === 'RESOLVED') {
