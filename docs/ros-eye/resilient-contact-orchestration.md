@@ -64,26 +64,25 @@ The adapter provides:
 - `FOR UPDATE SKIP LOCKED` claims for due timers and outbox rows;
 - optimistic scoped updates;
 - inbox/outbox/audit insertion with composite keys;
-- expiring lease release and recovery;
-- cancellation and delivery fencing using the same outbox row lock.
+- expiring lease and delivery-reservation recovery;
+- cancellation fencing through an opaque delivery token rather than a database lock held across a network call.
 
 ## Durable outbox lifecycle and cancellation fence
 
 Outbox delivery is a separate durable worker lifecycle:
 
 1. claim due rows atomically with an expiring lease using `FOR UPDATE SKIP LOCKED`;
-2. begin a second scoped transaction and lock the claimed outbox row with `FOR UPDATE`;
-3. verify tenant/case/session/message, live lease ownership, expiry, cancellation, and delivery state;
-4. while that row lock is held, call the bounded vendor-neutral channel with the stable provider idempotency key;
-5. in the same transaction, mark `delivered_at` or record a bounded retry timestamp and structured error code;
-6. release or reclaim expired leases after crash/restart.
+2. commit a short scoped reservation containing an opaque `delivery_token`, `delivery_started_at`, and `delivery_deadline_at`;
+3. release the SQL transaction and connection completely;
+4. call the vendor-neutral channel outside the database with the stable provider idempotency key, absolute deadline, and `AbortSignal`;
+5. start a new short transaction and mark delivered or retry only if the same delivery token still exists, the message is not cancelled, and the deadline remains valid;
+6. release or reclaim expired leases and reservations after timeout, crash, or restart.
 
-Holding the outbox row lock across the bounded channel call gives takeover and delivery a deterministic order:
+The provider call never owns a PostgreSQL transaction, row lock, or pooled connection. The service rejects configurations where the provider timeout is not shorter than the outbox lease.
 
-- if takeover cancellation commits first, the delivery worker cannot acquire an eligible fence and must not call the provider;
-- if the delivery fence is acquired first, the send and durable acknowledgement complete before takeover can suppress later automation.
+Operator takeover can therefore commit immediately while a provider is slow or hung. It cancels the message and clears its delivery token. Any later provider result cannot be acknowledged because finalization requires the exact live token and an uncancelled row. The channel receives an abort signal and must terminate work at the deadline; adapters that ignore it are not production-approved.
 
-A crash after provider send but before database acknowledgement may repeat a transport call. Therefore production channel adapters **must** enforce the stable tenant/case/session-scoped idempotency key. Providers unable to guarantee this are not production-approved. This preserves exactly-once logical contact without claiming impossible exactly-once network transport.
+A crash after provider send but before database acknowledgement may repeat a transport call after the reservation expires. Therefore production channel adapters **must** enforce the stable tenant/case/session-scoped idempotency key. Providers unable to guarantee this are not production-approved. This preserves exactly-once logical contact without claiming impossible exactly-once network transport.
 
 ## Operator takeover
 
@@ -96,24 +95,25 @@ Operator takeover is a human action. In the same transaction it:
 - records operator identity, authorized role, and immutable audit event;
 - sets `automation_suppressed=true`;
 - clears deadlines and timer leases;
-- cancels pending automated outbox records.
+- cancels pending automated outbox records and invalidates active delivery tokens.
 
-No automated worker may resume while suppression is active.
+No automated worker may resume while suppression is active. A hung provider cannot delay the takeover database transaction.
 
 ## Retry and failure behavior
 
 - Automated contact attempts are bounded by the #29 contract.
-- Deadlines are persisted as absolute timestamps for consent, language choice, structured response, and retries.
+- Deadlines are persisted as absolute timestamps for consent, language choice, structured response, retries, and provider delivery reservations.
 - Due processing uses leases, optimistic versioning, and the approved transition matrix.
 - `NO_RESPONSE` and `DISCONNECTED` move through `CONTACTING` before another `AWAITING_RESPONSE`; the runtime cannot jump directly across protocol states.
-- Channel outage records a capped durable backoff for undelivered transport, while protocol-level channel failure moves the session to human review.
+- Channel delivery has an enforceable AbortSignal-backed timeout shorter than the lease; timeout or outage records a capped durable backoff.
+- A late provider success is not acknowledged after its token deadline; the stable idempotency key makes a subsequent retry logically safe.
 - Contradictory callbacks, unavailable accessibility, and malformed, unauthenticated, mismatched, or out-of-order runtime context fail to human review.
 - Retry exhaustion escalates; it never completes or resolves the safety case.
 - Fallback channels remain local simulations (`SMS_SIM`, `TELEPHONY_SIM`) until separately approved.
 
 ## Data minimization
 
-Runtime records contain scoped pseudonymous identifiers, states, deadlines, policy versions, reason codes, trace IDs, authorized roles, structured language choice, partial identity confidence, and accessibility flags. They exclude raw conversation bodies, telephone numbers, medical narratives, replay tokens, and precise coordinates. General telemetry must use state/reason counters only.
+Runtime records contain scoped pseudonymous identifiers, states, deadlines, policy versions, reason codes, trace IDs, authorized roles, structured language choice, partial identity confidence, accessibility flags, and short-lived opaque delivery fences. They exclude raw conversation bodies, telephone numbers, medical narratives, replay tokens, and precise coordinates. General telemetry must use state/reason counters only.
 
 ## Acceptance evidence
 
@@ -128,10 +128,13 @@ Required deterministic proofs:
 - cross-tenant or cross-case callback/takeover/inbox/lease access fails closed;
 - stale version, timer races, and concurrent workers fail closed;
 - bounded contact retries follow the approved states and escalate;
-- operator takeover suppresses automation and prevents a claimed-but-not-yet-sent message from calling the provider after cancellation;
-- outbox claim/locked delivery/ack/retry, lease expiry, provider outage, and restart recovery are durable;
-- crash after provider send repeats the same idempotency key and does not create a second logical delivery;
-- PostgreSQL SQL contracts use composite predicates and `FOR UPDATE SKIP LOCKED`;
+- a provider promise that never resolves is aborted at a deterministic deadline;
+- provider execution occurs with zero open SQL transactions or row locks;
+- operator takeover completes while a provider is hung and invalidates later acknowledgement;
+- multiple provider failures cannot exhaust the PostgreSQL pool through held delivery transactions;
+- outbox reservation/finalization, lease expiry, provider outage, and restart recovery are durable;
+- crash after provider send repeats the same idempotency key only after reservation expiry and does not create a second logical delivery;
+- PostgreSQL SQL contracts use composite predicates, short token reservations, and `FOR UPDATE SKIP LOCKED` claims;
 - audit records include explicit authority role and remain append-only and tenant/case isolated;
 - PostgreSQL migration, composite foreign keys, backup, and clean restore pass;
 - CI, Security, Riyadh E2E/failure-mode, staging fault injection, and operational readiness remain green with SHA-bound evidence.
