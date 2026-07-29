@@ -7,9 +7,10 @@ import {
   type HumanContactState
 } from '@ros/contracts';
 
-export const CONTACT_RUNTIME_POLICY_VERSION = 'ros-eye.contact-runtime.v3' as const;
+export const CONTACT_RUNTIME_POLICY_VERSION = 'ros-eye.contact-runtime.v4' as const;
 export const CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION = 'ros-eye.contact-operator-authority.v1' as const;
 export type ContactChannel = 'IN_APP' | 'PUSH' | 'SMS_SIM' | 'TELEPHONY_SIM';
+export type ContactAuthorizedRole = 'SYSTEM' | 'OPERATOR' | 'SUPERVISOR' | 'SAFETY_LEAD';
 export type RuntimeDisposition = 'APPLIED' | 'IDEMPOTENT' | 'HUMAN_REVIEW' | 'ESCALATED' | 'CONFLICT';
 export type OutboxDeliveryDisposition = 'DELIVERED' | 'RETRY' | 'CANCELLED' | 'CONFLICT';
 
@@ -35,6 +36,7 @@ export interface ContactAuditEvent extends ContactScope {
   readonly version: number;
   readonly actorType: 'SYSTEM' | 'OPERATOR';
   readonly actorId: string;
+  readonly authorizedByRole: ContactAuthorizedRole;
   readonly authorityPolicyVersion: typeof CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION;
   readonly reasonCode: string;
   readonly occurredAt: string;
@@ -66,17 +68,32 @@ export interface ContactRuntimeTransaction {
   cancelPendingAutomation(scope: ContactScope, occurredAt: string): Promise<void>;
 }
 
+export interface ProcessClaimedOutboxInput extends ContactScope {
+  readonly messageId: string;
+  readonly workerId: string;
+  readonly now: string;
+  readonly retryAvailableAt: string;
+  readonly errorCode: string;
+}
+
 export interface ContactRuntimeRepositoryPort {
   transaction<T>(work: (tx: ContactRuntimeTransaction) => Promise<T>): Promise<T>;
   claimDueSessions(input: { workerId: string; now: string; leaseMs: number; limit: number }): Promise<ContactSessionRecord[]>;
   releaseLease(scope: ContactScope, workerId: string): Promise<void>;
   claimDueOutbox(input: { workerId: string; now: string; leaseMs: number; limit: number }): Promise<ContactOutboxMessage[]>;
-  markOutboxDelivered(input: ContactScope & { messageId: string; workerId: string; deliveredAt: string }): Promise<'UPDATED' | 'CANCELLED' | 'CONFLICT'>;
-  markOutboxRetry(input: ContactScope & { messageId: string; workerId: string; availableAt: string; errorCode: string }): Promise<'UPDATED' | 'CANCELLED' | 'CONFLICT'>;
+  processClaimedOutbox(
+    input: ProcessClaimedOutboxInput,
+    deliver: (message: ContactOutboxMessage) => Promise<'SENT' | 'UNAVAILABLE'>
+  ): Promise<OutboxDeliveryDisposition>;
   releaseOutboxLease(input: ContactScope & { messageId: string; workerId: string }): Promise<void>;
 }
 
 export interface ContactChannelPort {
+  /**
+   * Production adapters MUST enforce the supplied stable idempotency key. A
+   * transport call may be repeated after a crash before database acknowledgement,
+   * but it must not create a second logical contact delivery.
+   */
   send(input: ContactScope & { channel: ContactChannel; promptId: string; idempotencyKey: string }): Promise<'SENT' | 'UNAVAILABLE'>;
 }
 
@@ -91,6 +108,8 @@ export interface OpenContactInput extends ContactScope {
 }
 
 export interface CallbackInput extends ContactScope {
+  readonly authenticatedTenantId: string;
+  readonly authenticatedCaseId: string;
   readonly callbackId: string;
   readonly traceId: string;
   readonly occurredAt: string;
@@ -101,6 +120,8 @@ export interface CallbackInput extends ContactScope {
 export interface OperatorTakeoverInput extends ContactScope {
   readonly operatorId: string;
   readonly authenticatedTenantId: string;
+  readonly authenticatedCaseId: string;
+  readonly authorizedRole: Exclude<ContactAuthorizedRole, 'SYSTEM'>;
   readonly traceId: string;
   readonly occurredAt: string;
   readonly idempotencyKey: string;
@@ -133,18 +154,18 @@ export class ContactOrchestrationService {
       };
       await tx.insertSession(session);
       await tx.insertOutboxIfAbsent(await this.outbox(session, input.preferredChannel, 'contact.response', input.occurredAt));
-      await tx.insertAuditIfAbsent(await this.audit(session, 'CONTACT_OPENED', 'contact_opened', input.traceId, input.occurredAt, 'SYSTEM', 'runtime'));
+      await tx.insertAuditIfAbsent(await this.audit(session, 'CONTACT_OPENED', 'contact_opened', input.traceId, input.occurredAt, 'SYSTEM', 'runtime', 'SYSTEM'));
       return 'APPLIED';
     });
   }
 
   async handleCallback(input: CallbackInput): Promise<RuntimeDisposition> {
-    if (!validScope(input) || !validId(input.callbackId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt)) return 'HUMAN_REVIEW';
+    if (!validScope(input) || input.authenticatedTenantId !== input.tenantId || input.authenticatedCaseId !== input.caseId || !validId(input.callbackId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt)) return 'HUMAN_REVIEW';
     const inboxKey = `callback|${input.tenantId}|${input.caseId}|${input.sessionId}|${input.callbackId}`;
     return this.repository.transaction(async (tx) => {
-      if ((await tx.insertInboxIfAbsent(input, inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
       const current = await tx.getSessionForUpdate(input);
       if (current === null) return 'HUMAN_REVIEW';
+      if ((await tx.insertInboxIfAbsent(input, inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
       if (current.automationSuppressed || ['OPERATOR_TAKEOVER', 'ESCALATED', 'COMPLETED'].includes(current.state)) return 'IDEMPOTENT';
       const transition = callbackTransition(current.state, input.kind);
       if (transition === null) return this.failToReview(tx, current, input.traceId, input.occurredAt, 'invalid_callback_transition');
@@ -154,23 +175,23 @@ export class ContactOrchestrationService {
         responseDeadlineAt: null, updatedAt: input.occurredAt
       };
       if ((await tx.updateSession(next, current.version)) === 'CONFLICT') return 'CONFLICT';
-      await tx.insertAuditIfAbsent(await this.audit(next, `CALLBACK_${input.kind}`, input.kind.toLowerCase(), input.traceId, input.occurredAt, 'SYSTEM', 'callback'));
+      await tx.insertAuditIfAbsent(await this.audit(next, `CALLBACK_${input.kind}`, input.kind.toLowerCase(), input.traceId, input.occurredAt, 'SYSTEM', 'callback', 'SYSTEM'));
       return transition === 'HUMAN_REVIEW' ? 'HUMAN_REVIEW' : 'APPLIED';
     });
   }
 
   async operatorTakeover(input: OperatorTakeoverInput): Promise<RuntimeDisposition> {
-    if (!validScope(input) || input.authenticatedTenantId !== input.tenantId || !validId(input.operatorId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt) || input.authorityPolicyVersion !== CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION) return 'HUMAN_REVIEW';
+    if (!validScope(input) || input.authenticatedTenantId !== input.tenantId || input.authenticatedCaseId !== input.caseId || !humanOperatorRole(input.authorizedRole) || !validId(input.operatorId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt) || input.authorityPolicyVersion !== CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION) return 'HUMAN_REVIEW';
     const inboxKey = `takeover|${input.tenantId}|${input.caseId}|${input.sessionId}|${input.operatorId}|${input.idempotencyKey}`;
     return this.repository.transaction(async (tx) => {
-      if ((await tx.insertInboxIfAbsent(input, inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
       const current = await tx.getSessionForUpdate(input);
       if (current === null) return 'HUMAN_REVIEW';
+      if ((await tx.insertInboxIfAbsent(input, inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
       if (current.automationSuppressed && current.assignedOperatorId === input.operatorId) return 'IDEMPOTENT';
       const next: ContactSessionRecord = { ...current, state: 'OPERATOR_TAKEOVER', assignedOperatorId: input.operatorId, automationSuppressed: true, nextActionAt: null, responseDeadlineAt: null, leaseOwner: null, leaseExpiresAt: null, version: current.version + 1, updatedAt: input.occurredAt };
       await tx.cancelPendingAutomation(input, input.occurredAt);
       if ((await tx.updateSession(next, current.version)) === 'CONFLICT') return 'CONFLICT';
-      await tx.insertAuditIfAbsent(await this.audit(next, 'OPERATOR_TAKEOVER', 'operator_takeover', input.traceId, input.occurredAt, 'OPERATOR', input.operatorId));
+      await tx.insertAuditIfAbsent(await this.audit(next, 'OPERATOR_TAKEOVER', 'operator_takeover', input.traceId, input.occurredAt, 'OPERATOR', input.operatorId, input.authorizedRole));
       return 'APPLIED';
     });
   }
@@ -193,20 +214,19 @@ export class ContactOrchestrationService {
     const results: Array<ContactScope & { messageId: string; disposition: OutboxDeliveryDisposition }> = [];
     for (const message of claimed) {
       const scope = scopeOf(message);
+      const retryAvailableAt = new Date(Date.parse(now) + boundedOutboxBackoff(message.attempt)).toISOString();
       let disposition: OutboxDeliveryDisposition = 'CONFLICT';
       try {
-        if (message.cancelledAt !== null) disposition = 'CANCELLED';
-        else {
-          const sent = await this.channel.send({ ...scope, channel: message.channel, promptId: message.promptId, idempotencyKey: message.idempotencyKey });
-          if (sent === 'SENT') {
-            const marked = await this.repository.markOutboxDelivered({ ...scope, messageId: message.messageId, workerId, deliveredAt: now });
-            disposition = marked === 'UPDATED' ? 'DELIVERED' : marked === 'CANCELLED' ? 'CANCELLED' : 'CONFLICT';
-          } else {
-            const availableAt = new Date(Date.parse(now) + boundedOutboxBackoff(message.attempt)).toISOString();
-            const marked = await this.repository.markOutboxRetry({ ...scope, messageId: message.messageId, workerId, availableAt, errorCode: 'channel_unavailable' });
-            disposition = marked === 'UPDATED' ? 'RETRY' : marked === 'CANCELLED' ? 'CANCELLED' : 'CONFLICT';
+        disposition = await this.repository.processClaimedOutbox(
+          { ...scope, messageId: message.messageId, workerId, now, retryAvailableAt, errorCode: 'channel_unavailable' },
+          async (fresh) => {
+            try {
+              return await this.channel.send({ ...scopeOf(fresh), channel: fresh.channel, promptId: fresh.promptId, idempotencyKey: fresh.idempotencyKey });
+            } catch {
+              return 'UNAVAILABLE';
+            }
           }
-        }
+        );
       } finally {
         await this.repository.releaseOutboxLease({ ...scope, messageId: message.messageId, workerId });
       }
@@ -224,14 +244,14 @@ export class ContactOrchestrationService {
       if (current.state === 'AWAITING_RESPONSE') {
         const noResponse: ContactSessionRecord = { ...current, state: 'NO_RESPONSE', responseDeadlineAt: null, nextActionAt: new Date(Date.parse(now) + HUMAN_CONTACT_RETRY_BASE_DELAY_MS).toISOString(), version: current.version + 1, updatedAt: now };
         if ((await tx.updateSession(noResponse, current.version)) === 'CONFLICT') return 'CONFLICT';
-        await tx.insertAuditIfAbsent(await this.audit(noResponse, 'CONTACT_NO_RESPONSE', 'response_deadline_elapsed', `worker-${workerId}`, now, 'SYSTEM', workerId));
+        await tx.insertAuditIfAbsent(await this.audit(noResponse, 'CONTACT_NO_RESPONSE', 'response_deadline_elapsed', `worker-${workerId}`, now, 'SYSTEM', workerId, 'SYSTEM'));
         return 'APPLIED';
       }
       if (current.state !== 'NO_RESPONSE' && current.state !== 'DISCONNECTED') return this.failToReview(tx, current, `worker-${workerId}`, now, 'unexpected_due_state');
       if (current.attemptCount >= HUMAN_CONTACT_MAX_AUTOMATED_ATTEMPTS) {
         const escalated: ContactSessionRecord = { ...current, state: 'ESCALATED', nextActionAt: null, responseDeadlineAt: null, version: current.version + 1, updatedAt: now };
         if ((await tx.updateSession(escalated, current.version)) === 'CONFLICT') return 'CONFLICT';
-        await tx.insertAuditIfAbsent(await this.audit(escalated, 'CONTACT_ESCALATED', 'retry_limit_exhausted', `worker-${workerId}`, now, 'SYSTEM', workerId));
+        await tx.insertAuditIfAbsent(await this.audit(escalated, 'CONTACT_ESCALATED', 'retry_limit_exhausted', `worker-${workerId}`, now, 'SYSTEM', workerId, 'SYSTEM'));
         return 'ESCALATED';
       }
       const attempt = current.attemptCount + 1;
@@ -239,7 +259,7 @@ export class ContactOrchestrationService {
       const retried: ContactSessionRecord = { ...current, state: 'AWAITING_RESPONSE', attemptCount: attempt, responseDeadlineAt: nextDeadline, nextActionAt: nextDeadline, version: current.version + 1, updatedAt: now };
       if ((await tx.updateSession(retried, current.version)) === 'CONFLICT') return 'CONFLICT';
       await tx.insertOutboxIfAbsent(await this.outbox(retried, fallbackChannel(retried.activeChannel, attempt), 'contact.response', now));
-      await tx.insertAuditIfAbsent(await this.audit(retried, 'CONTACT_RETRY_SCHEDULED', current.state === 'DISCONNECTED' ? 'channel_disconnected' : 'no_response_retry_due', `worker-${workerId}`, now, 'SYSTEM', workerId));
+      await tx.insertAuditIfAbsent(await this.audit(retried, 'CONTACT_RETRY_SCHEDULED', current.state === 'DISCONNECTED' ? 'channel_disconnected' : 'no_response_retry_due', `worker-${workerId}`, now, 'SYSTEM', workerId, 'SYSTEM'));
       return 'APPLIED';
     });
   }
@@ -247,17 +267,17 @@ export class ContactOrchestrationService {
   private async failToReview(tx: ContactRuntimeTransaction, current: ContactSessionRecord, traceId: string, occurredAt: string, reasonCode: string): Promise<RuntimeDisposition> {
     const review: ContactSessionRecord = { ...current, state: 'HUMAN_REVIEW', nextActionAt: null, responseDeadlineAt: null, version: current.version + 1, updatedAt: occurredAt };
     if ((await tx.updateSession(review, current.version)) === 'CONFLICT') return 'CONFLICT';
-    await tx.insertAuditIfAbsent(await this.audit(review, 'CONTACT_RUNTIME_REJECTED', reasonCode, traceId, occurredAt, 'SYSTEM', 'runtime'));
+    await tx.insertAuditIfAbsent(await this.audit(review, 'CONTACT_RUNTIME_REJECTED', reasonCode, traceId, occurredAt, 'SYSTEM', 'runtime', 'SYSTEM'));
     return 'HUMAN_REVIEW';
   }
 
   private async outbox(session: ContactSessionRecord, channel: ContactChannel, promptId: string, availableAt: string): Promise<ContactOutboxMessage> {
-    const key = `${session.tenantId}|${session.caseId}|${session.sessionId}|${session.version}|${channel}|${promptId}`;
+    const key = `${CONTACT_RUNTIME_POLICY_VERSION}|${session.tenantId}|${session.caseId}|${session.sessionId}|${session.version}|${channel}|${promptId}`;
     return { ...scopeOf(session), messageId: await this.ids.create('contact-outbox', key), channel, promptId, idempotencyKey: key, availableAt, attempt: session.attemptCount, leaseOwner: null, leaseExpiresAt: null, deliveredAt: null, cancelledAt: null, lastErrorCode: null };
   }
 
-  private async audit(session: ContactSessionRecord, eventType: string, reasonCode: string, traceId: string, occurredAt: string, actorType: 'SYSTEM' | 'OPERATOR', actorId: string): Promise<ContactAuditEvent> {
-    return { ...scopeOf(session), eventId: await this.ids.create('contact-audit', `${session.tenantId}|${session.caseId}|${session.sessionId}|${session.version}|${eventType}`), eventType, state: session.state, version: session.version, actorType, actorId, authorityPolicyVersion: CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION, reasonCode, occurredAt, traceId, runtimePolicyVersion: CONTACT_RUNTIME_POLICY_VERSION };
+  private async audit(session: ContactSessionRecord, eventType: string, reasonCode: string, traceId: string, occurredAt: string, actorType: 'SYSTEM' | 'OPERATOR', actorId: string, authorizedByRole: ContactAuthorizedRole): Promise<ContactAuditEvent> {
+    return { ...scopeOf(session), eventId: await this.ids.create('contact-audit', `${session.tenantId}|${session.caseId}|${session.sessionId}|${session.version}|${eventType}`), eventType, state: session.state, version: session.version, actorType, actorId, authorizedByRole, authorityPolicyVersion: CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION, reasonCode, occurredAt, traceId, runtimePolicyVersion: CONTACT_RUNTIME_POLICY_VERSION };
   }
 }
 
@@ -269,6 +289,7 @@ function callbackTransition(current: HumanContactState, kind: CallbackInput['kin
 }
 function fallbackChannel(active: HumanContactSessionContract['activeChannel'], attempt: number): ContactChannel { if (attempt <= 1) return active === 'IN_APP_CHAT' || active === 'IN_APP_VOICE' ? 'IN_APP' : 'PUSH'; if (attempt === 2) return 'PUSH'; return 'SMS_SIM'; }
 function boundedOutboxBackoff(attempt: number): number { return Math.min(60_000, HUMAN_CONTACT_RETRY_BASE_DELAY_MS * Math.max(1, attempt)); }
+function humanOperatorRole(role: ContactAuthorizedRole): role is Exclude<ContactAuthorizedRole, 'SYSTEM'> { return role === 'OPERATOR' || role === 'SUPERVISOR' || role === 'SAFETY_LEAD'; }
 function scopeOf(value: ContactScope): ContactScope { return { tenantId: value.tenantId, caseId: value.caseId, sessionId: value.sessionId }; }
 function validScope(value: ContactScope): boolean { return validId(value.tenantId) && validId(value.caseId) && validId(value.sessionId); }
 function validId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value); }
