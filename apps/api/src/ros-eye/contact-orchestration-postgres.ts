@@ -39,7 +39,8 @@ const SESSION_COLUMNS = `
 const OUTBOX_COLUMNS = `
   tenant_id, case_id, session_id, message_id, channel, prompt_id,
   idempotency_key, available_at, attempt, lease_owner, lease_expires_at,
-  delivered_at, cancelled_at, last_error_code`;
+  delivered_at, cancelled_at, last_error_code, delivery_token,
+  delivery_started_at, delivery_deadline_at`;
 
 export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
   getSessionForUpdate: `SELECT ${SESSION_COLUMNS} FROM ros_eye_contact_sessions
@@ -75,46 +76,68 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
         AND cancelled_at IS NULL
         AND available_at <= $2::timestamptz
         AND (lease_expires_at IS NULL OR lease_expires_at <= $2::timestamptz)
+        AND (delivery_token IS NULL OR delivery_deadline_at <= $2::timestamptz)
       ORDER BY available_at, tenant_id, case_id, session_id, message_id
       FOR UPDATE SKIP LOCKED
       LIMIT $4
     )
     UPDATE ros_eye_contact_outbox AS message
     SET lease_owner = $1,
-        lease_expires_at = $2::timestamptz + ($3::bigint * interval '1 millisecond')
+        lease_expires_at = $2::timestamptz + ($3::bigint * interval '1 millisecond'),
+        delivery_token = NULL,
+        delivery_started_at = NULL,
+        delivery_deadline_at = NULL
     FROM due
     WHERE message.tenant_id = due.tenant_id
       AND message.case_id = due.case_id
       AND message.session_id = due.session_id
       AND message.message_id = due.message_id
     RETURNING message.*`,
-  getClaimedOutboxForDelivery: `SELECT ${OUTBOX_COLUMNS}
-    FROM ros_eye_contact_outbox
+  reserveOutboxDelivery: `UPDATE ros_eye_contact_outbox AS message
+    SET delivery_token = $7,
+        delivery_started_at = $6::timestamptz,
+        delivery_deadline_at = $8::timestamptz
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
       AND message_id = $4 AND lease_owner = $5
       AND lease_expires_at > $6::timestamptz
-    FOR UPDATE`,
+      AND delivered_at IS NULL AND cancelled_at IS NULL
+      AND (delivery_token IS NULL OR delivery_deadline_at <= $6::timestamptz)
+    RETURNING message.*`,
   markOutboxDelivered: `UPDATE ros_eye_contact_outbox
-    SET delivered_at = $6::timestamptz,
+    SET delivered_at = clock_timestamp(),
         lease_owner = NULL,
         lease_expires_at = NULL,
+        delivery_token = NULL,
+        delivery_started_at = NULL,
+        delivery_deadline_at = NULL,
         last_error_code = NULL
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
       AND message_id = $4 AND lease_owner = $5
+      AND delivery_token = $6
+      AND delivery_deadline_at >= clock_timestamp()
       AND delivered_at IS NULL AND cancelled_at IS NULL`,
   markOutboxRetry: `UPDATE ros_eye_contact_outbox
-    SET available_at = $6::timestamptz,
+    SET available_at = $7::timestamptz,
         lease_owner = NULL,
         lease_expires_at = NULL,
-        last_error_code = $7
+        delivery_token = NULL,
+        delivery_started_at = NULL,
+        delivery_deadline_at = NULL,
+        last_error_code = $8
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
       AND message_id = $4 AND lease_owner = $5
+      AND delivery_token = $6
       AND delivered_at IS NULL AND cancelled_at IS NULL`,
+  readOutboxStatus: `SELECT delivered_at, cancelled_at, delivery_token
+    FROM ros_eye_contact_outbox
+    WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
+      AND message_id = $4`,
   releaseOutboxLease: `UPDATE ros_eye_contact_outbox
     SET lease_owner = NULL, lease_expires_at = NULL
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
       AND message_id = $4 AND lease_owner = $5
-      AND delivered_at IS NULL AND cancelled_at IS NULL`
+      AND delivered_at IS NULL AND cancelled_at IS NULL
+      AND (delivery_token IS NULL OR delivery_deadline_at <= clock_timestamp())`
 });
 
 export class PostgresContactRuntimeRepository implements ContactRuntimeRepositoryPort {
@@ -146,39 +169,82 @@ export class PostgresContactRuntimeRepository implements ContactRuntimeRepositor
     input: ProcessClaimedOutboxInput,
     deliver: (message: ContactOutboxMessage) => Promise<'SENT' | 'UNAVAILABLE'>
   ): Promise<OutboxDeliveryDisposition> {
-    return this.pool.transaction(async (connection) => {
-      const selected = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.getClaimedOutboxForDelivery, [
-        input.tenantId, input.caseId, input.sessionId, input.messageId, input.workerId, input.now
+    const prepared = await this.pool.transaction(async (connection) => {
+      const result = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery, [
+        input.tenantId,
+        input.caseId,
+        input.sessionId,
+        input.messageId,
+        input.workerId,
+        input.now,
+        input.deliveryToken,
+        input.deliveryDeadlineAt
       ]);
-      const row = selected.rows[0];
-      if (row === undefined) return 'CONFLICT';
-      const message = mapOutbox(row);
-      if (message.cancelledAt !== null) return 'CANCELLED';
-      if (message.deliveredAt !== null) return 'DELIVERED';
+      return result.rows[0] === undefined ? null : mapOutbox(result.rows[0]);
+    });
 
-      // Hold the scoped row lock across the bounded provider call. This gives a
-      // deterministic order with operator takeover/cancellation and prevents a
-      // cancelled message from being sent after suppression has committed.
-      const delivery = await deliver(message);
+    if (prepared === null) return this.readDisposition(input);
+
+    // No SQL transaction or row lock is open while the untrusted provider runs.
+    // The service enforces an AbortSignal-backed deadline shorter than the lease.
+    const delivery = await deliver(prepared);
+
+    return this.pool.transaction(async (connection) => {
       if (delivery === 'SENT') {
-        const updated = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, [
-          input.tenantId, input.caseId, input.sessionId, input.messageId, input.workerId, input.now
+        const delivered = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, [
+          input.tenantId,
+          input.caseId,
+          input.sessionId,
+          input.messageId,
+          input.workerId,
+          input.deliveryToken
         ]);
-        return updated.rowCount === 1 ? 'DELIVERED' : 'CONFLICT';
+        if (delivered.rowCount === 1) return 'DELIVERED';
+
+        // A late provider success is never acknowledged as delivered. Retrying
+        // with the stable provider idempotency key is safer than accepting a
+        // result after its delivery fence expired.
+        const lateRetry = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, [
+          input.tenantId,
+          input.caseId,
+          input.sessionId,
+          input.messageId,
+          input.workerId,
+          input.deliveryToken,
+          input.retryAvailableAt,
+          'delivery_deadline_expired'
+        ]);
+        if (lateRetry.rowCount === 1) return 'RETRY';
+        return readDispositionWithConnection(connection, input);
       }
 
-      const updated = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, [
-        input.tenantId, input.caseId, input.sessionId, input.messageId, input.workerId,
-        input.retryAvailableAt, input.errorCode
+      const retry = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, [
+        input.tenantId,
+        input.caseId,
+        input.sessionId,
+        input.messageId,
+        input.workerId,
+        input.deliveryToken,
+        input.retryAvailableAt,
+        input.errorCode
       ]);
-      return updated.rowCount === 1 ? 'RETRY' : 'CONFLICT';
+      if (retry.rowCount === 1) return 'RETRY';
+      return readDispositionWithConnection(connection, input);
     });
   }
 
   async releaseOutboxLease(input: ContactScope & { messageId: string; workerId: string }): Promise<void> {
     await this.pool.query(POSTGRES_CONTACT_RUNTIME_SQL.releaseOutboxLease, [
-      input.tenantId, input.caseId, input.sessionId, input.messageId, input.workerId
+      input.tenantId,
+      input.caseId,
+      input.sessionId,
+      input.messageId,
+      input.workerId
     ]);
+  }
+
+  private async readDisposition(input: ProcessClaimedOutboxInput): Promise<OutboxDeliveryDisposition> {
+    return readDispositionWithConnection(this.pool, input);
   }
 }
 
@@ -244,9 +310,10 @@ class PostgresContactRuntimeTransaction implements ContactRuntimeTransaction {
     const result = await this.connection.query(`INSERT INTO ros_eye_contact_outbox (
       tenant_id, case_id, session_id, message_id, channel, prompt_id,
       idempotency_key, available_at, attempt, lease_owner, lease_expires_at,
-      delivered_at, cancelled_at, last_error_code
+      delivered_at, cancelled_at, last_error_code, delivery_token,
+      delivery_started_at, delivery_deadline_at
     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,$9,$10,$11::timestamptz,
-      $12::timestamptz,$13::timestamptz,$14)
+      $12::timestamptz,$13::timestamptz,$14,NULL,NULL,NULL)
       ON CONFLICT DO NOTHING`, [
       message.tenantId, message.caseId, message.sessionId, message.messageId,
       message.channel, message.promptId, message.idempotencyKey,
@@ -259,11 +326,33 @@ class PostgresContactRuntimeTransaction implements ContactRuntimeTransaction {
 
   async cancelPendingAutomation(scope: ContactScope, occurredAt: string): Promise<void> {
     await this.connection.query(`UPDATE ros_eye_contact_outbox
-      SET cancelled_at=$4::timestamptz, lease_owner=NULL, lease_expires_at=NULL
+      SET cancelled_at=$4::timestamptz,
+          lease_owner=NULL,
+          lease_expires_at=NULL,
+          delivery_token=NULL,
+          delivery_started_at=NULL,
+          delivery_deadline_at=NULL
       WHERE tenant_id=$1 AND case_id=$2 AND session_id=$3
         AND delivered_at IS NULL AND cancelled_at IS NULL`,
     [scope.tenantId, scope.caseId, scope.sessionId, occurredAt]);
   }
+}
+
+async function readDispositionWithConnection(
+  connection: ContactSqlConnectionPort,
+  input: ProcessClaimedOutboxInput
+): Promise<OutboxDeliveryDisposition> {
+  const status = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus, [
+    input.tenantId,
+    input.caseId,
+    input.sessionId,
+    input.messageId
+  ]);
+  const row = status.rows[0];
+  if (row === undefined) return 'CONFLICT';
+  if (row.cancelled_at !== null && row.cancelled_at !== undefined) return 'CANCELLED';
+  if (row.delivered_at !== null && row.delivered_at !== undefined) return 'DELIVERED';
+  return 'CONFLICT';
 }
 
 function sessionValues(session: ContactSessionRecord): readonly unknown[] {
