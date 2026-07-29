@@ -3,11 +3,13 @@ import {
   HUMAN_SAFETY_TEMPORAL_POLICY_VERSION,
   acceptHumanSafetySignalEnvelope,
   validateHumanSafetySignalEnvelope,
-  type HumanSafetySignalAcceptancePorts,
-  type HumanSafetySignalEnvelope
+  type HumanSafetySignalEnvelope,
+  type ReplayNonceConsumeRequest,
+  type ReplayNonceConsumeResult,
+  type ReplayTokenDigesterPort
 } from '@ros/contracts';
 
-export const ROS_EYE_INGESTION_POLICY_VERSION = 'ros-eye.ingestion.v1' as const;
+export const ROS_EYE_INGESTION_POLICY_VERSION = 'ros-eye.ingestion.v2' as const;
 
 export type SignalDisposition = 'ACCEPTED' | 'QUARANTINED' | 'HUMAN_REVIEW' | 'BACKPRESSURE';
 export type SourceTrustState = 'ACTIVE' | 'REVOKED' | 'UNKNOWN';
@@ -89,7 +91,7 @@ export interface SourceRateLimitPort {
 }
 
 export interface ProvenanceStorePort {
-  append(record: AcceptedSignalProvenance): Promise<void>;
+  putIfAbsent(record: AcceptedSignalProvenance): Promise<'CREATED' | 'ALREADY_EXISTS'>;
 }
 
 export interface QuarantineStorePort {
@@ -97,7 +99,7 @@ export interface QuarantineStorePort {
 }
 
 export interface RawEvidenceStorePort {
-  put(input: { readonly signalId: string; readonly mediaType: string; readonly bytes: Uint8Array }): Promise<string>;
+  putIfAbsent(input: { readonly signalId: string; readonly mediaType: string; readonly bytes: Uint8Array }): Promise<string>;
 }
 
 export interface SafetyIntentStorePort {
@@ -108,7 +110,20 @@ export interface IdFactoryPort {
   create(namespace: string, material: string): Promise<string>;
 }
 
-export interface MultimodalSignalIngestionPorts extends HumanSafetySignalAcceptancePorts {
+/**
+ * A reservation is globally exclusive by nonceDigest. Reusing the same
+ * admissionId+scope resumes an interrupted attempt; a different scope or
+ * admissionId is a duplicate. No external ACCEPT is returned until commit.
+ */
+export interface RecoverableReplayAdmissionPort {
+  reserve(request: ReplayNonceConsumeRequest, admissionId: string): Promise<ReplayNonceConsumeResult>;
+  commit(input: { readonly admissionId: string; readonly nonceDigest: string; readonly scopeDigest: string }): Promise<'COMMITTED' | 'ALREADY_COMMITTED' | 'UNAVAILABLE'>;
+  abort(input: { readonly admissionId: string; readonly nonceDigest: string; readonly scopeDigest: string }): Promise<'ABORTED' | 'NOT_FOUND' | 'UNAVAILABLE'>;
+}
+
+export interface MultimodalSignalIngestionPorts {
+  readonly replayAdmission: RecoverableReplayAdmissionPort;
+  readonly tokenDigester: ReplayTokenDigesterPort;
   readonly sourceTrustRegistry: SourceTrustRegistryPort;
   readonly rateLimiter: SourceRateLimitPort;
   readonly provenanceStore: ProvenanceStorePort;
@@ -128,8 +143,13 @@ const DEFAULT_OPTIONS: MultimodalSignalIngestionOptions = Object.freeze({
   maximumAcceptedLocationAccuracyMeters: 250
 });
 
+interface QueueEntry {
+  readonly request: MultimodalSignalIngestionRequest;
+  readonly resolve: (decision: IngestionDecision) => void;
+}
+
 export class MultimodalSignalIngestionService {
-  private readonly queue: MultimodalSignalIngestionRequest[] = [];
+  private readonly queue: QueueEntry[] = [];
   private processing = false;
   private degraded = false;
 
@@ -150,12 +170,16 @@ export class MultimodalSignalIngestionService {
   }
 
   async enqueue(request: MultimodalSignalIngestionRequest): Promise<IngestionDecision> {
-    if (this.queue.length >= this.options.maxQueueDepth) {
+    const outstanding = this.queue.length + (this.processing ? 1 : 0);
+    if (outstanding >= this.options.maxQueueDepth) {
       this.degraded = true;
       return this.quarantine(request, 'BACKPRESSURE', 'queue_capacity_exceeded');
     }
-    this.queue.push(request);
-    return this.drainOne();
+
+    return new Promise<IngestionDecision>((resolve) => {
+      this.queue.push({ request, resolve });
+      void this.drainQueue();
+    });
   }
 
   async ingest(request: MultimodalSignalIngestionRequest): Promise<IngestionDecision> {
@@ -188,8 +212,31 @@ export class MultimodalSignalIngestionService {
       return this.quarantine(request, 'HUMAN_REVIEW', 'location_accuracy_below_policy');
     }
 
-    const acceptance = await acceptHumanSafetySignalEnvelope(request.envelope, this.ports, request.evaluatedAt);
-    if (!acceptance.accepted || acceptance.disposition !== 'ACCEPT' || acceptance.replayScopeDigest === null) {
+    let nonceDigest: string;
+    try {
+      nonceDigest = await this.ports.tokenDigester.digest(envelope.integrity.replayToken);
+    } catch {
+      return this.quarantine(request, 'HUMAN_REVIEW', 'replay_registry_unavailable');
+    }
+    if (!validDigest(nonceDigest)) return this.quarantine(request, 'QUARANTINED', 'invalid_replay_token_digest');
+
+    const admissionId = await this.ports.idFactory.create('admission', `${envelope.sourceId}|${envelope.signalId}|${nonceDigest}`);
+    let reservation: ReplayNonceConsumeRequest | null = null;
+    const acceptance = await acceptHumanSafetySignalEnvelope(
+      request.envelope,
+      {
+        tokenDigester: this.ports.tokenDigester,
+        replayRegistry: {
+          consume: async (replayRequest) => {
+            reservation = replayRequest;
+            return this.ports.replayAdmission.reserve(replayRequest, admissionId);
+          }
+        }
+      },
+      request.evaluatedAt
+    );
+
+    if (!acceptance.accepted || acceptance.disposition !== 'ACCEPT' || acceptance.replayScopeDigest === null || reservation === null) {
       return this.quarantine(
         request,
         acceptance.disposition === 'HUMAN_REVIEW' ? 'HUMAN_REVIEW' : 'QUARANTINED',
@@ -197,46 +244,44 @@ export class MultimodalSignalIngestionService {
       );
     }
 
-    let rawEvidenceRef: string | null = null;
-    if (request.rawEvidence !== undefined) {
-      try {
-        rawEvidenceRef = await this.ports.rawEvidenceStore.put({
+    const reserved = reservation as ReplayNonceConsumeRequest;
+    const provenanceId = await this.ports.idFactory.create('provenance', `${envelope.signalId}|${acceptance.replayScopeDigest}`);
+    const intentId = await this.ports.idFactory.create('intent', envelope.signalId);
+
+    try {
+      let rawEvidenceRef: string | null = null;
+      if (request.rawEvidence !== undefined) {
+        rawEvidenceRef = await this.ports.rawEvidenceStore.putIfAbsent({
           signalId: envelope.signalId,
           mediaType: request.rawEvidence.mediaType,
           bytes: request.rawEvidence.bytes
         });
-      } catch {
-        return this.quarantine(request, 'HUMAN_REVIEW', 'raw_evidence_store_unavailable');
       }
-    }
 
-    const provenanceId = await this.ports.idFactory.create('provenance', `${envelope.signalId}|${request.correlationId}|${acceptance.replayScopeDigest}`);
-    const intentId = await this.ports.idFactory.create('intent', envelope.signalId);
-    const provenance: AcceptedSignalProvenance = {
-      provenanceId,
-      signalId: envelope.signalId,
-      sourceId: envelope.sourceId,
-      sourceType: envelope.sourceType,
-      correlationId: request.correlationId,
-      traceId: request.traceId,
-      evaluatedAt: request.evaluatedAt,
-      occurredAt: envelope.occurredAt,
-      receivedAt: envelope.receivedAt,
-      schemaVersion: envelope.schemaVersion,
-      purposePolicyVersion: envelope.purposePolicyVersion,
-      replayPolicyVersion: HUMAN_SAFETY_REPLAY_POLICY_VERSION,
-      temporalPolicyVersion: HUMAN_SAFETY_TEMPORAL_POLICY_VERSION,
-      ingestionPolicyVersion: ROS_EYE_INGESTION_POLICY_VERSION,
-      replayScopeDigest: acceptance.replayScopeDigest,
-      sourceTrustState: 'ACTIVE',
-      confidenceInputs: confidenceInputs(envelope),
-      locationQuality: locationQuality(envelope),
-      rawEvidenceRef,
-      auditOutcome: 'ACCEPTED'
-    };
+      const provenance: AcceptedSignalProvenance = {
+        provenanceId,
+        signalId: envelope.signalId,
+        sourceId: envelope.sourceId,
+        sourceType: envelope.sourceType,
+        correlationId: request.correlationId,
+        traceId: request.traceId,
+        evaluatedAt: request.evaluatedAt,
+        occurredAt: envelope.occurredAt,
+        receivedAt: envelope.receivedAt,
+        schemaVersion: envelope.schemaVersion,
+        purposePolicyVersion: envelope.purposePolicyVersion,
+        replayPolicyVersion: HUMAN_SAFETY_REPLAY_POLICY_VERSION,
+        temporalPolicyVersion: HUMAN_SAFETY_TEMPORAL_POLICY_VERSION,
+        ingestionPolicyVersion: ROS_EYE_INGESTION_POLICY_VERSION,
+        replayScopeDigest: acceptance.replayScopeDigest,
+        sourceTrustState: 'ACTIVE',
+        confidenceInputs: confidenceInputs(envelope),
+        locationQuality: locationQuality(envelope),
+        rawEvidenceRef,
+        auditOutcome: 'ACCEPTED'
+      };
 
-    try {
-      await this.ports.provenanceStore.append(provenance);
+      await this.ports.provenanceStore.putIfAbsent(provenance);
       await this.ports.intentStore.createIfAbsent({
         intentId,
         signalId: envelope.signalId,
@@ -245,15 +290,30 @@ export class MultimodalSignalIngestionService {
         kind: envelope.payload.kind,
         createdAt: request.evaluatedAt
       });
+
+      const committed = await this.ports.replayAdmission.commit({
+        admissionId,
+        nonceDigest: reserved.nonceDigest,
+        scopeDigest: reserved.scopeDigest
+      });
+      if (committed === 'UNAVAILABLE') {
+        this.degraded = true;
+        return this.quarantine(request, 'HUMAN_REVIEW', 'replay_commit_unavailable');
+      }
     } catch {
       this.degraded = true;
+      await safeAbort(this.ports.replayAdmission, {
+        admissionId,
+        nonceDigest: reserved.nonceDigest,
+        scopeDigest: reserved.scopeDigest
+      });
       return this.quarantine(request, 'HUMAN_REVIEW', 'accepted_signal_persistence_unavailable');
     }
 
     this.degraded = false;
     return {
       disposition: 'ACCEPTED',
-      reasonCode: 'accepted_with_provenance',
+      reasonCode: 'accepted_with_recoverable_provenance',
       signalId: envelope.signalId,
       provenanceId,
       intentId,
@@ -262,26 +322,19 @@ export class MultimodalSignalIngestionService {
     };
   }
 
-  private async drainOne(): Promise<IngestionDecision> {
-    if (this.processing) {
-      this.degraded = true;
-      return {
-        disposition: 'BACKPRESSURE',
-        reasonCode: 'queue_processing_in_progress',
-        signalId: null,
-        provenanceId: null,
-        intentId: null,
-        readiness: this.getReadiness(),
-        ingestionPolicyVersion: ROS_EYE_INGESTION_POLICY_VERSION
-      };
-    }
-    const request = this.queue.shift();
-    if (request === undefined) throw new Error('queue invariant violated');
+  private async drainQueue(): Promise<void> {
+    if (this.processing) return;
     this.processing = true;
     try {
-      return await this.ingest(request);
+      while (true) {
+        const entry = this.queue.shift();
+        if (entry === undefined) break;
+        const decision = await this.ingest(entry.request);
+        entry.resolve(decision);
+      }
     } finally {
       this.processing = false;
+      if (this.queue.length > 0) void this.drainQueue();
     }
   }
 
@@ -319,6 +372,13 @@ export class MultimodalSignalIngestionService {
   }
 }
 
+async function safeAbort(
+  port: RecoverableReplayAdmissionPort,
+  input: { readonly admissionId: string; readonly nonceDigest: string; readonly scopeDigest: string }
+): Promise<void> {
+  try { await port.abort(input); } catch { /* fail closed; retry uses same admission identity */ }
+}
+
 async function safeSourceTrust(port: SourceTrustRegistryPort, sourceId: string, evaluatedAt: string): Promise<SourceTrustState> {
   try { return await port.getTrustState(sourceId, evaluatedAt); } catch { return 'UNKNOWN'; }
 }
@@ -353,6 +413,10 @@ function isEnvelope(value: unknown): value is HumanSafetySignalEnvelope {
 
 function validOpaqueId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value);
+}
+
+function validDigest(value: string): boolean {
+  return /^[a-f0-9]{64}$/i.test(value);
 }
 
 function validTimestamp(value: string): boolean {
