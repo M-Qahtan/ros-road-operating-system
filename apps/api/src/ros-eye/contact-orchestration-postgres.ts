@@ -63,7 +63,7 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
     WHERE session.tenant_id = due.tenant_id
       AND session.case_id = due.case_id
       AND session.session_id = due.session_id
-    RETURNING ${SESSION_COLUMNS}`,
+    RETURNING session.*`,
   releaseSessionLease: `UPDATE ros_eye_contact_sessions
     SET lease_owner = NULL, lease_expires_at = NULL
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
@@ -87,7 +87,7 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
       AND message.case_id = due.case_id
       AND message.session_id = due.session_id
       AND message.message_id = due.message_id
-    RETURNING ${OUTBOX_COLUMNS}`,
+    RETURNING message.*`,
   getClaimedOutboxForDelivery: `SELECT ${OUTBOX_COLUMNS}
     FROM ros_eye_contact_outbox
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
