@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import {
   type HumanSafetySignalEnvelope,
   type ReplayNonceConsumeRequest,
-  type ReplayNonceRegistryPort,
   type ReplayTokenDigesterPort
 } from '@ros/contracts';
 import {
@@ -11,6 +10,7 @@ import {
   type ProvenanceStorePort,
   type QuarantineStorePort,
   type RawEvidenceStorePort,
+  type RecoverableReplayAdmissionPort,
   type SafetyIntentRecord,
   type SafetyIntentStorePort,
   type SignalQuarantineRecord,
@@ -29,31 +29,67 @@ export class Sha256DigesterAdapter implements ReplayTokenDigesterPort, IdFactory
   }
 }
 
-export class AtomicInMemoryReplayNonceRegistry implements ReplayNonceRegistryPort {
-  private readonly consumed = new Map<string, { readonly scopeDigest: string; readonly expiresAtMs: number }>();
-  unavailable = false;
+type AdmissionState = 'RESERVED' | 'COMMITTED';
 
-  async consume(request: ReplayNonceConsumeRequest) {
+interface AdmissionRecord {
+  readonly admissionId: string;
+  readonly scopeDigest: string;
+  readonly expiresAtMs: number;
+  state: AdmissionState;
+}
+
+export class AtomicInMemoryReplayNonceRegistry implements RecoverableReplayAdmissionPort {
+  private readonly admissions = new Map<string, AdmissionRecord>();
+  unavailable = false;
+  failNextCommit = false;
+  failNextAbort = false;
+
+  async reserve(request: ReplayNonceConsumeRequest, admissionId: string) {
     if (this.unavailable) return 'UNAVAILABLE' as const;
     const expiresAtMs = Date.parse(request.expiresAt);
     if (!Number.isFinite(expiresAtMs)) return 'EXPIRED' as const;
-    const existing = this.consumed.get(request.nonceDigest);
-    if (existing !== undefined) return 'DUPLICATE' as const;
-    this.consumed.set(request.nonceDigest, { scopeDigest: request.scopeDigest, expiresAtMs });
-    return 'CONSUMED' as const;
+    const existing = this.admissions.get(request.nonceDigest);
+    if (existing === undefined) {
+      this.admissions.set(request.nonceDigest, { admissionId, scopeDigest: request.scopeDigest, expiresAtMs, state: 'RESERVED' });
+      return 'CONSUMED' as const;
+    }
+    if (existing.admissionId === admissionId && existing.scopeDigest === request.scopeDigest) return 'CONSUMED' as const;
+    return 'DUPLICATE' as const;
   }
 
-  snapshot(): ReadonlyArray<{ readonly nonceDigest: string; readonly scopeDigest: string; readonly expiresAtMs: number }> {
-    return [...this.consumed.entries()].map(([nonceDigest, value]) => ({ nonceDigest, ...value }));
+  async commit(input: { readonly admissionId: string; readonly nonceDigest: string; readonly scopeDigest: string }) {
+    if (this.unavailable || this.failNextCommit) {
+      this.failNextCommit = false;
+      return 'UNAVAILABLE' as const;
+    }
+    const existing = this.admissions.get(input.nonceDigest);
+    if (existing === undefined || existing.admissionId !== input.admissionId || existing.scopeDigest !== input.scopeDigest) return 'UNAVAILABLE' as const;
+    if (existing.state === 'COMMITTED') return 'ALREADY_COMMITTED' as const;
+    existing.state = 'COMMITTED';
+    return 'COMMITTED' as const;
+  }
+
+  async abort(input: { readonly admissionId: string; readonly nonceDigest: string; readonly scopeDigest: string }) {
+    if (this.unavailable || this.failNextAbort) {
+      this.failNextAbort = false;
+      return 'UNAVAILABLE' as const;
+    }
+    const existing = this.admissions.get(input.nonceDigest);
+    if (existing === undefined) return 'NOT_FOUND' as const;
+    if (existing.admissionId !== input.admissionId || existing.scopeDigest !== input.scopeDigest || existing.state === 'COMMITTED') return 'NOT_FOUND' as const;
+    this.admissions.delete(input.nonceDigest);
+    return 'ABORTED' as const;
+  }
+
+  snapshot(): ReadonlyArray<{ readonly nonceDigest: string; readonly admissionId: string; readonly scopeDigest: string; readonly expiresAtMs: number; readonly state: AdmissionState }> {
+    return [...this.admissions.entries()].map(([nonceDigest, value]) => ({ nonceDigest, ...value }));
   }
 }
 
 export class InMemorySourceTrustRegistry implements SourceTrustRegistryPort {
   private readonly states = new Map<string, SourceTrustState>();
   unavailable = false;
-
   set(sourceId: string, state: SourceTrustState): void { this.states.set(sourceId, state); }
-
   async getTrustState(sourceId: string): Promise<SourceTrustState> {
     if (this.unavailable) throw new Error('source registry unavailable');
     return this.states.get(sourceId) ?? 'UNKNOWN';
@@ -86,11 +122,18 @@ export class FixedWindowSourceRateLimiter implements SourceRateLimitPort {
 }
 
 export class InMemoryProvenanceStore implements ProvenanceStorePort {
-  readonly records: AcceptedSignalProvenance[] = [];
+  private readonly byId = new Map<string, AcceptedSignalProvenance>();
   unavailable = false;
-  async append(record: AcceptedSignalProvenance): Promise<void> {
-    if (this.unavailable) throw new Error('provenance store unavailable');
-    this.records.push(record);
+  failNext = false;
+  get records(): AcceptedSignalProvenance[] { return [...this.byId.values()]; }
+  async putIfAbsent(record: AcceptedSignalProvenance): Promise<'CREATED' | 'ALREADY_EXISTS'> {
+    if (this.unavailable || this.failNext) {
+      this.failNext = false;
+      throw new Error('provenance store unavailable');
+    }
+    if (this.byId.has(record.provenanceId)) return 'ALREADY_EXISTS';
+    this.byId.set(record.provenanceId, record);
+    return 'CREATED';
   }
 }
 
@@ -106,18 +149,28 @@ export class InMemoryQuarantineStore implements QuarantineStorePort {
 export class InMemoryRawEvidenceStore implements RawEvidenceStorePort {
   readonly objects = new Map<string, { readonly mediaType: string; readonly size: number }>();
   unavailable = false;
-  async put(input: { readonly signalId: string; readonly mediaType: string; readonly bytes: Uint8Array }): Promise<string> {
-    if (this.unavailable) throw new Error('raw evidence store unavailable');
+  failNext = false;
+  async putIfAbsent(input: { readonly signalId: string; readonly mediaType: string; readonly bytes: Uint8Array }): Promise<string> {
+    if (this.unavailable || this.failNext) {
+      this.failNext = false;
+      throw new Error('raw evidence store unavailable');
+    }
     const digest = createHash('sha256').update(input.bytes).digest('hex');
     const ref = `raw-evidence/${input.signalId}/${digest}`;
-    this.objects.set(ref, { mediaType: input.mediaType, size: input.bytes.byteLength });
+    if (!this.objects.has(ref)) this.objects.set(ref, { mediaType: input.mediaType, size: input.bytes.byteLength });
     return ref;
   }
 }
 
 export class InMemorySafetyIntentStore implements SafetyIntentStorePort {
   readonly records = new Map<string, SafetyIntentRecord>();
+  unavailable = false;
+  failNext = false;
   async createIfAbsent(record: SafetyIntentRecord): Promise<'CREATED' | 'ALREADY_EXISTS'> {
+    if (this.unavailable || this.failNext) {
+      this.failNext = false;
+      throw new Error('intent store unavailable');
+    }
     if (this.records.has(record.signalId)) return 'ALREADY_EXISTS';
     this.records.set(record.signalId, record);
     return 'CREATED';
@@ -126,81 +179,31 @@ export class InMemorySafetyIntentStore implements SafetyIntentStorePort {
 
 export function phoneMotionSimulator(overrides: Partial<HumanSafetySignalEnvelope> = {}): HumanSafetySignalEnvelope {
   return {
-    signalId: 'signal-phone-001',
-    schemaVersion: 'ros-eye.signal.v1',
-    purposePolicyVersion: 'ros-eye.purpose.v1',
-    dataClassification: 'SENSITIVE_RESTRICTED',
-    retentionClass: 'SHORT_LIVED_SIGNAL_METADATA',
-    sourceType: 'PHONE',
-    sourceId: 'device-pseudonym-001',
-    occurredAt: '2026-07-29T12:00:00.000Z',
-    receivedAt: '2026-07-29T12:00:01.000Z',
-    consentBasis: 'EXPLICIT',
-    integrity: { replayToken: 'nonce-phone-001', signatureStatus: 'VERIFIED', clockSkewMs: 1000 },
+    signalId: 'signal-phone-001', schemaVersion: 'ros-eye.signal.v1', purposePolicyVersion: 'ros-eye.purpose.v1',
+    dataClassification: 'SENSITIVE_RESTRICTED', retentionClass: 'SHORT_LIVED_SIGNAL_METADATA', sourceType: 'PHONE',
+    sourceId: 'device-pseudonym-001', occurredAt: '2026-07-29T12:00:00.000Z', receivedAt: '2026-07-29T12:00:01.000Z',
+    consentBasis: 'EXPLICIT', integrity: { replayToken: 'nonce-phone-001', signatureStatus: 'VERIFIED', clockSkewMs: 1000 },
     location: { latitude: 24.7136, longitude: 46.6753, accuracyMeters: 20, classification: 'PRECISE_RESTRICTED' },
-    payload: { kind: 'PHONE_MOTION', accelerationMagnitude: 18.4, impactDetected: true },
-    ...overrides
+    payload: { kind: 'PHONE_MOTION', accelerationMagnitude: 18.4, impactDetected: true }, ...overrides
   };
 }
 
 export function vehicleEventSimulator(overrides: Partial<HumanSafetySignalEnvelope> = {}): HumanSafetySignalEnvelope {
-  return {
-    ...phoneMotionSimulator(),
-    signalId: 'signal-vehicle-001',
-    sourceType: 'VEHICLE',
-    sourceId: 'vehicle-pseudonym-001',
-    integrity: { replayToken: 'nonce-vehicle-001', signatureStatus: 'VERIFIED', clockSkewMs: 500 },
-    payload: { kind: 'VEHICLE_EVENT', eventCode: 'IMPACT', confidence: 0.91 },
-    ...overrides
-  };
+  return { ...phoneMotionSimulator(), signalId: 'signal-vehicle-001', sourceType: 'VEHICLE', sourceId: 'vehicle-pseudonym-001', integrity: { replayToken: 'nonce-vehicle-001', signatureStatus: 'VERIFIED', clockSkewMs: 500 }, payload: { kind: 'VEHICLE_EVENT', eventCode: 'IMPACT', confidence: 0.91 }, ...overrides };
 }
 
 export function personReportSimulator(overrides: Partial<HumanSafetySignalEnvelope> = {}): HumanSafetySignalEnvelope {
-  return {
-    ...phoneMotionSimulator(),
-    signalId: 'signal-person-001',
-    sourceType: 'PERSON',
-    sourceId: 'person-pseudonym-001',
-    integrity: { replayToken: 'nonce-person-001', signatureStatus: 'VERIFIED', clockSkewMs: 0 },
-    location: null,
-    payload: { kind: 'PERSON_REPORT', indicatorCodes: ['HELP_REQUESTED'] },
-    ...overrides
-  };
+  return { ...phoneMotionSimulator(), signalId: 'signal-person-001', sourceType: 'PERSON', sourceId: 'person-pseudonym-001', integrity: { replayToken: 'nonce-person-001', signatureStatus: 'VERIFIED', clockSkewMs: 0 }, location: null, payload: { kind: 'PERSON_REPORT', indicatorCodes: ['HELP_REQUESTED'] }, ...overrides };
 }
 
 export function operatorObservationSimulator(overrides: Partial<HumanSafetySignalEnvelope> = {}): HumanSafetySignalEnvelope {
-  return {
-    ...phoneMotionSimulator(),
-    signalId: 'signal-operator-001',
-    sourceType: 'OPERATOR',
-    sourceId: 'operator-pseudonym-001',
-    consentBasis: 'OPERATOR_ENTERED',
-    integrity: { replayToken: 'nonce-operator-001', signatureStatus: 'VERIFIED', clockSkewMs: 0 },
-    location: null,
-    payload: { kind: 'OPERATOR_OBSERVATION', indicatorCodes: ['COMMUNICATION_INTERRUPTED'] },
-    ...overrides
-  };
+  return { ...phoneMotionSimulator(), signalId: 'signal-operator-001', sourceType: 'OPERATOR', sourceId: 'operator-pseudonym-001', consentBasis: 'OPERATOR_ENTERED', integrity: { replayToken: 'nonce-operator-001', signatureStatus: 'VERIFIED', clockSkewMs: 0 }, location: null, payload: { kind: 'OPERATOR_OBSERVATION', indicatorCodes: ['COMMUNICATION_INTERRUPTED'] }, ...overrides };
 }
 
 export function infrastructureMetadataSimulator(overrides: Partial<HumanSafetySignalEnvelope> = {}): HumanSafetySignalEnvelope {
-  return {
-    ...phoneMotionSimulator(),
-    signalId: 'signal-infrastructure-001',
-    sourceType: 'INFRASTRUCTURE',
-    sourceId: 'road-sensor-pseudonym-001',
-    integrity: { replayToken: 'nonce-infrastructure-001', signatureStatus: 'VERIFIED', clockSkewMs: 200 },
-    payload: { kind: 'INFRASTRUCTURE_METADATA', sensorType: 'ROAD_SENSOR', confidence: 0.78 },
-    ...overrides
-  };
+  return { ...phoneMotionSimulator(), signalId: 'signal-infrastructure-001', sourceType: 'INFRASTRUCTURE', sourceId: 'road-sensor-pseudonym-001', integrity: { replayToken: 'nonce-infrastructure-001', signatureStatus: 'VERIFIED', clockSkewMs: 200 }, payload: { kind: 'INFRASTRUCTURE_METADATA', sensorType: 'ROAD_SENSOR', confidence: 0.78 }, ...overrides };
 }
 
 export function unsupportedWearableSimulator(): unknown {
-  return {
-    ...phoneMotionSimulator(),
-    signalId: 'signal-wearable-future-001',
-    sourceType: 'WEARABLE',
-    sourceId: 'wearable-pseudonym-001',
-    integrity: { replayToken: 'nonce-wearable-001', signatureStatus: 'VERIFIED', clockSkewMs: 0 },
-    payload: { kind: 'WEARABLE_EVENT', confidence: 0.5 }
-  };
+  return { ...phoneMotionSimulator(), signalId: 'signal-wearable-future-001', sourceType: 'WEARABLE', sourceId: 'wearable-pseudonym-001', integrity: { replayToken: 'nonce-wearable-001', signatureStatus: 'VERIFIED', clockSkewMs: 0 }, payload: { kind: 'WEARABLE_EVENT', confidence: 0.5 } };
 }
