@@ -8,7 +8,7 @@ import {
   type ContactSqlQueryResult,
   type ContactSqlRow
 } from './contact-orchestration-postgres.js';
-import type { ContactOutboxMessage, ProcessClaimedOutboxInput } from './contact-orchestration.js';
+import type { ProcessClaimedOutboxInput } from './contact-orchestration.js';
 
 const input: ProcessClaimedOutboxInput = {
   tenantId: 'tenant-riyadh',
@@ -46,6 +46,12 @@ function outboxRow(overrides: ContactSqlRow = {}): ContactSqlRow {
   };
 }
 
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => { resolve = complete; });
+  return { promise, resolve };
+}
+
 class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
   activeTransactions = 0;
   maximumActiveTransactions = 0;
@@ -64,7 +70,8 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
 
   async query<Row extends ContactSqlRow = ContactSqlRow>(text: string): Promise<ContactSqlQueryResult<Row>> {
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery) {
-      return { rowCount: this.cancelled ? 0 : 1, rows: this.cancelled ? [] : [outboxRow()] as Row[] };
+      const rows = this.cancelled ? [] : [outboxRow()];
+      return { rowCount: rows.length, rows: rows as unknown as Row[] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered) {
       if (this.cancelled) return { rowCount: 0, rows: [] };
@@ -77,10 +84,8 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
       return { rowCount: 1, rows: [] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus) {
-      return {
-        rowCount: 1,
-        rows: [{ delivered_at: this.delivered ? input.now : null, cancelled_at: this.cancelled ? input.now : null, delivery_token: this.cancelled ? null : input.deliveryToken }] as Row[]
-      };
+      const rows = [{ delivered_at: this.delivered ? input.now : null, cancelled_at: this.cancelled ? input.now : null, delivery_token: this.cancelled ? null : input.deliveryToken }];
+      return { rowCount: 1, rows: rows as unknown as Row[] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.releaseOutboxLease) return { rowCount: 1, rows: [] };
     throw new Error(`unexpected SQL in tracking pool: ${text.slice(0, 48)}`);
@@ -89,37 +94,34 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
 
 test('PostgreSQL delivery reservation commits before the provider callback and finalizes in a new transaction', async () => {
   const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
-  let observed: ContactOutboxMessage | null = null;
+  const observedMessageIds: string[] = [];
   const result = await repository.processClaimedOutbox(input, async (message) => {
-    observed = message;
+    observedMessageIds.push(message.messageId);
     assert.equal(pool.activeTransactions, 0, 'provider callback must not own a SQL transaction or row lock');
     await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(pool.activeTransactions, 0);
     return 'SENT';
   });
-  assert.equal(result, 'DELIVERED'); assert.equal(observed?.messageId, input.messageId);
+  assert.equal(result, 'DELIVERED'); assert.deepEqual(observedMessageIds, [input.messageId]);
   assert.equal(pool.activeTransactions, 0); assert.equal(pool.maximumActiveTransactions, 1);
   assert.equal(pool.transactionStarts, 2); assert.equal(pool.delivered, true);
 });
 
 test('operator cancellation during provider execution is not blocked and fences later acknowledgement', async () => {
   const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
-  let releaseProvider: (() => void) | null = null;
-  const providerWaiting = new Promise<void>((resolve) => { releaseProvider = resolve; });
-  let providerStartedResolve: (() => void) | null = null;
-  const providerStarted = new Promise<void>((resolve) => { providerStartedResolve = resolve; });
+  const providerRelease = deferred(); const providerStarted = deferred();
 
   const running = repository.processClaimedOutbox(input, async () => {
     assert.equal(pool.activeTransactions, 0);
-    providerStartedResolve?.();
-    await providerWaiting;
+    providerStarted.resolve();
+    await providerRelease.promise;
     return 'SENT';
   });
 
-  await providerStarted;
+  await providerStarted.promise;
   assert.equal(pool.activeTransactions, 0);
   pool.cancelled = true;
-  releaseProvider?.();
+  providerRelease.resolve();
   assert.equal(await running, 'CANCELLED');
   assert.equal(pool.delivered, false); assert.equal(pool.activeTransactions, 0);
 });
