@@ -13,8 +13,10 @@ import {
   type HumanContactState
 } from '@ros/contracts';
 
-export const CONTACT_RUNTIME_POLICY_VERSION = 'ros-eye.contact-runtime.v5' as const;
+export const CONTACT_RUNTIME_POLICY_VERSION = 'ros-eye.contact-runtime.v6' as const;
 export const CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION = HUMAN_CONTACT_AUTHORITY_POLICY_VERSION;
+export const CONTACT_OUTBOX_LEASE_MS = 30_000;
+export const CONTACT_DELIVERY_TIMEOUT_MS = 5_000;
 export type ContactChannel = 'IN_APP' | 'PUSH' | 'SMS_SIM' | 'TELEPHONY_SIM';
 export type ContactAuthorizedRole = 'SYSTEM' | 'OPERATOR' | 'SUPERVISOR' | 'SAFETY_LEAD';
 export type RuntimeDisposition = 'APPLIED' | 'IDEMPOTENT' | 'HUMAN_REVIEW' | 'ESCALATED' | 'CONFLICT';
@@ -81,6 +83,8 @@ export interface ProcessClaimedOutboxInput extends ContactScope {
   readonly now: string;
   readonly retryAvailableAt: string;
   readonly errorCode: string;
+  readonly deliveryToken: string;
+  readonly deliveryDeadlineAt: string;
 }
 
 export interface ContactRuntimeRepositoryPort {
@@ -88,6 +92,11 @@ export interface ContactRuntimeRepositoryPort {
   claimDueSessions(input: { workerId: string; now: string; leaseMs: number; limit: number }): Promise<ContactSessionRecord[]>;
   releaseLease(scope: ContactScope, workerId: string): Promise<void>;
   claimDueOutbox(input: { workerId: string; now: string; leaseMs: number; limit: number }): Promise<ContactOutboxMessage[]>;
+  /**
+   * Implementations MUST commit a short delivery reservation before invoking
+   * `deliver`, invoke it without an open database transaction/row lock, then
+   * finalize only when the same delivery token remains live and uncancelled.
+   */
   processClaimedOutbox(
     input: ProcessClaimedOutboxInput,
     deliver: (message: ContactOutboxMessage) => Promise<'SENT' | 'UNAVAILABLE'>
@@ -97,14 +106,30 @@ export interface ContactRuntimeRepositoryPort {
 
 export interface ContactChannelPort {
   /**
-   * Production adapters MUST enforce the supplied stable idempotency key. A
-   * transport call may be repeated after a crash before database acknowledgement,
-   * but it must not create a second logical contact delivery.
+   * Production adapters MUST enforce the stable idempotency key and honor both
+   * the deadline and AbortSignal. A transport call may be repeated after a
+   * crash, but it must not create a second logical contact delivery.
    */
-  send(input: ContactScope & { channel: ContactChannel; promptId: ContactPromptId; idempotencyKey: string }): Promise<'SENT' | 'UNAVAILABLE'>;
+  send(input: ContactScope & {
+    channel: ContactChannel;
+    promptId: ContactPromptId;
+    idempotencyKey: string;
+    deadlineAt: string;
+    signal: AbortSignal;
+  }): Promise<'SENT' | 'UNAVAILABLE'>;
 }
 
 export interface RuntimeIdFactoryPort { create(namespace: string, material: string): Promise<string> }
+
+export interface ContactRuntimeOptions {
+  readonly outboxLeaseMs: number;
+  readonly deliveryTimeoutMs: number;
+}
+
+const DEFAULT_RUNTIME_OPTIONS: ContactRuntimeOptions = Object.freeze({
+  outboxLeaseMs: CONTACT_OUTBOX_LEASE_MS,
+  deliveryTimeoutMs: CONTACT_DELIVERY_TIMEOUT_MS
+});
 
 export interface OpenContactInput extends ContactScope {
   /** Device/operator locale hint only; explicit language selection is still required. */
@@ -151,11 +176,19 @@ export interface OperatorTakeoverInput extends ContactScope {
 }
 
 export class ContactOrchestrationService {
+  private readonly options: ContactRuntimeOptions;
+
   constructor(
     private readonly repository: ContactRuntimeRepositoryPort,
     private readonly channel: ContactChannelPort,
-    private readonly ids: RuntimeIdFactoryPort
-  ) {}
+    private readonly ids: RuntimeIdFactoryPort,
+    options: ContactRuntimeOptions = DEFAULT_RUNTIME_OPTIONS
+  ) {
+    if (!Number.isInteger(options.outboxLeaseMs) || options.outboxLeaseMs < 100) throw new Error('outboxLeaseMs must be an integer >= 100');
+    if (!Number.isInteger(options.deliveryTimeoutMs) || options.deliveryTimeoutMs < 1) throw new Error('deliveryTimeoutMs must be a positive integer');
+    if (options.deliveryTimeoutMs >= options.outboxLeaseMs) throw new Error('deliveryTimeoutMs must be shorter than outboxLeaseMs');
+    this.options = Object.freeze({ ...options });
+  }
 
   async open(input: OpenContactInput): Promise<RuntimeDisposition> {
     if (!validScope(input) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt) || !validLanguage(input.language)) return 'HUMAN_REVIEW';
@@ -288,22 +321,27 @@ export class ContactOrchestrationService {
 
   async runOutbox(workerId: string, now: string, limit = 50): Promise<ReadonlyArray<ContactScope & { messageId: string; disposition: OutboxDeliveryDisposition }>> {
     if (!validId(workerId) || !validTime(now) || !Number.isInteger(limit) || limit < 1 || limit > 500) return [];
-    const claimed = await this.repository.claimDueOutbox({ workerId, now, leaseMs: 30_000, limit });
+    const claimed = await this.repository.claimDueOutbox({ workerId, now, leaseMs: this.options.outboxLeaseMs, limit });
     const results: Array<ContactScope & { messageId: string; disposition: OutboxDeliveryDisposition }> = [];
     for (const message of claimed) {
       const scope = scopeOf(message);
       const retryAvailableAt = new Date(Date.parse(now) + boundedOutboxBackoff(message.attempt)).toISOString();
+      const deliveryDeadlineAt = new Date(Date.parse(now) + this.options.deliveryTimeoutMs).toISOString();
+      const deliveryToken = await this.ids.create('contact-delivery', `${message.idempotencyKey}|${workerId}|${message.leaseExpiresAt ?? deliveryDeadlineAt}`);
       let disposition: OutboxDeliveryDisposition = 'CONFLICT';
       try {
         disposition = await this.repository.processClaimedOutbox(
-          { ...scope, messageId: message.messageId, workerId, now, retryAvailableAt, errorCode: 'channel_unavailable' },
-          async (fresh) => {
-            try {
-              return await this.channel.send({ ...scopeOf(fresh), channel: fresh.channel, promptId: fresh.promptId, idempotencyKey: fresh.idempotencyKey });
-            } catch {
-              return 'UNAVAILABLE';
-            }
-          }
+          {
+            ...scope,
+            messageId: message.messageId,
+            workerId,
+            now,
+            retryAvailableAt,
+            errorCode: 'channel_delivery_failed_or_timed_out',
+            deliveryToken,
+            deliveryDeadlineAt
+          },
+          async (fresh) => this.sendWithDeadline(fresh, deliveryDeadlineAt)
         );
       } finally {
         await this.repository.releaseOutboxLease({ ...scope, messageId: message.messageId, workerId });
@@ -311,6 +349,30 @@ export class ContactOrchestrationService {
       results.push({ ...scope, messageId: message.messageId, disposition });
     }
     return results;
+  }
+
+  private async sendWithDeadline(message: ContactOutboxMessage, deadlineAt: string): Promise<'SENT' | 'UNAVAILABLE'> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<'UNAVAILABLE'>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort('contact_delivery_deadline_exceeded');
+        resolve('UNAVAILABLE');
+      }, this.options.deliveryTimeoutMs);
+    });
+    const send = this.channel.send({
+      ...scopeOf(message),
+      channel: message.channel,
+      promptId: message.promptId,
+      idempotencyKey: message.idempotencyKey,
+      deadlineAt,
+      signal: controller.signal
+    }).catch(() => 'UNAVAILABLE' as const);
+    try {
+      return await Promise.race([send, timeout]);
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
   }
 
   private async processDue(claimed: ContactSessionRecord, workerId: string, now: string): Promise<RuntimeDisposition> {
