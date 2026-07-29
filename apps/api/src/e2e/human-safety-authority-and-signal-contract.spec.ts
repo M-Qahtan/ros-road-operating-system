@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
+  HUMAN_SAFETY_ALLOWED_CLOCK_SKEW_MS,
+  HUMAN_SAFETY_MAX_SIGNAL_AGE_MS,
   HUMAN_SAFETY_REPLAY_POLICY_VERSION,
+  HUMAN_SAFETY_REPLAY_TTL_MS,
+  HUMAN_SAFETY_TEMPORAL_POLICY_VERSION,
   acceptHumanSafetySignalEnvelope,
   decideHumanSafetyTransition,
   validateHumanSafetySignalEnvelope,
@@ -160,8 +164,8 @@ class AtomicMemoryReplayRegistry implements ReplayNonceRegistryPort {
   async consume(request: ReplayNonceConsumeRequest) {
     if (this.unavailable) return 'UNAVAILABLE' as const;
     if (Date.parse(request.expiresAt) <= Date.parse('2026-07-27T12:00:02.000Z')) return 'EXPIRED' as const;
-    if (this.consumed.has(request.scopeDigest)) return 'DUPLICATE' as const;
-    this.consumed.add(request.scopeDigest);
+    if (this.consumed.has(request.nonceDigest)) return 'DUPLICATE' as const;
+    this.consumed.add(request.nonceDigest);
     return 'CONSUMED' as const;
   }
 }
@@ -175,7 +179,7 @@ test('structural validation cannot emit ACCEPT before replay consume', () => {
   });
 });
 
-test('first replay scope use is accepted and raw token is not sent to registry', async () => {
+test('first replay nonce use is accepted and raw token is not sent to registry', async () => {
   let consumedRequest: ReplayNonceConsumeRequest | undefined;
   const registry: ReplayNonceRegistryPort = {
     async consume(request) {
@@ -188,8 +192,11 @@ test('first replay scope use is accepted and raw token is not sent to registry',
   assert.equal(result.accepted, true);
   assert.equal(result.disposition, 'ACCEPT');
   assert.equal(result.replayPolicyVersion, HUMAN_SAFETY_REPLAY_POLICY_VERSION);
+  assert.equal(result.temporalPolicyVersion, HUMAN_SAFETY_TEMPORAL_POLICY_VERSION);
   assert.equal(result.replayConsumeResult, 'CONSUMED');
   assert.match(result.replayScopeDigest ?? '', /^[a-f0-9]{64}$/);
+  assert.match(consumedRequest?.nonceDigest ?? '', /^[a-f0-9]{64}$/);
+  assert.match(consumedRequest?.scopeDigest ?? '', /^[a-f0-9]{64}$/);
   assert.equal(JSON.stringify(consumedRequest).includes(signal.integrity.replayToken), false);
 });
 
@@ -210,6 +217,30 @@ test('second use is quarantined and concurrent duplicate has exactly one winner'
   ]);
   assert.equal(decisions.filter((decision) => decision.accepted).length, 1);
   assert.equal(decisions.filter((decision) => decision.reasonCode === 'replay_detected').length, 1);
+});
+
+test('same replay nonce is rejected across different signal and source scopes', async () => {
+  const sharedToken = 'shared-cross-scope-nonce';
+
+  for (const alteredSignal of [
+    { ...validPhoneSignal(sharedToken), signalId: 'signal-002' },
+    { ...validPhoneSignal(sharedToken), sourceId: 'device-pseudonym-002' }
+  ]) {
+    const registry = new AtomicMemoryReplayRegistry();
+    const first = await acceptHumanSafetySignalEnvelope(validPhoneSignal(sharedToken), { replayRegistry: registry, tokenDigester }, '2026-07-27T12:00:02.000Z');
+    const replayed = await acceptHumanSafetySignalEnvelope(alteredSignal, { replayRegistry: registry, tokenDigester }, '2026-07-27T12:00:02.000Z');
+    assert.equal(first.accepted, true);
+    assert.equal(replayed.accepted, false);
+    assert.equal(replayed.reasonCode, 'replay_detected');
+  }
+
+  const concurrentRegistry = new AtomicMemoryReplayRegistry();
+  const concurrent = await Promise.all([
+    acceptHumanSafetySignalEnvelope(validPhoneSignal(sharedToken), { replayRegistry: concurrentRegistry, tokenDigester }, '2026-07-27T12:00:02.000Z'),
+    acceptHumanSafetySignalEnvelope({ ...validPhoneSignal(sharedToken), signalId: 'signal-003' }, { replayRegistry: concurrentRegistry, tokenDigester }, '2026-07-27T12:00:02.000Z')
+  ]);
+  assert.equal(concurrent.filter((decision) => decision.accepted).length, 1);
+  assert.equal(concurrent.filter((decision) => decision.reasonCode === 'replay_detected').length, 1);
 });
 
 test('registry unavailable or throwing never produces ACCEPT', async () => {
@@ -233,6 +264,63 @@ test('expired token is quarantined before registry consume', async () => {
   assert.equal(result.accepted, false);
   assert.equal(result.reasonCode, 'replay_token_expired');
   assert.equal(calls, 0);
+});
+
+test('future and stale timestamps fail closed using trusted evaluation time', async () => {
+  let calls = 0;
+  const registry: ReplayNonceRegistryPort = { async consume() { calls += 1; return 'CONSUMED'; } };
+  const evaluatedAt = '2026-07-27T12:00:02.000Z';
+  const evaluatedAtMs = Date.parse(evaluatedAt);
+
+  const beyondSkewAt = new Date(evaluatedAtMs + HUMAN_SAFETY_ALLOWED_CLOCK_SKEW_MS + 1).toISOString();
+  const future = await acceptHumanSafetySignalEnvelope({
+    ...validPhoneSignal('future-nonce'),
+    occurredAt: beyondSkewAt,
+    receivedAt: beyondSkewAt
+  }, { replayRegistry: registry, tokenDigester }, evaluatedAt);
+  assert.equal(future.accepted, false);
+  assert.equal(future.disposition, 'QUARANTINE');
+  assert.equal(future.reasonCode, 'signal_timestamp_in_future');
+
+  const staleOccurredAt = new Date(evaluatedAtMs - HUMAN_SAFETY_MAX_SIGNAL_AGE_MS - 1).toISOString();
+  const stale = await acceptHumanSafetySignalEnvelope({
+    ...validPhoneSignal('stale-nonce'),
+    occurredAt: staleOccurredAt,
+    receivedAt: new Date(evaluatedAtMs - HUMAN_SAFETY_MAX_SIGNAL_AGE_MS).toISOString()
+  }, { replayRegistry: registry, tokenDigester }, evaluatedAt);
+  assert.equal(stale.accepted, false);
+  assert.equal(stale.disposition, 'HUMAN_REVIEW');
+  assert.equal(stale.reasonCode, 'stale_signal_requires_human_review');
+  assert.equal(calls, 0);
+});
+
+test('allowed skew boundary is deterministic and cannot extend replay expiry', async () => {
+  let consumedRequest: ReplayNonceConsumeRequest | undefined;
+  const registry: ReplayNonceRegistryPort = {
+    async consume(request) {
+      consumedRequest = request;
+      return 'CONSUMED';
+    }
+  };
+  const evaluatedAt = '2026-07-27T12:00:02.000Z';
+  const evaluatedAtMs = Date.parse(evaluatedAt);
+  const boundary = new Date(evaluatedAtMs + HUMAN_SAFETY_ALLOWED_CLOCK_SKEW_MS).toISOString();
+  const result = await acceptHumanSafetySignalEnvelope({
+    ...validPhoneSignal('bounded-future-nonce'),
+    occurredAt: evaluatedAt,
+    receivedAt: boundary,
+    integrity: {
+      ...validPhoneSignal().integrity,
+      replayToken: 'bounded-future-nonce',
+      clockSkewMs: HUMAN_SAFETY_ALLOWED_CLOCK_SKEW_MS
+    }
+  }, { replayRegistry: registry, tokenDigester }, evaluatedAt);
+
+  const expectedExpiry = new Date(evaluatedAtMs + HUMAN_SAFETY_REPLAY_TTL_MS).toISOString();
+  assert.equal(result.accepted, true);
+  assert.equal(result.temporalPolicyVersion, HUMAN_SAFETY_TEMPORAL_POLICY_VERSION);
+  assert.equal(result.replayExpiresAt, expectedExpiry);
+  assert.equal(consumedRequest?.expiresAt, expectedExpiry);
 });
 
 test('free text, medical narratives, identifiers and unknown payload fields are quarantined', () => {
@@ -267,6 +355,7 @@ test('invalid signatures, identifiers, chronology and semantic values fail close
     { ...signal, occurredAt: 'not-a-date' },
     { ...signal, occurredAt: '2026-07-27T12:01:00.000Z', receivedAt: '2026-07-27T12:00:00.000Z' },
     { ...signal, integrity: { ...signal.integrity, signatureStatus: 'INVALID' } },
+    { ...signal, integrity: { ...signal.integrity, signatureStatus: 'UNKNOWN' } },
     { ...signal, integrity: { ...signal.integrity, replayToken: '  ' } },
     { ...signal, payload: { ...signal.payload, accelerationMagnitude: Number.NaN } },
     { ...signal, location: { latitude: 91, longitude: 46.6, accuracyMeters: 1, classification: 'PRECISE_RESTRICTED' } },
@@ -284,7 +373,7 @@ test('unverified signature and excessive clock skew require human review', () =>
   const unverified = validateHumanSafetySignalEnvelope({ ...signal, integrity: { ...signal.integrity, signatureStatus: 'UNVERIFIED' } });
   assert.equal(unverified.disposition, 'HUMAN_REVIEW');
 
-  const skewed = validateHumanSafetySignalEnvelope({ ...signal, integrity: { ...signal.integrity, clockSkewMs: 300_001 } });
+  const skewed = validateHumanSafetySignalEnvelope({ ...signal, integrity: { ...signal.integrity, clockSkewMs: HUMAN_SAFETY_ALLOWED_CLOCK_SKEW_MS + 1 } });
   assert.equal(skewed.disposition, 'HUMAN_REVIEW');
   assert.equal(skewed.reasonCode, 'clock_skew_exceeded');
 });
