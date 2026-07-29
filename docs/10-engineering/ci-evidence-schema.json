@@ -20,7 +20,7 @@
   "properties": {
     "schema": { "const": "ros-ci-evidence/v2" },
     "job": {
-      "enum": ["verify", "postgres-integration", "staging-smoke", "riyadh-e2e"]
+      "enum": ["verify", "postgres-integration", "staging-smoke", "riyadh-e2e", "riyadh-failure-modes"]
     },
     "repository": { "type": "string", "minLength": 1 },
     "workflow": { "type": "string", "minLength": 1 },
