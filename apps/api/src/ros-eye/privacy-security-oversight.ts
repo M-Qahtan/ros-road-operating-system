@@ -9,7 +9,7 @@ export type Action = 'READ'|'MASKED_READ'|'WRITE'|'DELETE'|'EXPORT';
 
 export interface Scope { readonly tenantId:string; readonly caseId:string }
 export interface BreakGlassLease extends Scope { readonly leaseId:string; readonly actorId:string; readonly role:'SAFETY_OPERATOR'|'SECURITY_REVIEWER'; readonly purpose:'OPERATOR_REVIEW'|'SECURITY_INVESTIGATION'; readonly reasonCode:string; readonly issuedAt:string; readonly expiresAt:string; readonly alertId:string; readonly reviewedAt:string|null }
-export interface AccessRequest extends Scope { readonly actorTenantId:string; readonly actorCaseId:string; readonly role:Role; readonly purpose:Purpose; readonly lifecycle:Lifecycle; readonly dataKind:DataKind; readonly action:Action; readonly consentValidUntil:string|null; readonly consentRevokedAt:string|null; readonly now:string; readonly breakGlass:BreakGlassLease|null }
+export interface AccessRequest extends Scope { readonly actorId:string; readonly actorTenantId:string; readonly actorCaseId:string; readonly role:Role; readonly purpose:Purpose; readonly lifecycle:Lifecycle; readonly dataKind:DataKind; readonly action:Action; readonly consentValidUntil:string|null; readonly consentRevokedAt:string|null; readonly now:string; readonly breakGlass:BreakGlassLease|null }
 export interface AccessDecision { readonly allowed:boolean; readonly mode:'DENY'|'MASKED'|'FULL'; readonly reasonCode:string; readonly policyVersion:typeof PRIVACY_POLICY_VERSION }
 
 export interface RetentionCommand extends Scope { readonly resourceId:string; readonly dataKind:DataKind; readonly requestedAt:string; readonly reasonCode:string }
@@ -28,7 +28,7 @@ const minimum:Readonly<Record<Purpose,readonly DataKind[]>>={
 const rolePurposes:Readonly<Record<Role,readonly Purpose[]>>={SYSTEM_WORKER:['SAFETY_CONTACT','INCIDENT_TRIAGE'],SAFETY_OPERATOR:['OPERATOR_REVIEW'],SECURITY_REVIEWER:['SECURITY_INVESTIGATION'],RETENTION_ADMIN:['RETENTION_ADMIN'],AUDITOR:['SECURITY_INVESTIGATION']};
 
 export function evaluateAccess(r:AccessRequest):AccessDecision{
- if(!validScope(r)||r.actorTenantId!==r.tenantId||r.actorCaseId!==r.caseId)return deny('scope_mismatch');
+ if(!validScope(r)||!validId(r.actorId)||r.actorTenantId!==r.tenantId||r.actorCaseId!==r.caseId)return deny('scope_or_actor_mismatch');
  if(!validTime(r.now)||!rolePurposes[r.role].includes(r.purpose))return deny('role_or_time_denied');
  if(!minimum[r.purpose].includes(r.dataKind)&&!validBreakGlass(r.breakGlass,r))return deny('minimum_necessary_denied');
  if(!lifecycleAllows(r.lifecycle,r.purpose))return deny('lifecycle_denied');
@@ -36,7 +36,7 @@ export function evaluateAccess(r:AccessRequest):AccessDecision{
  if(r.dataKind==='RAW_TOKEN')return deny('raw_token_denied');
  if(r.action==='EXPORT'&&(r.dataKind==='EVIDENCE_RAW'||r.dataKind==='CONVERSATION_RAW'||r.dataKind==='PRECISE_LOCATION'))return deny('restricted_export_denied');
  if(r.action==='DELETE'&&r.role!=='RETENTION_ADMIN')return deny('delete_role_denied');
- if(['EVIDENCE_RAW','CONVERSATION_RAW','PRECISE_LOCATION'].includes(r.dataKind))return validBreakGlass(r.breakGlass,r)?allow('FULL','break_glass_scoped'):allow('MASKED','masked_by_default');
+ if(['EVIDENCE_RAW','CONVERSATION_RAW','PRECISE_LOCATION'].includes(r.dataKind))return validBreakGlass(r.breakGlass,r)?allow('FULL','break_glass_scoped'):deny('break_glass_required');
  return allow(r.action==='MASKED_READ'?'MASKED':'FULL','policy_allow');
 }
 
@@ -61,13 +61,13 @@ export function redactForGeneralTelemetry(value:Readonly<Record<string,unknown>>
 export const THREAT_CONTROL_MATRIX=Object.freeze([
  {threat:'SOURCE_IMPERSONATION',control:'source binding and scoped idempotency',test:'source impersonation denial',owner:'Security Engineering',residualRisk:'P1'},
  {threat:'STALKING_MONITORING_ABUSE',control:'purpose lifecycle tenant-case ABAC',test:'purpose and cross-case denial',owner:'Privacy Engineering',residualRisk:'P1'},
- {threat:'ACCOUNT_TAKEOVER',control:'anomaly hook and expiring break-glass',test:'expired lease denial',owner:'Identity Security',residualRisk:'P1'},
+ {threat:'ACCOUNT_TAKEOVER',control:'actor-bound anomaly hook and expiring break-glass',test:'actor mismatch and expired lease denial',owner:'Identity Security',residualRisk:'P1'},
  {threat:'INSIDER_MISUSE',control:'least privilege and immutable audit',test:'insider purpose denial',owner:'Security Operations',residualRisk:'P1'},
  {threat:'EVIDENCE_EXFILTRATION',control:'restricted export deny',test:'raw evidence export denial',owner:'Data Protection',residualRisk:'P1'},
  {threat:'MODEL_AUTHORITY_ABUSE',control:'human approval and explanation gate',test:'model non-authority',owner:'Responsible AI',residualRisk:'P1'}
 ] as const);
 
-function validBreakGlass(l:BreakGlassLease|null,r:AccessRequest):boolean{return l!==null&&l.tenantId===r.tenantId&&l.caseId===r.caseId&&l.role===r.role&&l.purpose===r.purpose&&validTime(l.issuedAt)&&validTime(l.expiresAt)&&Date.parse(r.now)>=Date.parse(l.issuedAt)&&Date.parse(r.now)<Date.parse(l.expiresAt)&&l.reviewedAt===null&&validId(l.reasonCode)&&validId(l.alertId)}
+function validBreakGlass(l:BreakGlassLease|null,r:AccessRequest):boolean{return l!==null&&l.tenantId===r.tenantId&&l.caseId===r.caseId&&l.actorId===r.actorId&&l.role===r.role&&l.purpose===r.purpose&&validTime(l.issuedAt)&&validTime(l.expiresAt)&&Date.parse(r.now)>=Date.parse(l.issuedAt)&&Date.parse(r.now)<Date.parse(l.expiresAt)&&l.reviewedAt===null&&validId(l.leaseId)&&validId(l.reasonCode)&&validId(l.alertId)}
 function lifecycleAllows(l:Lifecycle,p:Purpose):boolean{if(['REVOKED','EXPIRED','INACTIVE','DELETION_PENDING'].includes(l))return p==='RETENTION_ADMIN';if(l==='LEGAL_HOLD')return p==='RETENTION_ADMIN'||p==='SECURITY_INVESTIGATION';return l==='ACTIVE'}
 function requiresConsent(p:Purpose):boolean{return p==='SAFETY_CONTACT'||p==='INCIDENT_TRIAGE'||p==='OPERATOR_REVIEW'}
 function validConsent(r:AccessRequest):boolean{return r.consentRevokedAt===null&&r.consentValidUntil!==null&&validTime(r.consentValidUntil)&&Date.parse(r.consentValidUntil)>Date.parse(r.now)}
