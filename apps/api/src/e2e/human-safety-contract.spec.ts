@@ -62,7 +62,7 @@ const supervisorContext = {
 };
 
 function uncertaintyAuthorization(evidenceQuality: 'AMBIGUOUS' | 'CONFLICTING' | 'MISSING') {
-  const reasonCode = evidenceQuality === 'AMBIGUOUS'
+  const reasonCode: 'AMBIGUITY_RESOLVED' | 'CONFLICT_RESOLVED' | 'MISSING_EVIDENCE_DISPOSITIONED' = evidenceQuality === 'AMBIGUOUS'
     ? 'AMBIGUITY_RESOLVED'
     : evidenceQuality === 'CONFLICTING'
       ? 'CONFLICT_RESOLVED'
