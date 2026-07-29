@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS ros_eye_contact_outbox (
   available_at timestamptz NOT NULL,
   lease_owner text,
   lease_expires_at timestamptz,
+  delivery_token text,
+  delivery_started_at timestamptz,
+  delivery_deadline_at timestamptz,
   delivered_at timestamptz,
   cancelled_at timestamptz,
   last_error_code text,
@@ -67,11 +70,14 @@ CREATE TABLE IF NOT EXISTS ros_eye_contact_outbox (
     REFERENCES ros_eye_contact_sessions(tenant_id, case_id, session_id)
     ON DELETE RESTRICT,
   CHECK ((lease_owner IS NULL AND lease_expires_at IS NULL) OR (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
+  CHECK ((delivery_token IS NULL AND delivery_started_at IS NULL AND delivery_deadline_at IS NULL)
+    OR (delivery_token IS NOT NULL AND delivery_started_at IS NOT NULL AND delivery_deadline_at IS NOT NULL)),
+  CHECK ((delivery_started_at IS NULL AND delivery_deadline_at IS NULL) OR delivery_deadline_at > delivery_started_at),
   CHECK (NOT (delivered_at IS NOT NULL AND cancelled_at IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS ros_eye_contact_outbox_due_idx
-  ON ros_eye_contact_outbox (tenant_id, available_at, lease_expires_at)
+  ON ros_eye_contact_outbox (tenant_id, available_at, lease_expires_at, delivery_deadline_at)
   WHERE delivered_at IS NULL AND cancelled_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS ros_eye_contact_audit (
@@ -111,10 +117,16 @@ BEFORE UPDATE OR DELETE ON ros_eye_contact_audit
 FOR EACH ROW EXECUTE FUNCTION reject_ros_eye_contact_audit_mutation();
 
 COMMENT ON TABLE ros_eye_contact_outbox IS
-  'Claim with FOR UPDATE SKIP LOCKED. Hold a scoped row lock while the bounded provider call executes so operator takeover that commits first prevents delivery; use the stable idempotency_key for crash-safe logical deduplication.';
+  'Claim with FOR UPDATE SKIP LOCKED, commit an expiring delivery reservation, call the provider outside all SQL transactions, and finalize only with the same uncancelled delivery token.';
 
 COMMENT ON COLUMN ros_eye_contact_outbox.idempotency_key IS
-  'Stable tenant/case/session-scoped provider key. Production channel adapters must enforce it.';
+  'Stable tenant/case/session-scoped provider key. Production channel adapters must enforce it across retries and restarts.';
+
+COMMENT ON COLUMN ros_eye_contact_outbox.delivery_token IS
+  'Short-lived opaque delivery fence. It is invalidated by operator takeover/cancellation and cannot authorize acknowledgement after expiry.';
+
+COMMENT ON COLUMN ros_eye_contact_outbox.delivery_deadline_at IS
+  'Database-enforced deadline for accepting a provider result; external calls must have a shorter AbortSignal-backed timeout than the outbox lease.';
 
 COMMENT ON COLUMN ros_eye_contact_audit.authorized_by_role IS
   'Explicit human or system authority role evaluated under authority_policy_version.';
