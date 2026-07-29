@@ -156,10 +156,9 @@ export class PostgresContactRuntimeRepository implements ContactRuntimeRepositor
       if (message.cancelledAt !== null) return 'CANCELLED';
       if (message.deliveredAt !== null) return 'DELIVERED';
 
-      // The row lock is intentionally held across the bounded channel call. This
-      // establishes a strict ordering with operator takeover: cancellation that
-      // commits first prevents the send; a send that obtains the fence first is
-      // durably acknowledged before takeover can suppress later automation.
+      // Hold the scoped row lock across the bounded provider call. This gives a
+      // deterministic order with operator takeover/cancellation and prevents a
+      // cancelled message from being sent after suppression has committed.
       const delivery = await deliver(message);
       if (delivery === 'SENT') {
         const updated = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, [
@@ -313,7 +312,7 @@ function mapOutbox(row: ContactSqlRow): ContactOutboxMessage {
     sessionId: text(row, 'session_id'),
     messageId: text(row, 'message_id'),
     channel: text(row, 'channel') as ContactOutboxMessage['channel'],
-    promptId: text(row, 'prompt_id'),
+    promptId: text(row, 'prompt_id') as ContactOutboxMessage['promptId'],
     idempotencyKey: text(row, 'idempotency_key'),
     availableAt: timestamp(row, 'available_at'),
     attempt: integer(row, 'attempt'),
