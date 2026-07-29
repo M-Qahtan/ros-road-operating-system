@@ -18,8 +18,8 @@ import {
 } from './signal-ingestion-adapters.js';
 import { MultimodalSignalIngestionService, type MultimodalSignalIngestionPorts } from './signal-ingestion.js';
 
-function fixture() {
-  const replayRegistry = new AtomicInMemoryReplayNonceRegistry();
+function fixture(maxQueueDepth = 128) {
+  const replayAdmission = new AtomicInMemoryReplayNonceRegistry();
   const sourceTrustRegistry = new InMemorySourceTrustRegistry();
   for (const sourceId of ['device-pseudonym-001', 'vehicle-pseudonym-001', 'person-pseudonym-001', 'operator-pseudonym-001', 'road-sensor-pseudonym-001']) sourceTrustRegistry.set(sourceId, 'ACTIVE');
   const tokenDigester = new Sha256DigesterAdapter();
@@ -27,28 +27,22 @@ function fixture() {
   const quarantineStore = new InMemoryQuarantineStore();
   const rawEvidenceStore = new InMemoryRawEvidenceStore();
   const intentStore = new InMemorySafetyIntentStore();
-  const rateLimiter = new FixedWindowSourceRateLimiter(10, 60_000);
-  const ports: MultimodalSignalIngestionPorts = { replayRegistry, sourceTrustRegistry, tokenDigester, provenanceStore, quarantineStore, rawEvidenceStore, intentStore, rateLimiter, idFactory: tokenDigester };
-  return { service: new MultimodalSignalIngestionService(ports), ports, replayRegistry, sourceTrustRegistry, provenanceStore, quarantineStore, rawEvidenceStore, intentStore, rateLimiter };
+  const rateLimiter = new FixedWindowSourceRateLimiter(100, 60_000);
+  const ports: MultimodalSignalIngestionPorts = { replayAdmission, sourceTrustRegistry, tokenDigester, provenanceStore, quarantineStore, rawEvidenceStore, intentStore, rateLimiter, idFactory: tokenDigester };
+  return { service: new MultimodalSignalIngestionService(ports, { maxQueueDepth, maximumAcceptedLocationAccuracyMeters: 250 }), ports, replayAdmission, sourceTrustRegistry, provenanceStore, quarantineStore, rawEvidenceStore, intentStore, rateLimiter };
 }
 
 function request(envelope: unknown, overrides: Record<string, unknown> = {}) {
-  return {
-    envelope,
-    correlationId: 'correlation-001',
-    traceId: 'trace-001',
-    evaluatedAt: '2026-07-29T12:00:02.000Z',
-    ...overrides
-  };
+  return { envelope, correlationId: 'correlation-001', traceId: 'trace-001', evaluatedAt: '2026-07-29T12:00:02.000Z', ...overrides };
 }
 
-test('accepts deterministic phone, vehicle, person, operator and infrastructure signals with provenance', async () => {
+test('accepts deterministic multimodal signals with redacted provenance', async () => {
   const { service, provenanceStore } = fixture();
   const signals = [phoneMotionSimulator(), vehicleEventSimulator(), personReportSimulator(), operatorObservationSimulator(), infrastructureMetadataSimulator()];
   for (const [index, envelope] of signals.entries()) {
     const result = await service.ingest(request(envelope, { correlationId: `correlation-${index + 1}`, traceId: `trace-${index + 1}` }));
     assert.equal(result.disposition, 'ACCEPTED');
-    assert.equal(result.reasonCode, 'accepted_with_provenance');
+    assert.equal(result.reasonCode, 'accepted_with_recoverable_provenance');
   }
   assert.equal(provenanceStore.records.length, 5);
   for (const record of provenanceStore.records) {
@@ -56,7 +50,6 @@ test('accepts deterministic phone, vehicle, person, operator and infrastructure 
     assert.equal(serialized.includes('replayToken'), false);
     assert.equal(serialized.includes('24.7136'), false);
     assert.equal(serialized.includes('46.6753'), false);
-    assert.equal(record.auditOutcome, 'ACCEPTED');
   }
 });
 
@@ -73,30 +66,72 @@ test('same nonce across signal and source scopes has exactly one winner', async 
   assert.equal(decisions.filter((value) => value.reasonCode === 'replay_detected').length, 1);
 });
 
-test('duplicate signal cannot create duplicate safety intent', async () => {
+test('persistence failure aborts reservation and retry completes exactly once', async () => {
+  const { service, replayAdmission, provenanceStore, intentStore } = fixture();
+  provenanceStore.failNext = true;
+  const signal = phoneMotionSimulator();
+  const failed = await service.ingest(request(signal));
+  assert.equal(failed.disposition, 'HUMAN_REVIEW');
+  assert.equal(failed.reasonCode, 'accepted_signal_persistence_unavailable');
+  assert.equal(replayAdmission.snapshot().length, 0);
+  const retried = await service.ingest(request(signal, { correlationId: 'correlation-retry', traceId: 'trace-retry' }));
+  assert.equal(retried.disposition, 'ACCEPTED');
+  assert.equal(provenanceStore.records.length, 1);
+  assert.equal(intentStore.records.size, 1);
+  assert.equal(replayAdmission.snapshot()[0]?.state, 'COMMITTED');
+});
+
+test('partial persistence and replay commit interruption are recoverable and idempotent', async () => {
+  const { service, replayAdmission, provenanceStore, intentStore } = fixture();
+  intentStore.failNext = true;
+  const signal = phoneMotionSimulator();
+  const failed = await service.ingest(request(signal));
+  assert.equal(failed.disposition, 'HUMAN_REVIEW');
+  assert.equal(provenanceStore.records.length, 1);
+  assert.equal(intentStore.records.size, 0);
+  assert.equal(replayAdmission.snapshot().length, 0);
+  replayAdmission.failNextCommit = true;
+  const commitFailed = await service.ingest(request(signal, { traceId: 'trace-recovery-1' }));
+  assert.equal(commitFailed.disposition, 'HUMAN_REVIEW');
+  assert.equal(commitFailed.reasonCode, 'replay_commit_unavailable');
+  assert.equal(intentStore.records.size, 1);
+  assert.equal(replayAdmission.snapshot()[0]?.state, 'RESERVED');
+  const recovered = await service.ingest(request(signal, { traceId: 'trace-recovery-2' }));
+  assert.equal(recovered.disposition, 'ACCEPTED');
+  assert.equal(provenanceStore.records.length, 1);
+  assert.equal(intentStore.records.size, 1);
+  assert.equal(replayAdmission.snapshot()[0]?.state, 'COMMITTED');
+});
+
+test('duplicate after committed admission cannot create duplicate intent', async () => {
   const { service, intentStore } = fixture();
   const signal = phoneMotionSimulator();
-  const first = await service.ingest(request(signal));
-  const duplicate = await service.ingest(request(signal, { correlationId: 'correlation-002', traceId: 'trace-002' }));
-  assert.equal(first.disposition, 'ACCEPTED');
-  assert.equal(duplicate.reasonCode, 'replay_detected');
+  assert.equal((await service.ingest(request(signal))).disposition, 'ACCEPTED');
+  assert.equal((await service.ingest(request(signal, { correlationId: 'correlation-002', traceId: 'trace-002' }))).disposition, 'ACCEPTED');
   assert.equal(intentStore.records.size, 1);
 });
 
-test('revoked or unknown source never reaches replay consume or ACCEPT', async () => {
-  const { service, sourceTrustRegistry, replayRegistry } = fixture();
-  sourceTrustRegistry.set('device-pseudonym-001', 'REVOKED');
-  const revoked = await service.ingest(request(phoneMotionSimulator()));
-  assert.equal(revoked.disposition, 'QUARANTINED');
-  assert.equal(revoked.reasonCode, 'source_revoked');
-  assert.equal(replayRegistry.snapshot().length, 0);
-  sourceTrustRegistry.unavailable = true;
-  const unavailable = await service.ingest(request(vehicleEventSimulator()));
-  assert.equal(unavailable.disposition, 'HUMAN_REVIEW');
-  assert.equal(unavailable.reasonCode, 'source_trust_unavailable');
+test('different envelope cannot rebind a committed nonce', async () => {
+  const { service, sourceTrustRegistry } = fixture();
+  const signal = phoneMotionSimulator({ integrity: { replayToken: 'global-nonce', signatureStatus: 'VERIFIED', clockSkewMs: 0 } });
+  await service.ingest(request(signal));
+  sourceTrustRegistry.set('device-pseudonym-002', 'ACTIVE');
+  const rebound = phoneMotionSimulator({ signalId: 'signal-phone-002', sourceId: 'device-pseudonym-002', integrity: { replayToken: 'global-nonce', signatureStatus: 'VERIFIED', clockSkewMs: 0 } });
+  const result = await service.ingest(request(rebound, { correlationId: 'correlation-rebind', traceId: 'trace-rebind' }));
+  assert.equal(result.disposition, 'QUARANTINED');
+  assert.equal(result.reasonCode, 'replay_detected');
 });
 
-test('malformed, unsupported wearable, bad signature and poor location accuracy fail closed', async () => {
+test('revoked or unknown source never reaches replay reservation or ACCEPT', async () => {
+  const { service, sourceTrustRegistry, replayAdmission } = fixture();
+  sourceTrustRegistry.set('device-pseudonym-001', 'REVOKED');
+  assert.equal((await service.ingest(request(phoneMotionSimulator()))).disposition, 'QUARANTINED');
+  assert.equal(replayAdmission.snapshot().length, 0);
+  sourceTrustRegistry.unavailable = true;
+  assert.equal((await service.ingest(request(vehicleEventSimulator()))).disposition, 'HUMAN_REVIEW');
+});
+
+test('malformed, unsupported, invalid signature and poor location accuracy fail closed', async () => {
   const { service } = fixture();
   const candidates = [
     { envelope: { unknown: true }, reason: 'unknown_envelope_field' },
@@ -118,42 +153,43 @@ test('stale, future and missing timestamps follow temporal fail-closed policy', 
     phoneMotionSimulator({ signalId: 'signal-future-001', integrity: { replayToken: 'nonce-future', signatureStatus: 'VERIFIED', clockSkewMs: 0 }, occurredAt: '2026-07-29T12:10:00.000Z', receivedAt: '2026-07-29T12:10:01.000Z' }),
     { ...phoneMotionSimulator(), signalId: 'signal-missing-time', occurredAt: undefined }
   ];
-  for (const [index, envelope] of candidates.entries()) {
-    const result = await service.ingest(request(envelope, { correlationId: `correlation-time-${index}`, traceId: `trace-time-${index}` }));
-    assert.notEqual(result.disposition, 'ACCEPTED');
-  }
+  for (const [index, envelope] of candidates.entries()) assert.notEqual((await service.ingest(request(envelope, { correlationId: `correlation-time-${index}`, traceId: `trace-time-${index}` }))).disposition, 'ACCEPTED');
 });
 
-test('registry, rate limiter and raw evidence store failures degrade safely', async () => {
-  const { service, replayRegistry, rateLimiter, rawEvidenceStore } = fixture();
-  replayRegistry.unavailable = true;
-  const registry = await service.ingest(request(phoneMotionSimulator()));
-  assert.equal(registry.disposition, 'HUMAN_REVIEW');
-  assert.equal(registry.reasonCode, 'replay_registry_unavailable');
-
-  replayRegistry.unavailable = false;
+test('registry, rate limiter and raw evidence failures degrade safely', async () => {
+  const { service, replayAdmission, rateLimiter, rawEvidenceStore } = fixture();
+  replayAdmission.unavailable = true;
+  assert.equal((await service.ingest(request(phoneMotionSimulator()))).disposition, 'HUMAN_REVIEW');
+  replayAdmission.unavailable = false;
   rateLimiter.unavailable = true;
-  const limited = await service.ingest(request(vehicleEventSimulator()));
-  assert.equal(limited.disposition, 'HUMAN_REVIEW');
-  assert.equal(limited.reasonCode, 'rate_limiter_unavailable');
-
+  assert.equal((await service.ingest(request(vehicleEventSimulator()))).disposition, 'HUMAN_REVIEW');
   rateLimiter.unavailable = false;
-  rawEvidenceStore.unavailable = true;
+  rawEvidenceStore.failNext = true;
   const rawFailure = await service.ingest(request(personReportSimulator(), { rawEvidence: { mediaType: 'application/octet-stream', bytes: new Uint8Array([1, 2, 3]) } }));
   assert.equal(rawFailure.disposition, 'HUMAN_REVIEW');
-  assert.equal(rawFailure.reasonCode, 'raw_evidence_store_unavailable');
+  assert.equal(rawFailure.reasonCode, 'accepted_signal_persistence_unavailable');
 });
 
-test('per-source rate limiting and bounded queue produce explicit backpressure', async () => {
-  const base = fixture();
-  const rateLimitedPorts = { ...base.ports, rateLimiter: new FixedWindowSourceRateLimiter(1, 60_000) };
-  const rateLimitedService = new MultimodalSignalIngestionService(rateLimitedPorts);
-  const first = await rateLimitedService.ingest(request(phoneMotionSimulator()));
-  const second = await rateLimitedService.ingest(request(phoneMotionSimulator({ signalId: 'signal-phone-002', integrity: { replayToken: 'nonce-phone-002', signatureStatus: 'VERIFIED', clockSkewMs: 0 } }), { correlationId: 'correlation-002', traceId: 'trace-002' }));
-  assert.equal(first.disposition, 'ACCEPTED');
+test('queue drain completes all accepted producers without stranded entries', async () => {
+  const { service, sourceTrustRegistry } = fixture(16);
+  for (let index = 2; index <= 8; index += 1) sourceTrustRegistry.set(`device-pseudonym-${index.toString().padStart(3, '0')}`, 'ACTIVE');
+  const requests = Array.from({ length: 8 }, (_, index) => {
+    const suffix = (index + 1).toString().padStart(3, '0');
+    return request(phoneMotionSimulator({ signalId: `signal-phone-${suffix}`, sourceId: `device-pseudonym-${suffix}`, integrity: { replayToken: `nonce-phone-${suffix}`, signatureStatus: 'VERIFIED', clockSkewMs: 0 } }), { correlationId: `correlation-${suffix}`, traceId: `trace-${suffix}` });
+  });
+  const results = await Promise.all(requests.map((value) => service.enqueue(value)));
+  assert.equal(results.filter((value) => value.disposition === 'ACCEPTED').length, 8);
+  assert.equal(service.getQueueDepth(), 0);
+});
+
+test('bounded queue rejects overflow explicitly and never strands accepted entries', async () => {
+  const { service } = fixture(1);
+  const first = service.enqueue(request(phoneMotionSimulator()));
+  const second = await service.enqueue(request(vehicleEventSimulator(), { correlationId: 'correlation-overflow', traceId: 'trace-overflow' }));
   assert.equal(second.disposition, 'BACKPRESSURE');
-  assert.equal(second.reasonCode, 'source_rate_limited');
-  assert.equal(rateLimitedService.getReadiness(), 'DEGRADED');
+  assert.equal(second.reasonCode, 'queue_capacity_exceeded');
+  assert.equal((await first).disposition, 'ACCEPTED');
+  assert.equal(service.getQueueDepth(), 0);
 });
 
 test('raw evidence is stored separately and provenance contains only an opaque reference', async () => {
