@@ -64,10 +64,11 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
     for (const [key, message] of this.outbox) {
       if (result.length >= input.limit) break;
       const reservation = this.deliveryReservations.get(key);
-      if (reservation !== undefined && Date.parse(reservation.deadlineAt) > Date.parse(input.now)) continue;
-      if (reservation !== undefined) this.deliveryReservations.delete(key);
+      const reservationExpired = reservation !== undefined && Date.parse(reservation.deadlineAt) <= Date.parse(input.now);
+      if (reservation !== undefined && !reservationExpired) continue;
+      if (reservationExpired) this.deliveryReservations.delete(key);
       const leaseActive = message.leaseExpiresAt !== null && Date.parse(message.leaseExpiresAt) > Date.parse(input.now);
-      if (leaseActive || message.deliveredAt !== null || message.cancelledAt !== null || Date.parse(message.availableAt) > Date.parse(input.now)) continue;
+      if ((leaseActive && !reservationExpired) || message.deliveredAt !== null || message.cancelledAt !== null || Date.parse(message.availableAt) > Date.parse(input.now)) continue;
       const claimed = { ...message, leaseOwner: input.workerId, leaseExpiresAt: new Date(Date.parse(input.now) + input.leaseMs).toISOString() };
       this.outbox.set(key, claimed); result.push(claimed);
     }
