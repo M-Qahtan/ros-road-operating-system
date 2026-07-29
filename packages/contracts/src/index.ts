@@ -83,3 +83,5 @@ export interface RoadEventPageResponse {
   readonly limit: number;
   readonly offset: number;
 }
+
+export * from './human-safety.js';
