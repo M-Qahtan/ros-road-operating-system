@@ -4,6 +4,24 @@
 
 This runtime executes the approved contracts from issues #28 and #29. It does not diagnose, prescribe, determine legal fault, guarantee help, dispatch a real authority, downgrade S3/S4, resolve a HumanSafetyCase, or close/reopen a road. Ambiguity, dependency loss, contradictory input, exhausted retries, and invalid state/version move toward `HUMAN_REVIEW` or `ESCALATED`.
 
+## Mandatory protocol sequence
+
+A contact session cannot start with a safety-indicator question. The runtime enforces the #29 sequence:
+
+`CONSENT_PENDING → LANGUAGE_SELECTION → CONTACTING → AWAITING_RESPONSE`
+
+- `open` creates `CONSENT_PENDING`, persists a deadline, and emits only the `contact.consent` prompt identifier.
+- consent refusal, consent silence, or an out-of-order safety reply moves to `HUMAN_REVIEW` and cancels pending automation;
+- consent approval moves to `LANGUAGE_SELECTION` and emits `contact.language` as a content-free orchestration identifier for an approved language-choice control;
+- only a structured `LANGUAGE_SELECTED` callback may move to `CONTACTING`;
+- the timer worker then applies the approved `CONTACTING → AWAITING_RESPONSE` transition and emits `contact.response`;
+- partial response, disconnect, no-response, retry, escalation, and operator takeover continue through transitions permitted by the #29 state machine;
+- the runtime never enters `COMPLETED` automatically.
+
+`contact.language` is an orchestration key, not production wording. Channel adapters must map prompt identifiers only to separately approved, versioned content. The current Arabic prompt catalog remains `PLACEHOLDER_NOT_APPROVED`; the runtime does not embed or promote it to production medical text.
+
+Automated callbacks may raise identity confidence only from `UNVERIFIED` to `PARTIAL`. They cannot mark identity `CONFIRMED`; confirmation remains a separately governed human-authority action.
+
 ## Tenant, case, and authenticated-context isolation
 
 Every runtime command, callback, timer lease, inbox identity, outbox message, audit event, and repository lookup is scoped by the composite identity:
@@ -16,7 +34,7 @@ Operator takeover additionally requires:
 
 - authenticated tenant and case context;
 - a human role of `OPERATOR`, `SUPERVISOR`, or `SAFETY_LEAD`;
-- the current operator-authority policy version;
+- the current #29 contact-authority policy version;
 - an immutable audit event recording the role that authorized the takeover.
 
 PostgreSQL uses composite primary and foreign keys so inbox, outbox, and audit records cannot reference a session in another tenant or case.
@@ -27,10 +45,10 @@ Each contact command is processed in one repository transaction:
 
 1. lock/read the scoped contact session where the command requires an existing aggregate;
 2. atomically claim the scoped inbox idempotency key;
-3. enforce optimistic `version` and the approved transition;
-4. update the session;
+3. evaluate the requested transition through `decideHumanContactTransition` from #29;
+4. enforce optimistic `version` and update the session;
 5. append one immutable structured audit event;
-6. insert a deterministic scoped outbox message when contact is required.
+6. insert a deterministic scoped outbox message when the approved state requires contact.
 
 The open-session path may stage its inbox key before the new session because the composite inbox foreign key is `DEFERRABLE INITIALLY DEFERRED`; both rows must commit together. Callback and takeover paths verify the scoped session before inserting their inbox identity, so an unknown cross-tenant/cross-case request fails closed rather than failing at transaction commit.
 
@@ -72,8 +90,9 @@ A crash after provider send but before database acknowledgement may repeat a tra
 Operator takeover is a human action. In the same transaction it:
 
 - verifies tenant/case/session ownership and authenticated tenant/case context;
-- validates the human role and authority-policy version;
-- changes the session to `OPERATOR_TAKEOVER`;
+- validates the human role and the #29 authority-policy version;
+- evaluates the state transition through the #29 authority matrix;
+- changes the session to `OPERATOR_TAKEOVER` only from an allowed state;
 - records operator identity, authorized role, and immutable audit event;
 - sets `automation_suppressed=true`;
 - clears deadlines and timer leases;
@@ -84,26 +103,31 @@ No automated worker may resume while suppression is active.
 ## Retry and failure behavior
 
 - Automated contact attempts are bounded by the #29 contract.
-- Deadlines are persisted as absolute timestamps.
-- Due processing uses leases and optimistic versioning.
-- Channel outage records a capped durable backoff rather than claiming delivery.
-- Contradictory callbacks and malformed, unauthenticated, or mismatched runtime context fail to human review.
+- Deadlines are persisted as absolute timestamps for consent, language choice, structured response, and retries.
+- Due processing uses leases, optimistic versioning, and the approved transition matrix.
+- `NO_RESPONSE` and `DISCONNECTED` move through `CONTACTING` before another `AWAITING_RESPONSE`; the runtime cannot jump directly across protocol states.
+- Channel outage records a capped durable backoff for undelivered transport, while protocol-level channel failure moves the session to human review.
+- Contradictory callbacks, unavailable accessibility, and malformed, unauthenticated, mismatched, or out-of-order runtime context fail to human review.
 - Retry exhaustion escalates; it never completes or resolves the safety case.
 - Fallback channels remain local simulations (`SMS_SIM`, `TELEPHONY_SIM`) until separately approved.
 
 ## Data minimization
 
-Runtime records contain scoped pseudonymous identifiers, states, deadlines, policy versions, reason codes, trace IDs, authorized roles, and accessibility flags. They exclude raw conversation bodies, telephone numbers, medical narratives, replay tokens, and precise coordinates. General telemetry must use state/reason counters only.
+Runtime records contain scoped pseudonymous identifiers, states, deadlines, policy versions, reason codes, trace IDs, authorized roles, structured language choice, partial identity confidence, and accessibility flags. They exclude raw conversation bodies, telephone numbers, medical narratives, replay tokens, and precise coordinates. General telemetry must use state/reason counters only.
 
 ## Acceptance evidence
 
 Required deterministic proofs:
 
+- no safety-indicator prompt is emitted before consent and explicit language selection;
+- consent refusal/silence and language-selection silence fail to human review;
+- out-of-order and duplicate callbacks fail closed or remain idempotent;
+- automated callbacks cannot confirm identity;
 - restart/resume preserves deadlines and exactly-one logical contact attempt;
 - duplicate commands and callbacks are idempotent within tenant/case scope;
 - cross-tenant or cross-case callback/takeover/inbox/lease access fails closed;
 - stale version, timer races, and concurrent workers fail closed;
-- bounded contact retries escalate;
+- bounded contact retries follow the approved states and escalate;
 - operator takeover suppresses automation and prevents a claimed-but-not-yet-sent message from calling the provider after cancellation;
 - outbox claim/locked delivery/ack/retry, lease expiry, provider outage, and restart recovery are durable;
 - crash after provider send repeats the same idempotency key and does not create a second logical delivery;
