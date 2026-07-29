@@ -53,7 +53,9 @@ export class AtomicInMemoryReplayNonceRegistry implements RecoverableReplayAdmis
       this.admissions.set(request.nonceDigest, { admissionId, scopeDigest: request.scopeDigest, expiresAtMs, state: 'RESERVED' });
       return 'CONSUMED' as const;
     }
-    if (existing.admissionId === admissionId && existing.scopeDigest === request.scopeDigest) return 'CONSUMED' as const;
+    if (existing.admissionId === admissionId && existing.scopeDigest === request.scopeDigest) {
+      return existing.state === 'RESERVED' ? 'CONSUMED' as const : 'DUPLICATE' as const;
+    }
     return 'DUPLICATE' as const;
   }
 
