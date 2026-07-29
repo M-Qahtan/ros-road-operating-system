@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS ros_eye_contact_inbox (
   PRIMARY KEY (tenant_id, case_id, session_id, idempotency_key),
   FOREIGN KEY (tenant_id, case_id, session_id)
     REFERENCES ros_eye_contact_sessions(tenant_id, case_id, session_id)
+    ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED
 );
 
@@ -63,7 +64,8 @@ CREATE TABLE IF NOT EXISTS ros_eye_contact_outbox (
   PRIMARY KEY (tenant_id, case_id, session_id, message_id),
   UNIQUE (tenant_id, case_id, session_id, idempotency_key),
   FOREIGN KEY (tenant_id, case_id, session_id)
-    REFERENCES ros_eye_contact_sessions(tenant_id, case_id, session_id),
+    REFERENCES ros_eye_contact_sessions(tenant_id, case_id, session_id)
+    ON DELETE RESTRICT,
   CHECK ((lease_owner IS NULL AND lease_expires_at IS NULL) OR (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
   CHECK (NOT (delivered_at IS NOT NULL AND cancelled_at IS NOT NULL))
 );
@@ -82,6 +84,7 @@ CREATE TABLE IF NOT EXISTS ros_eye_contact_audit (
   session_version integer NOT NULL CHECK (session_version > 0),
   actor_type text NOT NULL CHECK (actor_type IN ('SYSTEM','OPERATOR')),
   actor_id text NOT NULL,
+  authorized_by_role text NOT NULL CHECK (authorized_by_role IN ('SYSTEM','OPERATOR','SUPERVISOR','SAFETY_LEAD')),
   authority_policy_version text NOT NULL,
   reason_code text NOT NULL,
   occurred_at timestamptz NOT NULL,
@@ -92,6 +95,7 @@ CREATE TABLE IF NOT EXISTS ros_eye_contact_audit (
   UNIQUE (tenant_id, case_id, session_id, session_version, event_type),
   FOREIGN KEY (tenant_id, case_id, session_id)
     REFERENCES ros_eye_contact_sessions(tenant_id, case_id, session_id)
+    ON DELETE RESTRICT
 );
 
 CREATE OR REPLACE FUNCTION reject_ros_eye_contact_audit_mutation()
@@ -106,10 +110,13 @@ CREATE TRIGGER ros_eye_contact_audit_append_only
 BEFORE UPDATE OR DELETE ON ros_eye_contact_audit
 FOR EACH ROW EXECUTE FUNCTION reject_ros_eye_contact_audit_mutation();
 
--- Reference claim query for the PostgreSQL adapter. The application adapter must
--- execute this inside a transaction, then update the selected rows with the same
--- worker and lease expiry before commit.
 COMMENT ON TABLE ros_eye_contact_outbox IS
-  'Claim due rows with FOR UPDATE SKIP LOCKED; fence delivery by tenant/case/session, lease owner, and cancellation state.';
+  'Claim with FOR UPDATE SKIP LOCKED. Hold a scoped row lock while the bounded provider call executes so operator takeover that commits first prevents delivery; use the stable idempotency_key for crash-safe logical deduplication.';
+
+COMMENT ON COLUMN ros_eye_contact_outbox.idempotency_key IS
+  'Stable tenant/case/session-scoped provider key. Production channel adapters must enforce it.';
+
+COMMENT ON COLUMN ros_eye_contact_audit.authorized_by_role IS
+  'Explicit human or system authority role evaluated under authority_policy_version.';
 
 COMMIT;
