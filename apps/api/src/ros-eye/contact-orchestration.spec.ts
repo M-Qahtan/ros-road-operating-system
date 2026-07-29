@@ -28,6 +28,7 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
   readonly inbox = new Set<string>();
   readonly audits = new Map<string, ContactAuditEvent>();
   readonly outbox = new Map<string, ContactOutboxMessage>();
+  readonly deliveryReservations = new Map<string, { token: string; deadlineAt: string }>();
   crashAfterProviderSendOnce = false;
 
   async transaction<T>(work: (tx: ContactRuntimeTransaction) => Promise<T>): Promise<T> { return work(this); }
@@ -37,7 +38,13 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
   async insertInboxIfAbsent(scope: ContactScope, key: string) { const scoped = `${scopedKey(scope)}|${key}`; if (this.inbox.has(scoped)) return 'EXISTS' as const; this.inbox.add(scoped); return 'INSERTED' as const; }
   async insertAuditIfAbsent(event: ContactAuditEvent) { const key = `${scopedKey(event)}|${event.eventId}`; if (this.audits.has(key)) return 'EXISTS' as const; this.audits.set(key, event); return 'INSERTED' as const; }
   async insertOutboxIfAbsent(message: ContactOutboxMessage) { const key = outboxKey(message); if (this.outbox.has(key)) return 'EXISTS' as const; this.outbox.set(key, message); return 'INSERTED' as const; }
-  async cancelPendingAutomation(scope: ContactScope, occurredAt: string) { for (const [key, message] of this.outbox) if (scopedKey(message) === scopedKey(scope) && message.deliveredAt === null && message.cancelledAt === null) this.outbox.set(key, { ...message, cancelledAt: occurredAt, leaseOwner: null, leaseExpiresAt: null }); }
+  async cancelPendingAutomation(scope: ContactScope, occurredAt: string) {
+    for (const [key, message] of this.outbox) {
+      if (scopedKey(message) !== scopedKey(scope) || message.deliveredAt !== null || message.cancelledAt !== null) continue;
+      this.outbox.set(key, { ...message, cancelledAt: occurredAt, leaseOwner: null, leaseExpiresAt: null });
+      this.deliveryReservations.delete(key);
+    }
+  }
 
   async claimDueSessions(input: { workerId: string; now: string; leaseMs: number; limit: number }) {
     const result: ContactSessionRecord[] = [];
@@ -56,6 +63,9 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
     const result: ContactOutboxMessage[] = [];
     for (const [key, message] of this.outbox) {
       if (result.length >= input.limit) break;
+      const reservation = this.deliveryReservations.get(key);
+      if (reservation !== undefined && Date.parse(reservation.deadlineAt) > Date.parse(input.now)) continue;
+      if (reservation !== undefined) this.deliveryReservations.delete(key);
       const leaseActive = message.leaseExpiresAt !== null && Date.parse(message.leaseExpiresAt) > Date.parse(input.now);
       if (leaseActive || message.deliveredAt !== null || message.cancelledAt !== null || Date.parse(message.availableAt) > Date.parse(input.now)) continue;
       const claimed = { ...message, leaseOwner: input.workerId, leaseExpiresAt: new Date(Date.parse(input.now) + input.leaseMs).toISOString() };
@@ -70,11 +80,16 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
     if (current.cancelledAt !== null) return 'CANCELLED';
     if (current.deliveredAt !== null) return 'DELIVERED';
     if (current.leaseOwner !== input.workerId || current.leaseExpiresAt === null || Date.parse(current.leaseExpiresAt) <= Date.parse(input.now)) return 'CONFLICT';
+    this.deliveryReservations.set(key, { token: input.deliveryToken, deadlineAt: input.deliveryDeadlineAt });
+
+    // The external provider executes after the short reservation has committed.
     const result = await deliver(current);
     if (this.crashAfterProviderSendOnce) { this.crashAfterProviderSendOnce = false; throw new Error('simulated crash after provider send'); }
-    const fenced = this.outbox.get(key);
+
+    const fenced = this.outbox.get(key); const reservation = this.deliveryReservations.get(key);
     if (!fenced || fenced.cancelledAt !== null) return 'CANCELLED';
-    if (fenced.leaseOwner !== input.workerId) return 'CONFLICT';
+    if (fenced.leaseOwner !== input.workerId || reservation?.token !== input.deliveryToken) return 'CONFLICT';
+    this.deliveryReservations.delete(key);
     if (result === 'SENT') {
       this.outbox.set(key, { ...fenced, deliveredAt: input.now, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: null });
       return 'DELIVERED';
@@ -83,7 +98,10 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
     return 'RETRY';
   }
 
-  async releaseOutboxLease(input: ContactScope & { messageId: string; workerId: string }) { const key = outboxKey(input); const current = this.outbox.get(key); if (current?.leaseOwner === input.workerId) this.outbox.set(key, { ...current, leaseOwner: null, leaseExpiresAt: null }); }
+  async releaseOutboxLease(input: ContactScope & { messageId: string; workerId: string }) {
+    const key = outboxKey(input); const current = this.outbox.get(key); const reservation = this.deliveryReservations.get(key);
+    if (current?.leaseOwner === input.workerId && reservation === undefined) this.outbox.set(key, { ...current, leaseOwner: null, leaseExpiresAt: null });
+  }
 }
 
 const ids = { async create(namespace: string, material: string) { return `${namespace}-${createHash('sha256').update(material).digest('hex').slice(0, 24)}`; } };
@@ -240,7 +258,7 @@ test('outbox claim send and durable acknowledgement survive restart', async () =
   assert.equal([...repo.outbox.values()][0]?.deliveredAt, '2026-07-29T15:00:01.000Z');
 });
 
-test('crash after provider send before database acknowledgement repeats transport key but not logical delivery', async () => {
+test('crash after provider send before database acknowledgement repeats transport key after reservation expiry but not logical delivery', async () => {
   resetProvider();
   const repo = new MemoryRepository(); repo.crashAfterProviderSendOnce = true;
   const first = new ContactOrchestrationService(repo, channel, ids); await first.open(openInput());
@@ -248,7 +266,8 @@ test('crash after provider send before database acknowledgement repeats transpor
   assert.equal(providerInvocations.length, 1); assert.equal(providerLogicalDeliveries.size, 1);
   assert.equal([...repo.outbox.values()][0]?.deliveredAt, null);
   const restarted = new ContactOrchestrationService(repo, channel, ids);
-  const recovered = await restarted.runOutbox('outbox-worker-b', '2026-07-29T15:00:02.000Z');
+  assert.deepEqual(await restarted.runOutbox('outbox-worker-b', '2026-07-29T15:00:05.999Z'), []);
+  const recovered = await restarted.runOutbox('outbox-worker-b', '2026-07-29T15:00:06.001Z');
   assert.equal(recovered[0]?.disposition, 'DELIVERED');
   assert.equal(providerInvocations.length, 2); assert.equal(providerLogicalDeliveries.size, 1);
   assert.equal(providerInvocations[0], providerInvocations[1]);
@@ -259,7 +278,7 @@ test('two outbox workers have exactly one claimant and stable provider idempoten
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
   const results = await Promise.all([service.runOutbox('outbox-worker-a', '2026-07-29T15:00:01.000Z'), service.runOutbox('outbox-worker-b', '2026-07-29T15:00:01.000Z')]);
   assert.equal(results.flat().filter((entry) => entry.disposition === 'DELIVERED').length, 1); assert.equal(providerInvocations.length, 1);
-  assert.match(providerInvocations[0] ?? '', /^ros-eye\.contact-runtime\.v5\|tenant-riyadh\|case-001\|session-001\|/);
+  assert.match(providerInvocations[0] ?? '', /^ros-eye\.contact-runtime\.v6\|tenant-riyadh\|case-001\|session-001\|/);
 });
 
 test('expired outbox lease is reclaimed and unavailable provider uses bounded durable retry', async () => {
@@ -268,30 +287,60 @@ test('expired outbox lease is reclaimed and unavailable provider uses bounded du
   assert.deepEqual(await service.runOutbox('recovery-worker', '2026-07-29T15:00:01.500Z'), []);
   const retried = await service.runOutbox('recovery-worker', '2026-07-29T15:00:02.001Z');
   assert.equal(retried[0]?.disposition, 'RETRY');
-  const message = [...repo.outbox.values()][0]; assert.equal(message?.lastErrorCode, 'channel_unavailable'); assert.equal(message?.leaseOwner, null);
+  const message = [...repo.outbox.values()][0]; assert.equal(message?.lastErrorCode, 'channel_delivery_failed_or_timed_out'); assert.equal(message?.leaseOwner, null);
   assert.equal(message?.availableAt, '2026-07-29T15:00:17.001Z');
 });
 
-test('takeover after claim but before delivery is fenced and cannot call provider', async () => {
+test('provider promise that never resolves is aborted at the enforceable delivery deadline', async () => {
+  const repo = new MemoryRepository(); let observedSignal: AbortSignal | null = null;
+  const hung: ContactChannelPort = {
+    async send(input) {
+      observedSignal = input.signal;
+      return new Promise<'UNAVAILABLE'>((resolve) => input.signal.addEventListener('abort', () => resolve('UNAVAILABLE'), { once: true }));
+    }
+  };
+  const service = new ContactOrchestrationService(repo, hung, ids, { outboxLeaseMs: 100, deliveryTimeoutMs: 10 }); await service.open(openInput());
+  const started = Date.now(); const result = await service.runOutbox('hung-worker', '2026-07-29T15:00:01.000Z');
+  assert.equal(result[0]?.disposition, 'RETRY'); assert.ok(Date.now() - started < 250); assert.equal(observedSignal?.aborted, true);
+});
+
+test('operator takeover completes while provider is hung and invalidates later acknowledgement', async () => {
+  const repo = new MemoryRepository(); let sendStartedResolve: (() => void) | null = null;
+  const sendStarted = new Promise<void>((resolve) => { sendStartedResolve = resolve; });
+  const hung: ContactChannelPort = {
+    async send(input) {
+      sendStartedResolve?.();
+      return new Promise<'UNAVAILABLE'>((resolve) => input.signal.addEventListener('abort', () => resolve('UNAVAILABLE'), { once: true }));
+    }
+  };
+  const service = new ContactOrchestrationService(repo, hung, ids, { outboxLeaseMs: 200, deliveryTimeoutMs: 30 }); await service.open(openInput()); await reachAwaitingResponse(service, repo);
+  const running = service.runOutbox('hung-worker', '2026-07-29T15:00:11.000Z'); await sendStarted;
+  const takeoverStarted = Date.now(); const takeoverResult = await service.operatorTakeover(takeover({ occurredAt: '2026-07-29T15:00:12.000Z' }));
+  assert.equal(takeoverResult, 'APPLIED'); assert.ok(Date.now() - takeoverStarted < 100); assert.equal(session(repo).automationSuppressed, true);
+  const delivery = await running; assert.equal(delivery[0]?.disposition, 'CANCELLED'); assert.equal(activeMessages(repo).length, 0);
+});
+
+test('takeover after claim but before reservation is fenced and cannot call provider', async () => {
   resetProvider();
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput()); await reachAwaitingResponse(service, repo);
   const [claimed] = await repo.claimDueOutbox({ workerId: 'outbox-worker-a', now: '2026-07-29T15:00:11.000Z', leaseMs: 30_000, limit: 1 });
   assert.ok(claimed); assert.equal(claimed.promptId, 'contact.response');
   await service.operatorTakeover(takeover({ occurredAt: '2026-07-29T15:00:12.000Z' }));
   let calls = 0;
-  const result = await repo.processClaimedOutbox({ ...scope, messageId: claimed.messageId, workerId: 'outbox-worker-a', now: '2026-07-29T15:00:13.000Z', retryAvailableAt: '2026-07-29T15:00:28.000Z', errorCode: 'channel_unavailable' }, async () => { calls += 1; return 'SENT'; });
+  const result = await repo.processClaimedOutbox({ ...scope, messageId: claimed.messageId, workerId: 'outbox-worker-a', now: '2026-07-29T15:00:13.000Z', retryAvailableAt: '2026-07-29T15:00:28.000Z', errorCode: 'channel_unavailable', deliveryToken: 'delivery-token-a', deliveryDeadlineAt: '2026-07-29T15:00:18.000Z' }, async () => { calls += 1; return 'SENT'; });
   assert.notEqual(result, 'DELIVERED'); assert.equal(calls, 0); assert.equal(providerInvocations.length, 0);
 });
 
-test('PostgreSQL adapter SQL uses composite scope SKIP LOCKED claims and a pre-send row fence', () => {
+test('PostgreSQL adapter uses short token reservations without a provider-call row lock', () => {
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueSessions, /FOR UPDATE SKIP LOCKED/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueOutbox, /FOR UPDATE SKIP LOCKED/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueSessions, /RETURNING session\.\*/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueOutbox, /RETURNING message\.\*/);
-  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.getClaimedOutboxForDelivery, /tenant_id = \$1 AND case_id = \$2 AND session_id = \$3/);
-  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.getClaimedOutboxForDelivery, /lease_owner = \$5/);
-  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.getClaimedOutboxForDelivery, /FOR UPDATE/);
-  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /cancelled_at IS NULL/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery, /delivery_token = \$7/);
+  assert.doesNotMatch(POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery, /FOR UPDATE/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /delivery_token = \$6/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /delivery_deadline_at >= clock_timestamp\(\)/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, /cancelled_at IS NULL/);
 });
 
 test('bounded contact retries follow NO_RESPONSE to CONTACTING and escalate without silent completion', async () => {
