@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
+import { POSTGRES_CONTACT_RUNTIME_SQL } from './contact-orchestration-postgres.js';
 import {
   CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION,
   ContactOrchestrationService,
@@ -10,7 +11,9 @@ import {
   type ContactRuntimeRepositoryPort,
   type ContactRuntimeTransaction,
   type ContactScope,
-  type ContactSessionRecord
+  type ContactSessionRecord,
+  type OutboxDeliveryDisposition,
+  type ProcessClaimedOutboxInput
 } from './contact-orchestration.js';
 
 const scopedKey = (value: ContactScope) => `${value.tenantId}|${value.caseId}|${value.sessionId}`;
@@ -21,6 +24,7 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
   readonly inbox = new Set<string>();
   readonly audits = new Map<string, ContactAuditEvent>();
   readonly outbox = new Map<string, ContactOutboxMessage>();
+  crashAfterProviderSendOnce = false;
 
   async transaction<T>(work: (tx: ContactRuntimeTransaction) => Promise<T>): Promise<T> { return work(this); }
   async getSessionForUpdate(scope: ContactScope) { return this.sessions.get(scopedKey(scope)) ?? null; }
@@ -29,7 +33,7 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
   async insertInboxIfAbsent(scope: ContactScope, key: string) { const scoped = `${scopedKey(scope)}|${key}`; if (this.inbox.has(scoped)) return 'EXISTS' as const; this.inbox.add(scoped); return 'INSERTED' as const; }
   async insertAuditIfAbsent(event: ContactAuditEvent) { const key = `${scopedKey(event)}|${event.eventId}`; if (this.audits.has(key)) return 'EXISTS' as const; this.audits.set(key, event); return 'INSERTED' as const; }
   async insertOutboxIfAbsent(message: ContactOutboxMessage) { const key = outboxKey(message); if (this.outbox.has(key)) return 'EXISTS' as const; this.outbox.set(key, message); return 'INSERTED' as const; }
-  async cancelPendingAutomation(scope: ContactScope, occurredAt: string) { for (const [key, message] of this.outbox) if (scopedKey(message) === scopedKey(scope) && message.deliveredAt === null) this.outbox.set(key, { ...message, cancelledAt: occurredAt, leaseOwner: null, leaseExpiresAt: null }); }
+  async cancelPendingAutomation(scope: ContactScope, occurredAt: string) { for (const [key, message] of this.outbox) if (scopedKey(message) === scopedKey(scope) && message.deliveredAt === null && message.cancelledAt === null) this.outbox.set(key, { ...message, cancelledAt: occurredAt, leaseOwner: null, leaseExpiresAt: null }); }
 
   async claimDueSessions(input: { workerId: string; now: string; leaseMs: number; limit: number }) {
     const result: ContactSessionRecord[] = [];
@@ -55,29 +59,40 @@ class MemoryRepository implements ContactRuntimeRepositoryPort, ContactRuntimeTr
     }
     return result;
   }
-  async markOutboxDelivered(input: ContactScope & { messageId: string; workerId: string; deliveredAt: string }) {
+
+  async processClaimedOutbox(input: ProcessClaimedOutboxInput, deliver: (message: ContactOutboxMessage) => Promise<'SENT' | 'UNAVAILABLE'>): Promise<OutboxDeliveryDisposition> {
     const key = outboxKey(input); const current = this.outbox.get(key);
-    if (!current || current.leaseOwner !== input.workerId) return 'CONFLICT' as const;
-    if (current.cancelledAt !== null) return 'CANCELLED' as const;
-    this.outbox.set(key, { ...current, deliveredAt: input.deliveredAt, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: null }); return 'UPDATED' as const;
+    if (!current) return 'CONFLICT';
+    if (current.cancelledAt !== null) return 'CANCELLED';
+    if (current.deliveredAt !== null) return 'DELIVERED';
+    if (current.leaseOwner !== input.workerId || current.leaseExpiresAt === null || Date.parse(current.leaseExpiresAt) <= Date.parse(input.now)) return 'CONFLICT';
+    const result = await deliver(current);
+    if (this.crashAfterProviderSendOnce) { this.crashAfterProviderSendOnce = false; throw new Error('simulated crash after provider send'); }
+    const fenced = this.outbox.get(key);
+    if (!fenced || fenced.cancelledAt !== null) return 'CANCELLED';
+    if (fenced.leaseOwner !== input.workerId) return 'CONFLICT';
+    if (result === 'SENT') {
+      this.outbox.set(key, { ...fenced, deliveredAt: input.now, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: null });
+      return 'DELIVERED';
+    }
+    this.outbox.set(key, { ...fenced, availableAt: input.retryAvailableAt, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: input.errorCode });
+    return 'RETRY';
   }
-  async markOutboxRetry(input: ContactScope & { messageId: string; workerId: string; availableAt: string; errorCode: string }) {
-    const key = outboxKey(input); const current = this.outbox.get(key);
-    if (!current || current.leaseOwner !== input.workerId) return 'CONFLICT' as const;
-    if (current.cancelledAt !== null) return 'CANCELLED' as const;
-    this.outbox.set(key, { ...current, availableAt: input.availableAt, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: input.errorCode }); return 'UPDATED' as const;
-  }
+
   async releaseOutboxLease(input: ContactScope & { messageId: string; workerId: string }) { const key = outboxKey(input); const current = this.outbox.get(key); if (current?.leaseOwner === input.workerId) this.outbox.set(key, { ...current, leaseOwner: null, leaseExpiresAt: null }); }
 }
 
 const ids = { async create(namespace: string, material: string) { return `${namespace}-${createHash('sha256').update(material).digest('hex').slice(0, 24)}`; } };
-const sentKeys: string[] = [];
-const channel: ContactChannelPort = { async send(input) { sentKeys.push(input.idempotencyKey); return 'SENT'; } };
+const providerInvocations: string[] = [];
+const providerLogicalDeliveries = new Set<string>();
+const channel: ContactChannelPort = { async send(input) { providerInvocations.push(input.idempotencyKey); providerLogicalDeliveries.add(input.idempotencyKey); return 'SENT'; } };
 const scope = { tenantId: 'tenant-riyadh', caseId: 'case-001', sessionId: 'session-001' } as const;
 function openInput(overrides: Record<string, unknown> = {}) { return { ...scope, language: 'ar' as const, traceId: 'trace-001', occurredAt: '2026-07-29T15:00:00.000Z', idempotencyKey: 'open-001', preferredChannel: 'IN_APP' as const, ...overrides }; }
-function callback(kind: 'RESPONSE' | 'CONTRADICTORY' | 'DISCONNECTED' | 'CHANNEL_FAILURE' = 'RESPONSE', overrides: Record<string, unknown> = {}) { return { ...scope, callbackId: 'callback-001', traceId: 'trace-callback', occurredAt: '2026-07-29T15:00:05.000Z', idempotencyKey: 'callback-key', kind, ...overrides }; }
-
+function callback(kind: 'RESPONSE' | 'CONTRADICTORY' | 'DISCONNECTED' | 'CHANNEL_FAILURE' = 'RESPONSE', overrides: Record<string, unknown> = {}) { return { ...scope, authenticatedTenantId: 'tenant-riyadh', authenticatedCaseId: 'case-001', callbackId: 'callback-001', traceId: 'trace-callback', occurredAt: '2026-07-29T15:00:05.000Z', idempotencyKey: 'callback-key', kind, ...overrides }; }
+function takeover(overrides: Record<string, unknown> = {}) { return { ...scope, operatorId: 'operator-001', authenticatedTenantId: 'tenant-riyadh', authenticatedCaseId: 'case-001', authorizedRole: 'OPERATOR' as const, traceId: 'trace-takeover', occurredAt: '2026-07-29T15:00:10.000Z', idempotencyKey: 'takeover-001', authorityPolicyVersion: CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION, ...overrides }; }
 async function advanceToRetry(service: ContactOrchestrationService) { await service.runDue('worker-a', '2026-07-29T15:00:31.000Z'); await service.runDue('worker-a', '2026-07-29T15:00:47.000Z'); }
+
+function resetProvider(): void { providerInvocations.length = 0; providerLogicalDeliveries.clear(); }
 
 test('opening is scoped, transactional and contains no raw sensitive fields', async () => {
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids);
@@ -85,6 +100,7 @@ test('opening is scoped, transactional and contains no raw sensitive fields', as
   assert.equal(repo.sessions.size, 1); assert.equal(repo.outbox.size, 1); assert.equal(repo.audits.size, 1);
   const serialized = JSON.stringify([...repo.sessions.values(), ...repo.audits.values(), ...repo.outbox.values()]);
   for (const forbidden of ['phoneNumber', 'medicalNarrative', 'replayToken', 'latitude', 'longitude', 'rawBody']) assert.equal(serialized.includes(forbidden), false);
+  assert.equal([...repo.audits.values()][0]?.authorizedByRole, 'SYSTEM');
 });
 
 test('restart preserves NO_RESPONSE and does not duplicate logical retry', async () => {
@@ -97,11 +113,14 @@ test('restart preserves NO_RESPONSE and does not duplicate logical retry', async
   assert.equal([...repo.outbox.values()].filter((message) => message.attempt === 2).length, 1);
 });
 
-test('callbacks and takeover fail closed across tenant or case scope', async () => {
+test('callbacks and takeover fail closed across authenticated tenant or case scope without inbox mutation', async () => {
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
-  const original = repo.sessions.get(scopedKey(scope));
-  assert.equal(await service.handleCallback(callback('RESPONSE', { tenantId: 'tenant-other' })), 'HUMAN_REVIEW');
-  assert.equal(await service.operatorTakeover({ ...scope, caseId: 'case-other', operatorId: 'operator-001', authenticatedTenantId: 'tenant-riyadh', traceId: 'trace-takeover', occurredAt: '2026-07-29T15:00:10.000Z', idempotencyKey: 'takeover-001', authorityPolicyVersion: CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION }), 'HUMAN_REVIEW');
+  const inboxBefore = repo.inbox.size; const original = repo.sessions.get(scopedKey(scope));
+  assert.equal(await service.handleCallback(callback('RESPONSE', { tenantId: 'tenant-other', authenticatedTenantId: 'tenant-other' })), 'HUMAN_REVIEW');
+  assert.equal(await service.handleCallback(callback('RESPONSE', { authenticatedTenantId: 'tenant-other' })), 'HUMAN_REVIEW');
+  assert.equal(await service.operatorTakeover(takeover({ caseId: 'case-other', authenticatedCaseId: 'case-other' })), 'HUMAN_REVIEW');
+  assert.equal(await service.operatorTakeover(takeover({ authenticatedCaseId: 'case-other' })), 'HUMAN_REVIEW');
+  assert.equal(repo.inbox.size, inboxBefore);
   assert.equal(repo.sessions.get(scopedKey(scope))?.version, original?.version);
   assert.equal(repo.sessions.get(scopedKey(scope))?.automationSuppressed, false);
 });
@@ -113,30 +132,45 @@ test('same session id may exist in another tenant without inbox, audit or outbox
   assert.equal(repo.sessions.size, 2); assert.equal(repo.outbox.size, 2); assert.equal(repo.audits.size, 2);
 });
 
-test('authorized operator takeover atomically cancels pending outbox and suppresses automation', async () => {
+test('authorized operator takeover atomically cancels pending outbox and records human authority', async () => {
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
-  const result = await service.operatorTakeover({ ...scope, operatorId: 'operator-001', authenticatedTenantId: 'tenant-riyadh', traceId: 'trace-takeover', occurredAt: '2026-07-29T15:00:10.000Z', idempotencyKey: 'takeover-001', authorityPolicyVersion: CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION });
-  assert.equal(result, 'APPLIED'); assert.equal(repo.sessions.get(scopedKey(scope))?.automationSuppressed, true);
+  assert.equal(await service.operatorTakeover(takeover({ authorizedRole: 'SAFETY_LEAD' })), 'APPLIED');
+  assert.equal(repo.sessions.get(scopedKey(scope))?.automationSuppressed, true);
   assert.equal([...repo.outbox.values()][0]?.cancelledAt, '2026-07-29T15:00:10.000Z');
+  assert.equal([...repo.audits.values()].find((event) => event.eventType === 'OPERATOR_TAKEOVER')?.authorizedByRole, 'SAFETY_LEAD');
   assert.deepEqual(await service.runDue('worker-a', '2026-07-29T16:00:00.000Z'), []);
 });
 
 test('outbox claim, send and durable acknowledgement survive restart', async () => {
-  sentKeys.length = 0;
+  resetProvider();
   const repo = new MemoryRepository(); const first = new ContactOrchestrationService(repo, channel, ids); await first.open(openInput());
   const delivered = await first.runOutbox('outbox-worker-a', '2026-07-29T15:00:01.000Z');
-  assert.equal(delivered[0]?.disposition, 'DELIVERED'); assert.equal(sentKeys.length, 1);
+  assert.equal(delivered[0]?.disposition, 'DELIVERED'); assert.equal(providerInvocations.length, 1);
   const restarted = new ContactOrchestrationService(repo, channel, ids);
   assert.deepEqual(await restarted.runOutbox('outbox-worker-b', '2026-07-29T15:01:00.000Z'), []);
   assert.equal([...repo.outbox.values()][0]?.deliveredAt, '2026-07-29T15:00:01.000Z');
 });
 
+test('crash after provider send before database acknowledgement repeats transport key but not logical delivery', async () => {
+  resetProvider();
+  const repo = new MemoryRepository(); repo.crashAfterProviderSendOnce = true;
+  const first = new ContactOrchestrationService(repo, channel, ids); await first.open(openInput());
+  await assert.rejects(first.runOutbox('outbox-worker-a', '2026-07-29T15:00:01.000Z'));
+  assert.equal(providerInvocations.length, 1); assert.equal(providerLogicalDeliveries.size, 1);
+  assert.equal([...repo.outbox.values()][0]?.deliveredAt, null);
+  const restarted = new ContactOrchestrationService(repo, channel, ids);
+  const recovered = await restarted.runOutbox('outbox-worker-b', '2026-07-29T15:00:02.000Z');
+  assert.equal(recovered[0]?.disposition, 'DELIVERED');
+  assert.equal(providerInvocations.length, 2); assert.equal(providerLogicalDeliveries.size, 1);
+  assert.equal(providerInvocations[0], providerInvocations[1]);
+});
+
 test('two outbox workers have exactly one claimant and stable provider idempotency key', async () => {
-  sentKeys.length = 0;
+  resetProvider();
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
   const results = await Promise.all([service.runOutbox('outbox-worker-a', '2026-07-29T15:00:01.000Z'), service.runOutbox('outbox-worker-b', '2026-07-29T15:00:01.000Z')]);
-  assert.equal(results.flat().filter((entry) => entry.disposition === 'DELIVERED').length, 1); assert.equal(sentKeys.length, 1);
-  assert.match(sentKeys[0] ?? '', /^tenant-riyadh\|case-001\|session-001\|/);
+  assert.equal(results.flat().filter((entry) => entry.disposition === 'DELIVERED').length, 1); assert.equal(providerInvocations.length, 1);
+  assert.match(providerInvocations[0] ?? '', /^ros-eye\.contact-runtime\.v4\|tenant-riyadh\|case-001\|session-001\|/);
 });
 
 test('expired outbox lease is reclaimed and unavailable provider uses bounded durable retry', async () => {
@@ -146,18 +180,30 @@ test('expired outbox lease is reclaimed and unavailable provider uses bounded du
   const retried = await service.runOutbox('recovery-worker', '2026-07-29T15:00:02.001Z');
   assert.equal(retried[0]?.disposition, 'RETRY');
   const message = [...repo.outbox.values()][0]; assert.equal(message?.lastErrorCode, 'channel_unavailable'); assert.equal(message?.leaseOwner, null);
+  assert.equal(message?.availableAt, '2026-07-29T15:00:17.001Z');
 });
 
-test('takeover racing a claimed message fences durable acknowledgement', async () => {
+test('takeover after claim but before delivery is fenced and cannot call provider', async () => {
+  resetProvider();
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
   const [claimed] = await repo.claimDueOutbox({ workerId: 'outbox-worker-a', now: '2026-07-29T15:00:01.000Z', leaseMs: 30_000, limit: 1 });
   assert.ok(claimed);
-  await service.operatorTakeover({ ...scope, operatorId: 'operator-001', authenticatedTenantId: 'tenant-riyadh', traceId: 'trace-takeover', occurredAt: '2026-07-29T15:00:02.000Z', idempotencyKey: 'takeover-001', authorityPolicyVersion: CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION });
-  const marked = await repo.markOutboxDelivered({ ...scope, messageId: claimed.messageId, workerId: 'outbox-worker-a', deliveredAt: '2026-07-29T15:00:03.000Z' });
-  assert.notEqual(marked, 'UPDATED'); assert.notEqual([...repo.outbox.values()][0]?.deliveredAt, '2026-07-29T15:00:03.000Z');
+  await service.operatorTakeover(takeover({ occurredAt: '2026-07-29T15:00:02.000Z' }));
+  let calls = 0;
+  const result = await repo.processClaimedOutbox({ ...scope, messageId: claimed.messageId, workerId: 'outbox-worker-a', now: '2026-07-29T15:00:03.000Z', retryAvailableAt: '2026-07-29T15:00:18.000Z', errorCode: 'channel_unavailable' }, async () => { calls += 1; return 'SENT'; });
+  assert.notEqual(result, 'DELIVERED'); assert.equal(calls, 0); assert.equal(providerInvocations.length, 0);
 });
 
-test('bounded retries escalate and never silently complete', async () => {
+test('PostgreSQL adapter SQL uses composite scope, SKIP LOCKED claims and a pre-send row fence', () => {
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueSessions, /FOR UPDATE SKIP LOCKED/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueOutbox, /FOR UPDATE SKIP LOCKED/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.getClaimedOutboxForDelivery, /tenant_id = \$1 AND case_id = \$2 AND session_id = \$3/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.getClaimedOutboxForDelivery, /lease_owner = \$5/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.getClaimedOutboxForDelivery, /FOR UPDATE/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /cancelled_at IS NULL/);
+});
+
+test('bounded contact retries escalate and never silently complete', async () => {
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
   await advanceToRetry(service); await service.runDue('worker-a', '2026-07-29T15:01:18.000Z'); await service.runDue('worker-a', '2026-07-29T15:01:34.000Z'); await service.runDue('worker-a', '2026-07-29T15:02:05.000Z');
   const final = await service.runDue('worker-a', '2026-07-29T15:02:21.000Z');
