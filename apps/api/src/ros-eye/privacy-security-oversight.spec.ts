@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BREAK_GLASS_MAX_MS, THREAT_CONTROL_MATRIX, createBreakGlassLease, evaluateAccess, mayExecuteRecommendation, redactForGeneralTelemetry, type AccessRequest } from './privacy-security-oversight.js';
 
-const base:AccessRequest={tenantId:'tenant-riyadh',caseId:'case-001',actorTenantId:'tenant-riyadh',actorCaseId:'case-001',role:'SAFETY_OPERATOR',purpose:'OPERATOR_REVIEW',lifecycle:'ACTIVE',dataKind:'OPERATOR_VIEW',action:'READ',consentValidUntil:'2026-07-30T00:00:00.000Z',consentRevokedAt:null,now:'2026-07-29T20:00:00.000Z',breakGlass:null};
+const base:AccessRequest={tenantId:'tenant-riyadh',caseId:'case-001',actorId:'operator-001',actorTenantId:'tenant-riyadh',actorCaseId:'case-001',role:'SAFETY_OPERATOR',purpose:'OPERATOR_REVIEW',lifecycle:'ACTIVE',dataKind:'OPERATOR_VIEW',action:'READ',consentValidUntil:'2026-07-30T00:00:00.000Z',consentRevokedAt:null,now:'2026-07-29T20:00:00.000Z',breakGlass:null};
 
-test('deny by default for cross tenant and cross case access',()=>{
+test('deny by default for cross tenant cross case and missing actor access',()=>{
  assert.equal(evaluateAccess({...base,actorTenantId:'tenant-other'}).allowed,false);
  assert.equal(evaluateAccess({...base,actorCaseId:'case-other'}).allowed,false);
+ assert.equal(evaluateAccess({...base,actorId:''}).reasonCode,'scope_or_actor_mismatch');
 });
 
-test('least privilege and purpose mismatch fail closed',()=>{
+test('least privilege purpose mismatch and raw access without break glass fail closed',()=>{
  assert.equal(evaluateAccess({...base,role:'SYSTEM_WORKER',purpose:'OPERATOR_REVIEW'}).allowed,false);
- assert.equal(evaluateAccess({...base,dataKind:'EVIDENCE_RAW'}).mode,'MASKED');
+ assert.equal(evaluateAccess({...base,dataKind:'EVIDENCE_RAW'}).mode,'DENY');
+ assert.equal(evaluateAccess({...base,dataKind:'EVIDENCE_RAW'}).reasonCode,'minimum_necessary_denied');
  assert.equal(evaluateAccess({...base,dataKind:'EVIDENCE_RAW',action:'EXPORT'}).allowed,false);
 });
 
@@ -20,16 +22,18 @@ test('expired and revoked consent deny processing',()=>{
  assert.equal(evaluateAccess({...base,consentRevokedAt:'2026-07-29T19:30:00.000Z'}).reasonCode,'consent_invalid');
 });
 
-test('break glass is scoped alerted and expires',()=>{
+test('break glass is actor bound scoped alerted reviewed and expires',()=>{
  const lease=createBreakGlassLease({tenantId:'tenant-riyadh',caseId:'case-001',leaseId:'lease-001',actorId:'operator-001',role:'SAFETY_OPERATOR',purpose:'OPERATOR_REVIEW',reasonCode:'immediate_safety_review',issuedAt:'2026-07-29T20:00:00.000Z',alertId:'alert-001',durationMs:60_000});
  assert.ok(lease);
  assert.equal(evaluateAccess({...base,dataKind:'EVIDENCE_RAW',breakGlass:lease}).mode,'FULL');
- assert.equal(evaluateAccess({...base,dataKind:'EVIDENCE_RAW',breakGlass:lease,now:'2026-07-29T20:01:01.000Z'}).mode,'MASKED');
+ assert.equal(evaluateAccess({...base,actorId:'operator-002',dataKind:'EVIDENCE_RAW',breakGlass:lease}).mode,'DENY');
+ assert.equal(evaluateAccess({...base,dataKind:'EVIDENCE_RAW',breakGlass:{...lease,reviewedAt:'2026-07-29T20:00:30.000Z'}}).mode,'DENY');
+ assert.equal(evaluateAccess({...base,dataKind:'EVIDENCE_RAW',breakGlass:lease,now:'2026-07-29T20:01:01.000Z'}).mode,'DENY');
  assert.equal(createBreakGlassLease({tenantId:'tenant-riyadh',caseId:'case-001',leaseId:'lease-002',actorId:'operator-001',role:'SAFETY_OPERATOR',purpose:'OPERATOR_REVIEW',reasonCode:'review_required',issuedAt:'2026-07-29T20:00:00.000Z',alertId:'alert-002',durationMs:BREAK_GLASS_MAX_MS+1}),null);
 });
 
 test('legal hold permits preservation administration but deletion remains role constrained',()=>{
- assert.equal(evaluateAccess({...base,role:'RETENTION_ADMIN',purpose:'RETENTION_ADMIN',lifecycle:'LEGAL_HOLD',dataKind:'EVIDENCE_METADATA',action:'READ',consentValidUntil:null}).allowed,true);
+ assert.equal(evaluateAccess({...base,actorId:'retention-admin-001',role:'RETENTION_ADMIN',purpose:'RETENTION_ADMIN',lifecycle:'LEGAL_HOLD',dataKind:'EVIDENCE_METADATA',action:'READ',consentValidUntil:null}).allowed,true);
  assert.equal(evaluateAccess({...base,lifecycle:'LEGAL_HOLD'}).allowed,false);
 });
 
