@@ -7,7 +7,7 @@ import {
   type HumanContactState
 } from '@ros/contracts';
 
-export const CONTACT_RUNTIME_POLICY_VERSION = 'ros-eye.contact-runtime.v1' as const;
+export const CONTACT_RUNTIME_POLICY_VERSION = 'ros-eye.contact-runtime.v2' as const;
 export type ContactChannel = 'IN_APP' | 'PUSH' | 'SMS_SIM' | 'TELEPHONY_SIM';
 export type RuntimeDisposition = 'APPLIED' | 'IDEMPOTENT' | 'HUMAN_REVIEW' | 'ESCALATED' | 'CONFLICT';
 
@@ -78,6 +78,7 @@ export interface OpenContactInput {
 }
 
 export interface CallbackInput {
+  readonly callbackId: string;
   readonly sessionId: string;
   readonly traceId: string;
   readonly occurredAt: string;
@@ -94,8 +95,9 @@ export class ContactOrchestrationService {
 
   async open(input: OpenContactInput): Promise<RuntimeDisposition> {
     if (!validId(input.tenantId) || !validId(input.sessionId) || !validId(input.caseId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt)) return 'HUMAN_REVIEW';
+    const inboxKey = `open|${input.tenantId}|${input.sessionId}|${input.idempotencyKey}`;
     return this.repository.transaction(async (tx) => {
-      if ((await tx.insertInboxIfAbsent(input.idempotencyKey)) === 'EXISTS') return 'IDEMPOTENT';
+      if ((await tx.insertInboxIfAbsent(inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
       const existing = await tx.getSessionForUpdate(input.sessionId);
       if (existing !== null) return 'CONFLICT';
       const deadline = new Date(Date.parse(input.occurredAt) + HUMAN_CONTACT_RESPONSE_DEADLINE_MS).toISOString();
@@ -130,25 +132,54 @@ export class ContactOrchestrationService {
   }
 
   async handleCallback(input: CallbackInput): Promise<RuntimeDisposition> {
-    if (!validId(input.sessionId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt)) return 'HUMAN_REVIEW';
+    if (!validId(input.callbackId) || !validId(input.sessionId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt)) return 'HUMAN_REVIEW';
+    const inboxKey = `callback|${input.sessionId}|${input.callbackId}`;
     return this.repository.transaction(async (tx) => {
-      if ((await tx.insertInboxIfAbsent(input.idempotencyKey)) === 'EXISTS') return 'IDEMPOTENT';
+      if ((await tx.insertInboxIfAbsent(inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
       const current = await tx.getSessionForUpdate(input.sessionId);
       if (current === null) return 'HUMAN_REVIEW';
-      if (current.automationSuppressed) return 'IDEMPOTENT';
-      const target: HumanContactState = input.kind === 'RESPONSE' ? 'RESPONSE_CONFIRMED' : input.kind === 'CONTRADICTORY' ? 'HUMAN_REVIEW' : input.kind === 'DISCONNECTED' ? 'DISCONNECTED' : 'HUMAN_REVIEW';
-      const next: ContactSessionRecord = { ...current, state: target, version: current.version + 1, lastInteractionAt: input.occurredAt, nextActionAt: target === 'DISCONNECTED' ? new Date(Date.parse(input.occurredAt) + HUMAN_CONTACT_RETRY_BASE_DELAY_MS).toISOString() : null, responseDeadlineAt: null, updatedAt: input.occurredAt };
+      if (current.automationSuppressed || current.state === 'OPERATOR_TAKEOVER' || current.state === 'ESCALATED' || current.state === 'COMPLETED') return 'IDEMPOTENT';
+
+      const transition = callbackTransition(current.state, input.kind);
+      if (transition === null) {
+        const review: ContactSessionRecord = {
+          ...current,
+          state: 'HUMAN_REVIEW',
+          version: current.version + 1,
+          nextActionAt: null,
+          responseDeadlineAt: null,
+          updatedAt: input.occurredAt
+        };
+        if ((await tx.updateSession(review, current.version)) === 'CONFLICT') return 'CONFLICT';
+        await tx.insertAuditIfAbsent(await this.audit(review, 'CALLBACK_REJECTED', 'invalid_callback_transition', input.traceId, input.occurredAt, 'SYSTEM'));
+        return 'HUMAN_REVIEW';
+      }
+
+      const next: ContactSessionRecord = {
+        ...current,
+        state: transition,
+        version: current.version + 1,
+        lastInteractionAt: input.occurredAt,
+        nextActionAt: transition === 'DISCONNECTED'
+          ? new Date(Date.parse(input.occurredAt) + HUMAN_CONTACT_RETRY_BASE_DELAY_MS).toISOString()
+          : null,
+        responseDeadlineAt: null,
+        updatedAt: input.occurredAt
+      };
       if ((await tx.updateSession(next, current.version)) === 'CONFLICT') return 'CONFLICT';
       await tx.insertAuditIfAbsent(await this.audit(next, `CALLBACK_${input.kind}`, input.kind.toLowerCase(), input.traceId, input.occurredAt, 'SYSTEM'));
-      return target === 'HUMAN_REVIEW' ? 'HUMAN_REVIEW' : 'APPLIED';
+      return transition === 'HUMAN_REVIEW' ? 'HUMAN_REVIEW' : 'APPLIED';
     });
   }
 
   async operatorTakeover(input: { sessionId: string; operatorId: string; traceId: string; occurredAt: string; idempotencyKey: string }): Promise<RuntimeDisposition> {
+    if (!validId(input.sessionId) || !validId(input.operatorId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt)) return 'HUMAN_REVIEW';
+    const inboxKey = `takeover|${input.sessionId}|${input.operatorId}|${input.idempotencyKey}`;
     return this.repository.transaction(async (tx) => {
-      if ((await tx.insertInboxIfAbsent(input.idempotencyKey)) === 'EXISTS') return 'IDEMPOTENT';
+      if ((await tx.insertInboxIfAbsent(inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
       const current = await tx.getSessionForUpdate(input.sessionId);
-      if (current === null || !validId(input.operatorId) || !validTime(input.occurredAt)) return 'HUMAN_REVIEW';
+      if (current === null) return 'HUMAN_REVIEW';
+      if (current.automationSuppressed && current.assignedOperatorId === input.operatorId) return 'IDEMPOTENT';
       const next: ContactSessionRecord = { ...current, state: 'OPERATOR_TAKEOVER', assignedOperatorId: input.operatorId, automationSuppressed: true, nextActionAt: null, responseDeadlineAt: null, leaseOwner: null, leaseExpiresAt: null, version: current.version + 1, updatedAt: input.occurredAt };
       await tx.cancelPendingAutomation(current.sessionId, input.occurredAt);
       if ((await tx.updateSession(next, current.version)) === 'CONFLICT') return 'CONFLICT';
@@ -158,6 +189,7 @@ export class ContactOrchestrationService {
   }
 
   async runDue(workerId: string, now: string, limit = 50): Promise<ReadonlyArray<{ sessionId: string; disposition: RuntimeDisposition }>> {
+    if (!validId(workerId) || !validTime(now) || !Number.isInteger(limit) || limit < 1 || limit > 500) return [];
     const claimed = await this.repository.claimDueSessions({ workerId, now, leaseMs: 30_000, limit });
     const results: Array<{ sessionId: string; disposition: RuntimeDisposition }> = [];
     for (const session of claimed) {
@@ -176,18 +208,41 @@ export class ContactOrchestrationService {
       const current = await tx.getSessionForUpdate(claimed.sessionId);
       if (current === null || current.leaseOwner !== workerId || current.automationSuppressed) return 'IDEMPOTENT';
       if (current.nextActionAt === null || Date.parse(current.nextActionAt) > Date.parse(now)) return 'IDEMPOTENT';
+
+      if (current.state === 'AWAITING_RESPONSE') {
+        const noResponse: ContactSessionRecord = {
+          ...current,
+          state: 'NO_RESPONSE',
+          responseDeadlineAt: null,
+          nextActionAt: new Date(Date.parse(now) + HUMAN_CONTACT_RETRY_BASE_DELAY_MS).toISOString(),
+          version: current.version + 1,
+          updatedAt: now
+        };
+        if ((await tx.updateSession(noResponse, current.version)) === 'CONFLICT') return 'CONFLICT';
+        await tx.insertAuditIfAbsent(await this.audit(noResponse, 'CONTACT_NO_RESPONSE', 'response_deadline_elapsed', `worker-${workerId}`, now, 'SYSTEM'));
+        return 'APPLIED';
+      }
+
+      if (current.state !== 'NO_RESPONSE' && current.state !== 'DISCONNECTED') {
+        const review: ContactSessionRecord = { ...current, state: 'HUMAN_REVIEW', nextActionAt: null, responseDeadlineAt: null, version: current.version + 1, updatedAt: now };
+        if ((await tx.updateSession(review, current.version)) === 'CONFLICT') return 'CONFLICT';
+        await tx.insertAuditIfAbsent(await this.audit(review, 'CONTACT_TIMER_REJECTED', 'unexpected_due_state', `worker-${workerId}`, now, 'SYSTEM'));
+        return 'HUMAN_REVIEW';
+      }
+
       if (current.attemptCount >= HUMAN_CONTACT_MAX_AUTOMATED_ATTEMPTS) {
         const escalated: ContactSessionRecord = { ...current, state: 'ESCALATED', nextActionAt: null, responseDeadlineAt: null, version: current.version + 1, updatedAt: now };
         if ((await tx.updateSession(escalated, current.version)) === 'CONFLICT') return 'CONFLICT';
         await tx.insertAuditIfAbsent(await this.audit(escalated, 'CONTACT_ESCALATED', 'retry_limit_exhausted', `worker-${workerId}`, now, 'SYSTEM'));
         return 'ESCALATED';
       }
+
       const attempt = current.attemptCount + 1;
       const nextDeadline = new Date(Date.parse(now) + HUMAN_CONTACT_RESPONSE_DEADLINE_MS).toISOString();
       const retried: ContactSessionRecord = { ...current, state: 'AWAITING_RESPONSE', attemptCount: attempt, responseDeadlineAt: nextDeadline, nextActionAt: nextDeadline, version: current.version + 1, updatedAt: now };
       if ((await tx.updateSession(retried, current.version)) === 'CONFLICT') return 'CONFLICT';
       await tx.insertOutboxIfAbsent(await this.outbox(retried, fallbackChannel(retried.activeChannel, attempt), 'contact.response', now));
-      await tx.insertAuditIfAbsent(await this.audit(retried, 'CONTACT_RETRY_SCHEDULED', 'deadline_elapsed', `worker-${workerId}`, now, 'SYSTEM'));
+      await tx.insertAuditIfAbsent(await this.audit(retried, 'CONTACT_RETRY_SCHEDULED', current.state === 'DISCONNECTED' ? 'channel_disconnected' : 'no_response_retry_due', `worker-${workerId}`, now, 'SYSTEM'));
       return 'APPLIED';
     });
   }
@@ -204,6 +259,13 @@ export class ContactOrchestrationService {
 
 export async function deliverOutbox(message: ContactOutboxMessage, channel: ContactChannelPort): Promise<'DELIVERED' | 'RETRY'> {
   return (await channel.send({ sessionId: message.sessionId, channel: message.channel, promptId: message.promptId, idempotencyKey: message.idempotencyKey })) === 'SENT' ? 'DELIVERED' : 'RETRY';
+}
+
+function callbackTransition(current: HumanContactState, kind: CallbackInput['kind']): HumanContactState | null {
+  if (kind === 'CONTRADICTORY' || kind === 'CHANNEL_FAILURE') return 'HUMAN_REVIEW';
+  if (kind === 'DISCONNECTED') return current === 'AWAITING_RESPONSE' || current === 'PARTIAL_RESPONSE' ? 'DISCONNECTED' : null;
+  if (kind === 'RESPONSE') return ['AWAITING_RESPONSE', 'PARTIAL_RESPONSE', 'DISCONNECTED', 'NO_RESPONSE'].includes(current) ? 'RESPONSE_CONFIRMED' : null;
+  return null;
 }
 
 function fallbackChannel(active: HumanContactSessionContract['activeChannel'], attempt: number): ContactChannel {
