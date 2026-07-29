@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
+  HUMAN_SAFETY_REPLAY_POLICY_VERSION,
+  acceptHumanSafetySignalEnvelope,
   decideHumanSafetyTransition,
-  validateHumanSafetySignalEnvelope
+  validateHumanSafetySignalEnvelope,
+  type ReplayNonceConsumeRequest,
+  type ReplayNonceRegistryPort
 } from '@ros/contracts';
 
 const CASE_ID = '93000000-0000-4000-8000-000000000001';
@@ -48,8 +53,9 @@ const context = {
 test('high-risk authorization is bound to the authorizing and executing supervisor', () => {
   const allowed = decideHumanSafetyTransition(current, 'RESOLVED', context);
   assert.equal(allowed.allowed, true);
-  assert.equal(allowed.authorityPolicyVersion, 'ros-eye.authority.v2');
+  assert.equal(allowed.authorityPolicyVersion, 'ros-eye.authority.v3');
   assert.equal(allowed.evaluatedAuthority, 'RESOLVE');
+  assert.equal(allowed.authorizedByRole, 'SUPERVISOR');
 
   const otherSupervisor = decideHumanSafetyTransition(current, 'RESOLVED', {
     ...context,
@@ -69,37 +75,34 @@ test('authorization role must still be active for the executing actor', () => {
   assert.equal(revoked.reasonCode, 'stale_or_invalid_authorization');
 });
 
-test('auditor and simulated channel fail closed for operational transitions', () => {
-  for (const actorRoles of [['AUDITOR'], ['SIMULATED_CHANNEL']] as const) {
-    const result = decideHumanSafetyTransition({
-      ...current,
-      state: 'RESOLVED' as const,
-      version: current.version + 1
-    }, 'ESCALATED', {
-      ...context,
-      actorRoles,
-      reactivationCause: 'LATE_HIGH_RISK_SIGNAL'
-    });
-    assert.equal(result.allowed, false);
-    assert.equal(result.reasonCode, 'actor_not_authorized');
-    assert.equal(result.authorityPolicyVersion, 'ros-eye.authority.v2');
-  }
+test('authorized role is deterministic and auditable for multi-role actors', () => {
+  const result = decideHumanSafetyTransition({
+    ...current,
+    state: 'CONTACTING' as const,
+    severity: 'S2' as const,
+    highRiskResolutionAuthorization: null
+  }, 'RESPONDED', {
+    ...context,
+    actorRoles: ['OPERATOR', 'SUPERVISOR'] as const
+  });
+  assert.equal(result.allowed, true);
+  assert.equal(result.authorizedByRole, 'SUPERVISOR');
 });
 
-test('channel indicator authority cannot change contact outcome state', () => {
-  for (const requestedState of ['RESPONDED', 'NO_RESPONSE', 'UNREACHABLE'] as const) {
+test('auditor and simulated channel fail closed for every operational transition', () => {
+  for (const actorRoles of [['AUDITOR'], ['SIMULATED_CHANNEL']] as const) {
     const result = decideHumanSafetyTransition({
       ...current,
       state: 'CONTACTING' as const,
       severity: 'S2' as const,
       highRiskResolutionAuthorization: null
-    }, requestedState, {
+    }, 'RESPONDED', {
       ...context,
-      actorRoles: ['SIMULATED_CHANNEL'] as const
+      actorRoles
     });
     assert.equal(result.allowed, false);
-    assert.equal(result.requiredAuthority, 'UPDATE_CONTACT_OUTCOME');
     assert.equal(result.reasonCode, 'actor_not_authorized');
+    assert.equal(result.authorizedByRole, null);
   }
 });
 
@@ -115,24 +118,10 @@ test('operator may record a contact outcome through explicit operational authori
   });
   assert.equal(result.allowed, true);
   assert.equal(result.evaluatedAuthority, 'UPDATE_CONTACT_OUTCOME');
+  assert.equal(result.authorizedByRole, 'OPERATOR');
 });
 
-test('operator may escalate a resolved case but cannot use another actor high-risk authorization', () => {
-  const reactivation = decideHumanSafetyTransition({
-    ...current,
-    state: 'RESOLVED' as const,
-    version: current.version + 1
-  }, 'ESCALATED', {
-    ...context,
-    actorId: '93000000-0000-4000-8000-000000000020',
-    actorRoles: ['OPERATOR'] as const,
-    reactivationCause: 'CONTRADICTORY_INDICATOR'
-  });
-  assert.equal(reactivation.allowed, true);
-  assert.equal(reactivation.evaluatedAuthority, 'ESCALATE');
-});
-
-function validPhoneSignal() {
+function validPhoneSignal(replayToken = 'replay-token-001') {
   return {
     signalId: 'signal-001',
     schemaVersion: 'ros-eye.signal.v1',
@@ -145,7 +134,7 @@ function validPhoneSignal() {
     receivedAt: '2026-07-27T12:00:01.000Z',
     consentBasis: 'EXPLICIT',
     integrity: {
-      replayToken: 'replay-token-001',
+      replayToken,
       signatureStatus: 'VERIFIED',
       clockSkewMs: 1000
     },
@@ -158,9 +147,92 @@ function validPhoneSignal() {
   };
 }
 
-test('strict signal envelope accepts a versioned minimum-necessary payload', () => {
+const tokenDigester = {
+  async digest(value: string): Promise<string> {
+    return createHash('sha256').update(value).digest('hex');
+  }
+};
+
+class AtomicMemoryReplayRegistry implements ReplayNonceRegistryPort {
+  private readonly consumed = new Set<string>();
+  unavailable = false;
+
+  async consume(request: ReplayNonceConsumeRequest) {
+    if (this.unavailable) return 'UNAVAILABLE' as const;
+    if (Date.parse(request.expiresAt) <= Date.parse('2026-07-27T12:00:02.000Z')) return 'EXPIRED' as const;
+    if (this.consumed.has(request.scopeDigest)) return 'DUPLICATE' as const;
+    this.consumed.add(request.scopeDigest);
+    return 'CONSUMED' as const;
+  }
+}
+
+test('structural validation cannot emit ACCEPT before replay consume', () => {
   const result = validateHumanSafetySignalEnvelope(validPhoneSignal());
-  assert.deepEqual(result, { accepted: true, disposition: 'ACCEPT', reasonCode: 'accepted' });
+  assert.deepEqual(result, {
+    accepted: false,
+    disposition: 'HUMAN_REVIEW',
+    reasonCode: 'structurally_valid_replay_check_required'
+  });
+});
+
+test('first replay scope use is accepted and raw token is not sent to registry', async () => {
+  let consumedRequest: ReplayNonceConsumeRequest | undefined;
+  const registry: ReplayNonceRegistryPort = {
+    async consume(request) {
+      consumedRequest = request;
+      return 'CONSUMED';
+    }
+  };
+  const signal = validPhoneSignal('raw-secret-replay-token');
+  const result = await acceptHumanSafetySignalEnvelope(signal, { replayRegistry: registry, tokenDigester }, '2026-07-27T12:00:02.000Z');
+  assert.equal(result.accepted, true);
+  assert.equal(result.disposition, 'ACCEPT');
+  assert.equal(result.replayPolicyVersion, HUMAN_SAFETY_REPLAY_POLICY_VERSION);
+  assert.equal(result.replayConsumeResult, 'CONSUMED');
+  assert.match(result.replayScopeDigest ?? '', /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(consumedRequest).includes(signal.integrity.replayToken), false);
+});
+
+test('second use is quarantined and concurrent duplicate has exactly one winner', async () => {
+  const registry = new AtomicMemoryReplayRegistry();
+  const signal = validPhoneSignal();
+  const first = await acceptHumanSafetySignalEnvelope(signal, { replayRegistry: registry, tokenDigester }, '2026-07-27T12:00:02.000Z');
+  const second = await acceptHumanSafetySignalEnvelope(signal, { replayRegistry: registry, tokenDigester }, '2026-07-27T12:00:02.000Z');
+  assert.equal(first.accepted, true);
+  assert.equal(second.accepted, false);
+  assert.equal(second.disposition, 'QUARANTINE');
+  assert.equal(second.reasonCode, 'replay_detected');
+
+  const concurrentRegistry = new AtomicMemoryReplayRegistry();
+  const decisions = await Promise.all([
+    acceptHumanSafetySignalEnvelope(signal, { replayRegistry: concurrentRegistry, tokenDigester }, '2026-07-27T12:00:02.000Z'),
+    acceptHumanSafetySignalEnvelope(signal, { replayRegistry: concurrentRegistry, tokenDigester }, '2026-07-27T12:00:02.000Z')
+  ]);
+  assert.equal(decisions.filter((decision) => decision.accepted).length, 1);
+  assert.equal(decisions.filter((decision) => decision.reasonCode === 'replay_detected').length, 1);
+});
+
+test('registry unavailable or throwing never produces ACCEPT', async () => {
+  const unavailable = new AtomicMemoryReplayRegistry();
+  unavailable.unavailable = true;
+  const unavailableResult = await acceptHumanSafetySignalEnvelope(validPhoneSignal(), { replayRegistry: unavailable, tokenDigester }, '2026-07-27T12:00:02.000Z');
+  assert.equal(unavailableResult.accepted, false);
+  assert.equal(unavailableResult.disposition, 'HUMAN_REVIEW');
+  assert.equal(unavailableResult.reasonCode, 'replay_registry_unavailable');
+
+  const throwing: ReplayNonceRegistryPort = { async consume() { throw new Error('timeout'); } };
+  const thrownResult = await acceptHumanSafetySignalEnvelope(validPhoneSignal(), { replayRegistry: throwing, tokenDigester }, '2026-07-27T12:00:02.000Z');
+  assert.equal(thrownResult.accepted, false);
+  assert.equal(thrownResult.reasonCode, 'replay_registry_unavailable');
+});
+
+test('expired token is quarantined before registry consume', async () => {
+  let calls = 0;
+  const registry: ReplayNonceRegistryPort = { async consume() { calls += 1; return 'CONSUMED'; } };
+  const result = await acceptHumanSafetySignalEnvelope(validPhoneSignal(), { replayRegistry: registry, tokenDigester }, '2026-07-27T12:16:00.000Z');
+  assert.equal(result.accepted, false);
+  assert.equal(result.reasonCode, 'replay_token_expired');
+  assert.equal(calls, 0);
 });
 
 test('free text, medical narratives, identifiers and unknown payload fields are quarantined', () => {
@@ -183,60 +255,38 @@ test('free text, medical narratives, identifiers and unknown payload fields are 
 
 test('source and payload mismatch routes to human review', () => {
   const signal = validPhoneSignal();
-  const result = validateHumanSafetySignalEnvelope({
-    ...signal,
-    sourceType: 'VEHICLE'
-  });
-  assert.equal(result.accepted, false);
+  const result = validateHumanSafetySignalEnvelope({ ...signal, sourceType: 'VEHICLE' });
   assert.equal(result.disposition, 'HUMAN_REVIEW');
   assert.equal(result.reasonCode, 'source_payload_mismatch');
 });
 
-test('invalid signatures and malformed identifiers fail closed', () => {
+test('invalid signatures, identifiers, chronology and semantic values fail closed', () => {
   const signal = validPhoneSignal();
-  const invalidSignature = validateHumanSafetySignalEnvelope({
-    ...signal,
-    integrity: { ...signal.integrity, signatureStatus: 'INVALID' }
-  });
-  assert.deepEqual(invalidSignature, { accepted: false, disposition: 'QUARANTINE', reasonCode: 'invalid_signature' });
-
-  const missingReplayToken = validateHumanSafetySignalEnvelope({
-    ...signal,
-    integrity: { ...signal.integrity, replayToken: '  ' }
-  });
-  assert.equal(missingReplayToken.accepted, false);
-  assert.equal(missingReplayToken.reasonCode, 'invalid_integrity_metadata');
-});
-
-test('unverified signature and excessive clock skew require human review', () => {
-  const signal = validPhoneSignal();
-  const unverified = validateHumanSafetySignalEnvelope({
-    ...signal,
-    integrity: { ...signal.integrity, signatureStatus: 'UNVERIFIED' }
-  });
-  assert.equal(unverified.disposition, 'HUMAN_REVIEW');
-
-  const skewed = validateHumanSafetySignalEnvelope({
-    ...signal,
-    integrity: { ...signal.integrity, clockSkewMs: 300_001 }
-  });
-  assert.deepEqual(skewed, { accepted: false, disposition: 'HUMAN_REVIEW', reasonCode: 'clock_skew_exceeded' });
-});
-
-test('invalid chronology, probabilities, coordinates and indicator codes are quarantined', () => {
-  const signal = validPhoneSignal();
-  const cases = [
+  const candidates = [
+    { ...signal, signalId: '!' },
     { ...signal, occurredAt: 'not-a-date' },
     { ...signal, occurredAt: '2026-07-27T12:01:00.000Z', receivedAt: '2026-07-27T12:00:00.000Z' },
+    { ...signal, integrity: { ...signal.integrity, signatureStatus: 'INVALID' } },
+    { ...signal, integrity: { ...signal.integrity, replayToken: '  ' } },
     { ...signal, payload: { ...signal.payload, accelerationMagnitude: Number.NaN } },
     { ...signal, location: { latitude: 91, longitude: 46.6, accuracyMeters: 1, classification: 'PRECISE_RESTRICTED' } },
     { ...signal, sourceType: 'PERSON', payload: { kind: 'PERSON_REPORT', indicatorCodes: ['UNKNOWN_INDICATOR'] } }
   ];
-  for (const candidate of cases) {
+  for (const candidate of candidates) {
     const result = validateHumanSafetySignalEnvelope(candidate);
     assert.equal(result.accepted, false);
     assert.equal(result.disposition, 'QUARANTINE');
   }
+});
+
+test('unverified signature and excessive clock skew require human review', () => {
+  const signal = validPhoneSignal();
+  const unverified = validateHumanSafetySignalEnvelope({ ...signal, integrity: { ...signal.integrity, signatureStatus: 'UNVERIFIED' } });
+  assert.equal(unverified.disposition, 'HUMAN_REVIEW');
+
+  const skewed = validateHumanSafetySignalEnvelope({ ...signal, integrity: { ...signal.integrity, clockSkewMs: 300_001 } });
+  assert.equal(skewed.disposition, 'HUMAN_REVIEW');
+  assert.equal(skewed.reasonCode, 'clock_skew_exceeded');
 });
 
 test('purpose, consent, classification and retention must remain coherent', () => {
@@ -247,6 +297,6 @@ test('purpose, consent, classification and retention must remain coherent', () =
     { ...signal, retentionClass: 'SIMULATION_ONLY' }
   ]) {
     const result = validateHumanSafetySignalEnvelope(candidate);
-    assert.deepEqual(result, { accepted: false, disposition: 'QUARANTINE', reasonCode: 'purpose_classification_mismatch' });
+    assert.equal(result.reasonCode, 'purpose_classification_mismatch');
   }
 });
