@@ -38,18 +38,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pnpm simulate:riyadh:failures | tee riyadh-failure-mode-result.json
+          pnpm simulate:riyadh:failures
+          cp artifacts/riyadh-failure-modes/result.json riyadh-failure-mode-result.json
       - name: Validate failure-mode result
         shell: bash
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
-          const consoleResult = JSON.parse(fs.readFileSync('riyadh-failure-mode-result.json', 'utf8'));
+          const exportedResult = JSON.parse(fs.readFileSync('riyadh-failure-mode-result.json', 'utf8'));
           const artifactResult = JSON.parse(fs.readFileSync('artifacts/riyadh-failure-modes/result.json', 'utf8'));
           const required = Array.from({ length: 12 }, (_, index) => `HZ-${String(index + 1).padStart(2, '0')}`);
           const fail = (message) => { throw new Error(message); };
-          if (JSON.stringify(consoleResult) !== JSON.stringify(artifactResult)) fail('console and artifact results differ');
+          if (JSON.stringify(exportedResult) !== JSON.stringify(artifactResult)) fail('exported and artifact results differ');
           if (artifactResult.suite !== 'riyadh-failure-mode-safety' || artifactResult.passed !== true) fail('suite did not report a safe pass');
+          if (artifactResult.candidateHeadSha !== process.env.CANDIDATE_HEAD_SHA) fail('candidate head SHA mismatch');
+          if (artifactResult.candidateBaseSha !== process.env.CANDIDATE_BASE_SHA) fail('candidate base SHA mismatch');
+          if (artifactResult.testedMergeSha !== process.env.TESTED_MERGE_SHA) fail('tested merge SHA mismatch');
           if (!Array.isArray(artifactResult.hazards) || artifactResult.hazards.length !== 12) fail('expected exactly 12 hazards');
           const actual = artifactResult.hazards.map((hazard) => hazard.hazardId).sort();
           if (JSON.stringify(actual) !== JSON.stringify(required)) fail('hazard set is incomplete or duplicated');
