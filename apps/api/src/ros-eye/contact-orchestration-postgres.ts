@@ -298,7 +298,7 @@ function mapSession(row: ContactSqlRow): ContactSessionRecord {
     nextActionAt: nullableTimestamp(row, 'next_action_at'),
     lastInteractionAt: timestamp(row, 'last_interaction_at'),
     assignedOperatorId: nullableText(row, 'assigned_operator_id'),
-    accessibility: jsonObject(row, 'accessibility') as ContactSessionRecord['accessibility'],
+    accessibility: jsonObject(row, 'accessibility') as unknown as ContactSessionRecord['accessibility'],
     automationSuppressed: booleanValue(row, 'automation_suppressed'),
     leaseOwner: nullableText(row, 'lease_owner'),
     leaseExpiresAt: nullableTimestamp(row, 'lease_expires_at'),
