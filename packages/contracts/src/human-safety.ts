@@ -5,8 +5,11 @@ export type HumanSafetyAuthority = 'OPEN_CASE' | 'START_CONTACT' | 'UPDATE_CONTA
 
 export const HUMAN_SAFETY_AUTHORITY_POLICY_VERSION = 'ros-eye.authority.v3' as const;
 export const HUMAN_SAFETY_UNCERTAINTY_POLICY_VERSION = 'ros-eye.uncertainty-resolution.v1' as const;
-export const HUMAN_SAFETY_REPLAY_POLICY_VERSION = 'ros-eye.replay.v1' as const;
+export const HUMAN_SAFETY_REPLAY_POLICY_VERSION = 'ros-eye.replay.v2' as const;
+export const HUMAN_SAFETY_TEMPORAL_POLICY_VERSION = 'ros-eye.signal-time.v1' as const;
 export const HUMAN_SAFETY_REPLAY_TTL_MS = 15 * 60 * 1000;
+export const HUMAN_SAFETY_ALLOWED_CLOCK_SKEW_MS = 5 * 60 * 1000;
+export const HUMAN_SAFETY_MAX_SIGNAL_AGE_MS = 30 * 60 * 1000;
 
 export const HUMAN_SAFETY_ROLE_AUTHORITIES: Readonly<Record<HumanSafetyActorRole, readonly HumanSafetyAuthority[]>> = Object.freeze({
   SYSTEM: ['OPEN_CASE', 'START_CONTACT', 'UPDATE_CONTACT_OUTCOME', 'ESCALATE'],
@@ -130,13 +133,34 @@ export interface HumanSafetySignalEnvelope {
   readonly payload: HumanSafetySignalPayload;
 }
 
-export interface HumanSafetySignalValidationDecision { readonly accepted: boolean; readonly disposition: 'ACCEPT' | 'QUARANTINE' | 'HUMAN_REVIEW'; readonly reasonCode: string }
+export interface HumanSafetySignalValidationDecision {
+  readonly accepted: boolean;
+  readonly disposition: 'ACCEPT' | 'QUARANTINE' | 'HUMAN_REVIEW';
+  readonly reasonCode: string;
+}
 export type ReplayNonceConsumeResult = 'CONSUMED' | 'DUPLICATE' | 'EXPIRED' | 'UNAVAILABLE';
-export interface ReplayNonceConsumeRequest { readonly policyVersion: typeof HUMAN_SAFETY_REPLAY_POLICY_VERSION; readonly scopeDigest: string; readonly expiresAt: string }
-export interface ReplayNonceRegistryPort { consume(request: ReplayNonceConsumeRequest): Promise<ReplayNonceConsumeResult> }
+export interface ReplayNonceConsumeRequest {
+  readonly policyVersion: typeof HUMAN_SAFETY_REPLAY_POLICY_VERSION;
+  readonly nonceDigest: string;
+  readonly scopeDigest: string;
+  readonly expiresAt: string;
+}
+export interface ReplayNonceRegistryPort {
+  /**
+   * Atomically consumes nonceDigest as the global uniqueness key for its TTL.
+   * scopeDigest is audit context only and must never weaken nonce uniqueness.
+   */
+  consume(request: ReplayNonceConsumeRequest): Promise<ReplayNonceConsumeResult>;
+}
 export interface ReplayTokenDigesterPort { digest(value: string): Promise<string> }
 export interface HumanSafetySignalAcceptancePorts { readonly replayRegistry: ReplayNonceRegistryPort; readonly tokenDigester: ReplayTokenDigesterPort }
-export interface HumanSafetySignalAcceptanceDecision extends HumanSafetySignalValidationDecision { readonly replayPolicyVersion: typeof HUMAN_SAFETY_REPLAY_POLICY_VERSION; readonly replayScopeDigest: string | null; readonly replayConsumeResult: ReplayNonceConsumeResult | 'NOT_ATTEMPTED' }
+export interface HumanSafetySignalAcceptanceDecision extends HumanSafetySignalValidationDecision {
+  readonly replayPolicyVersion: typeof HUMAN_SAFETY_REPLAY_POLICY_VERSION;
+  readonly temporalPolicyVersion: typeof HUMAN_SAFETY_TEMPORAL_POLICY_VERSION;
+  readonly replayScopeDigest: string | null;
+  readonly replayConsumeResult: ReplayNonceConsumeResult | 'NOT_ATTEMPTED';
+  readonly replayExpiresAt: string | null;
+}
 
 export interface HumanSafetyAuditEvent {
   readonly eventId: string;
@@ -211,9 +235,10 @@ export function validateHumanSafetySignalEnvelope(input: unknown): HumanSafetySi
   const receivedAt = typeof input.receivedAt === 'string' ? parseTimestamp(input.receivedAt) : null;
   if (occurredAt === null || receivedAt === null || occurredAt > receivedAt) return signalDecision(false, 'QUARANTINE', 'invalid_signal_chronology');
   if (!isRecord(input.integrity) || Object.keys(input.integrity).some((key) => !['replayToken', 'signatureStatus', 'clockSkewMs'].includes(key)) || !nonEmpty(input.integrity.replayToken) || !finiteNumber(input.integrity.clockSkewMs)) return signalDecision(false, 'QUARANTINE', 'invalid_integrity_metadata');
+  if (!['VERIFIED', 'UNVERIFIED', 'INVALID'].includes(String(input.integrity.signatureStatus))) return signalDecision(false, 'QUARANTINE', 'invalid_integrity_metadata');
   if (input.integrity.signatureStatus === 'INVALID') return signalDecision(false, 'QUARANTINE', 'invalid_signature');
   if (input.integrity.signatureStatus !== 'VERIFIED') return signalDecision(false, 'HUMAN_REVIEW', 'signature_unverified');
-  if (Math.abs(input.integrity.clockSkewMs) > 300_000) return signalDecision(false, 'HUMAN_REVIEW', 'clock_skew_exceeded');
+  if (Math.abs(input.integrity.clockSkewMs) > HUMAN_SAFETY_ALLOWED_CLOCK_SKEW_MS) return signalDecision(false, 'HUMAN_REVIEW', 'clock_skew_exceeded');
   if (!validLocation(input.location)) return signalDecision(false, 'QUARANTINE', 'invalid_location');
   if (!isRecord(input.payload) || typeof input.payload.kind !== 'string') return signalDecision(false, 'QUARANTINE', 'invalid_payload');
   if (!payloadMatchesSource(input.sourceType, input.payload.kind)) return signalDecision(false, 'HUMAN_REVIEW', 'source_payload_mismatch');
@@ -226,26 +251,39 @@ export function validateHumanSafetySignalEnvelope(input: unknown): HumanSafetySi
 
 export async function acceptHumanSafetySignalEnvelope(input: unknown, ports: HumanSafetySignalAcceptancePorts, evaluatedAt: string): Promise<HumanSafetySignalAcceptanceDecision> {
   const structural = validateHumanSafetySignalEnvelope(input);
-  if (structural.reasonCode !== 'structurally_valid_replay_check_required' || !isHumanSafetySignalEnvelope(input)) return acceptanceDecision(structural, null, 'NOT_ATTEMPTED');
+  if (structural.reasonCode !== 'structurally_valid_replay_check_required' || !isHumanSafetySignalEnvelope(input)) return acceptanceDecision(structural, null, 'NOT_ATTEMPTED', null);
   const evaluatedAtMs = parseTimestamp(evaluatedAt);
+  const occurredAtMs = parseTimestamp(input.occurredAt);
   const receivedAtMs = parseTimestamp(input.receivedAt);
-  if (evaluatedAtMs === null || receivedAtMs === null) return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'invalid_acceptance_time'), null, 'NOT_ATTEMPTED');
-  const expiresAtMs = receivedAtMs + HUMAN_SAFETY_REPLAY_TTL_MS;
-  if (evaluatedAtMs >= expiresAtMs) return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'replay_token_expired'), null, 'EXPIRED');
+  if (evaluatedAtMs === null || occurredAtMs === null || receivedAtMs === null) return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'invalid_acceptance_time'), null, 'NOT_ATTEMPTED', null);
+
+  const latestTrustedSenderTimeMs = evaluatedAtMs + HUMAN_SAFETY_ALLOWED_CLOCK_SKEW_MS;
+  if (receivedAtMs > latestTrustedSenderTimeMs || occurredAtMs > latestTrustedSenderTimeMs) {
+    return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'signal_timestamp_in_future'), null, 'NOT_ATTEMPTED', null);
+  }
+  if (evaluatedAtMs - occurredAtMs > HUMAN_SAFETY_MAX_SIGNAL_AGE_MS) {
+    return acceptanceDecision(signalDecision(false, 'HUMAN_REVIEW', 'stale_signal_requires_human_review'), null, 'NOT_ATTEMPTED', null);
+  }
+
+  const trustedReplayBaseMs = Math.min(receivedAtMs, evaluatedAtMs);
+  const expiresAtMs = trustedReplayBaseMs + HUMAN_SAFETY_REPLAY_TTL_MS;
+  const replayExpiresAt = new Date(expiresAtMs).toISOString();
+  if (evaluatedAtMs >= expiresAtMs) return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'replay_token_expired'), null, 'EXPIRED', replayExpiresAt);
+
   try {
-    const tokenDigest = await ports.tokenDigester.digest(input.integrity.replayToken);
-    if (!validDigest(tokenDigest)) return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'invalid_replay_token_digest'), null, 'UNAVAILABLE');
-    const scopeMaterial = [HUMAN_SAFETY_REPLAY_POLICY_VERSION, input.sourceId, input.signalId, input.schemaVersion, input.purposePolicyVersion, tokenDigest, String(HUMAN_SAFETY_REPLAY_TTL_MS)].join('|');
+    const nonceDigest = await ports.tokenDigester.digest(input.integrity.replayToken);
+    if (!validDigest(nonceDigest)) return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'invalid_replay_token_digest'), null, 'UNAVAILABLE', replayExpiresAt);
+    const scopeMaterial = [HUMAN_SAFETY_REPLAY_POLICY_VERSION, input.sourceId, input.signalId, input.schemaVersion, input.purposePolicyVersion, String(HUMAN_SAFETY_REPLAY_TTL_MS)].join('|');
     const scopeDigest = await ports.tokenDigester.digest(scopeMaterial);
-    if (!validDigest(scopeDigest)) return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'invalid_replay_scope_digest'), null, 'UNAVAILABLE');
-    const consumeResult = await ports.replayRegistry.consume({ policyVersion: HUMAN_SAFETY_REPLAY_POLICY_VERSION, scopeDigest, expiresAt: new Date(expiresAtMs).toISOString() });
+    if (!validDigest(scopeDigest)) return acceptanceDecision(signalDecision(false, 'QUARANTINE', 'invalid_replay_scope_digest'), null, 'UNAVAILABLE', replayExpiresAt);
+    const consumeResult = await ports.replayRegistry.consume({ policyVersion: HUMAN_SAFETY_REPLAY_POLICY_VERSION, nonceDigest, scopeDigest, expiresAt: replayExpiresAt });
     if (consumeResult !== 'CONSUMED') {
       const reasonCode = consumeResult === 'DUPLICATE' ? 'replay_detected' : consumeResult === 'EXPIRED' ? 'replay_token_expired' : 'replay_registry_unavailable';
-      return acceptanceDecision(signalDecision(false, consumeResult === 'UNAVAILABLE' ? 'HUMAN_REVIEW' : 'QUARANTINE', reasonCode), scopeDigest, consumeResult);
+      return acceptanceDecision(signalDecision(false, consumeResult === 'UNAVAILABLE' ? 'HUMAN_REVIEW' : 'QUARANTINE', reasonCode), scopeDigest, consumeResult, replayExpiresAt);
     }
-    return acceptanceDecision(signalDecision(true, 'ACCEPT', 'accepted_after_atomic_replay_consume'), scopeDigest, consumeResult);
+    return acceptanceDecision(signalDecision(true, 'ACCEPT', 'accepted_after_atomic_replay_consume'), scopeDigest, consumeResult, replayExpiresAt);
   } catch {
-    return acceptanceDecision(signalDecision(false, 'HUMAN_REVIEW', 'replay_registry_unavailable'), null, 'UNAVAILABLE');
+    return acceptanceDecision(signalDecision(false, 'HUMAN_REVIEW', 'replay_registry_unavailable'), null, 'UNAVAILABLE', replayExpiresAt);
   }
 }
 
@@ -272,5 +310,14 @@ function validIdentifier(value: unknown): value is string { return typeof value 
 function validDigest(value: unknown): value is string { return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value) }
 function parseTimestamp(value: string): number | null { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : null }
 function signalDecision(accepted: boolean, disposition: HumanSafetySignalValidationDecision['disposition'], reasonCode: string): HumanSafetySignalValidationDecision { return { accepted, disposition, reasonCode } }
-function acceptanceDecision(structural: HumanSafetySignalValidationDecision, replayScopeDigest: string | null, replayConsumeResult: HumanSafetySignalAcceptanceDecision['replayConsumeResult']): HumanSafetySignalAcceptanceDecision { return { ...structural, replayPolicyVersion: HUMAN_SAFETY_REPLAY_POLICY_VERSION, replayScopeDigest, replayConsumeResult } }
+function acceptanceDecision(structural: HumanSafetySignalValidationDecision, replayScopeDigest: string | null, replayConsumeResult: HumanSafetySignalAcceptanceDecision['replayConsumeResult'], replayExpiresAt: string | null): HumanSafetySignalAcceptanceDecision {
+  return {
+    ...structural,
+    replayPolicyVersion: HUMAN_SAFETY_REPLAY_POLICY_VERSION,
+    temporalPolicyVersion: HUMAN_SAFETY_TEMPORAL_POLICY_VERSION,
+    replayScopeDigest,
+    replayConsumeResult,
+    replayExpiresAt
+  };
+}
 function decision(allowed: boolean, nextState: HumanSafetyCaseState, auditAction: string, requiredAuthority: HumanSafetyAuthority | null, evaluatedAuthority: HumanSafetyAuthority | null, authorizedByRole: HumanSafetyActorRole | null, failureBehavior: HumanSafetyTransitionDecision['failureBehavior'], reasonCode: string): HumanSafetyTransitionDecision { return { allowed, nextState, auditAction, requiredAuthority, evaluatedAuthority, authorizedByRole, authorityPolicyVersion: HUMAN_SAFETY_AUTHORITY_POLICY_VERSION, failureBehavior, reasonCode } }
