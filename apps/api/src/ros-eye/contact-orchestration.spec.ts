@@ -33,52 +33,84 @@ const ids = { async create(namespace: string, material: string) { return `${name
 const channel: ContactChannelPort = { async send() { return 'SENT'; } };
 function openInput() { return { tenantId: 'tenant-riyadh', sessionId: 'session-001', caseId: 'case-001', language: 'ar' as const, traceId: 'trace-001', occurredAt: '2026-07-29T15:00:00.000Z', idempotencyKey: 'open-001', preferredChannel: 'IN_APP' as const }; }
 
-test('opening is transactional and idempotent with no raw sensitive body', async () => {
+async function advanceToSecondAttempt(service: ContactOrchestrationService) {
+  await service.runDue('worker-a', '2026-07-29T15:00:31.000Z');
+  await service.runDue('worker-a', '2026-07-29T15:00:47.000Z');
+}
+
+test('opening is transactional and idempotent with scoped inbox identity and no raw sensitive body', async () => {
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids);
   assert.equal(await service.open(openInput()), 'APPLIED');
   assert.equal(await service.open(openInput()), 'IDEMPOTENT');
   assert.equal(repo.sessions.size, 1); assert.equal(repo.outbox.size, 1); assert.equal(repo.audits.size, 1);
+  assert.equal([...repo.inbox][0], 'open|tenant-riyadh|session-001|open-001');
   const serialized = JSON.stringify([...repo.sessions.values(), ...repo.audits.values(), ...repo.outbox.values()]);
   for (const forbidden of ['phoneNumber', 'medicalNarrative', 'replayToken', 'latitude', 'longitude', 'rawBody']) assert.equal(serialized.includes(forbidden), false);
 });
 
-test('restart resumes durable deadline without duplicating attempts', async () => {
+test('restart persists NO_RESPONSE then resumes retry without duplicate attempts', async () => {
   const repo = new MemoryRepository();
   const firstProcess = new ContactOrchestrationService(repo, channel, ids);
   await firstProcess.open(openInput());
   const restarted = new ContactOrchestrationService(repo, channel, ids);
-  const dueAt = '2026-07-29T15:00:31.000Z';
-  assert.deepEqual(await restarted.runDue('worker-a', dueAt), [{ sessionId: 'session-001', disposition: 'APPLIED' }]);
-  assert.equal(repo.sessions.get('session-001')?.attemptCount, 2);
-  assert.deepEqual(await restarted.runDue('worker-b', dueAt), []);
+  assert.deepEqual(await restarted.runDue('worker-a', '2026-07-29T15:00:31.000Z'), [{ sessionId: 'session-001', disposition: 'APPLIED' }]);
+  assert.equal(repo.sessions.get('session-001')?.state, 'NO_RESPONSE');
+  assert.equal(repo.sessions.get('session-001')?.attemptCount, 1);
+  assert.deepEqual(await restarted.runDue('worker-b', '2026-07-29T15:00:31.000Z'), []);
+  assert.deepEqual(await restarted.runDue('worker-b', '2026-07-29T15:00:47.000Z'), [{ sessionId: 'session-001', disposition: 'APPLIED' }]);
+  assert.equal(repo.sessions.get('session-001')?.state, 'AWAITING_RESPONSE');
   assert.equal(repo.sessions.get('session-001')?.attemptCount, 2);
 });
 
 test('bounded retries escalate and never silently complete', async () => {
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
   await service.runDue('worker-a', '2026-07-29T15:00:31.000Z');
-  await service.runDue('worker-a', '2026-07-29T15:01:02.000Z');
-  const final = await service.runDue('worker-a', '2026-07-29T15:01:33.000Z');
+  await service.runDue('worker-a', '2026-07-29T15:00:47.000Z');
+  await service.runDue('worker-a', '2026-07-29T15:01:18.000Z');
+  await service.runDue('worker-a', '2026-07-29T15:01:34.000Z');
+  await service.runDue('worker-a', '2026-07-29T15:02:05.000Z');
+  const final = await service.runDue('worker-a', '2026-07-29T15:02:21.000Z');
   assert.equal(final[0]?.disposition, 'ESCALATED');
   assert.equal(repo.sessions.get('session-001')?.state, 'ESCALATED');
   assert.notEqual(repo.sessions.get('session-001')?.state, 'COMPLETED');
 });
 
-test('operator takeover atomically suppresses pending automation', async () => {
+test('operator takeover validates context and atomically suppresses pending automation', async () => {
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
   assert.equal(await service.operatorTakeover({ sessionId: 'session-001', operatorId: 'operator-001', traceId: 'trace-takeover', occurredAt: '2026-07-29T15:00:10.000Z', idempotencyKey: 'takeover-001' }), 'APPLIED');
   const session = repo.sessions.get('session-001'); assert.equal(session?.automationSuppressed, true); assert.equal(session?.state, 'OPERATOR_TAKEOVER'); assert.equal(repo.outbox.size, 0);
   assert.deepEqual(await service.runDue('worker-a', '2026-07-29T16:00:00.000Z'), []);
+  assert.equal(await service.operatorTakeover({ sessionId: 'session-001', operatorId: '!', traceId: 'trace-takeover', occurredAt: '2026-07-29T15:00:11.000Z', idempotencyKey: 'takeover-invalid' }), 'HUMAN_REVIEW');
 });
 
-test('duplicate callback is exactly once and contradiction fails to human review', async () => {
+test('callback identity is stable across different idempotency keys and contradiction fails to review', async () => {
   const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
-  const callback = { sessionId: 'session-001', traceId: 'trace-callback', occurredAt: '2026-07-29T15:00:05.000Z', idempotencyKey: 'callback-001', kind: 'CONTRADICTORY' as const };
+  const callback = { callbackId: 'callback-event-001', sessionId: 'session-001', traceId: 'trace-callback', occurredAt: '2026-07-29T15:00:05.000Z', idempotencyKey: 'callback-key-a', kind: 'CONTRADICTORY' as const };
   assert.equal(await service.handleCallback(callback), 'HUMAN_REVIEW');
   const version = repo.sessions.get('session-001')?.version;
-  assert.equal(await service.handleCallback(callback), 'IDEMPOTENT');
+  assert.equal(await service.handleCallback({ ...callback, idempotencyKey: 'callback-key-b' }), 'IDEMPOTENT');
   assert.equal(repo.sessions.get('session-001')?.version, version);
   assert.equal(repo.sessions.get('session-001')?.state, 'HUMAN_REVIEW');
+});
+
+test('unexpected callback transition fails closed instead of de-escalating review', async () => {
+  const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
+  await service.handleCallback({ callbackId: 'callback-contradiction', sessionId: 'session-001', traceId: 'trace-a', occurredAt: '2026-07-29T15:00:05.000Z', idempotencyKey: 'key-a', kind: 'CONTRADICTORY' });
+  const result = await service.handleCallback({ callbackId: 'callback-late-response', sessionId: 'session-001', traceId: 'trace-b', occurredAt: '2026-07-29T15:00:06.000Z', idempotencyKey: 'key-b', kind: 'RESPONSE' });
+  assert.equal(result, 'HUMAN_REVIEW');
+  assert.equal(repo.sessions.get('session-001')?.state, 'HUMAN_REVIEW');
+});
+
+test('concurrent workers cannot duplicate a logical retry', async () => {
+  const repo = new MemoryRepository(); const service = new ContactOrchestrationService(repo, channel, ids); await service.open(openInput());
+  await service.runDue('worker-a', '2026-07-29T15:00:31.000Z');
+  const results = await Promise.all([
+    service.runDue('worker-a', '2026-07-29T15:00:47.000Z'),
+    service.runDue('worker-b', '2026-07-29T15:00:47.000Z')
+  ]);
+  assert.equal(results.flat().filter((entry) => entry.disposition === 'APPLIED').length, 1);
+  assert.equal(repo.sessions.get('session-001')?.attemptCount, 2);
+  assert.equal([...repo.outbox.values()].filter((message) => message.attempt === 2).length, 1);
 });
 
 test('outbox delivery is vendor-neutral and reports retry on dependency outage', async () => {
