@@ -99,7 +99,7 @@ test('revoked or unknown source never reaches replay consume or ACCEPT', async (
 test('malformed, unsupported wearable, bad signature and poor location accuracy fail closed', async () => {
   const { service } = fixture();
   const candidates = [
-    { envelope: { unknown: true }, reason: 'invalid_envelope' },
+    { envelope: { unknown: true }, reason: 'unknown_envelope_field' },
     { envelope: unsupportedWearableSimulator(), reason: 'source_payload_mismatch' },
     { envelope: phoneMotionSimulator({ integrity: { replayToken: 'bad-signature', signatureStatus: 'INVALID', clockSkewMs: 0 } }), reason: 'invalid_signature' },
     { envelope: phoneMotionSimulator({ location: { latitude: 24.7, longitude: 46.6, accuracyMeters: 500, classification: 'PRECISE_RESTRICTED' } }), reason: 'location_accuracy_below_policy' }
