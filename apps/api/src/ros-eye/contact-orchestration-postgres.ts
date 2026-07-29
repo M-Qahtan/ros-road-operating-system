@@ -75,7 +75,11 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
       WHERE delivered_at IS NULL
         AND cancelled_at IS NULL
         AND available_at <= $2::timestamptz
-        AND (lease_expires_at IS NULL OR lease_expires_at <= $2::timestamptz)
+        AND (
+          lease_expires_at IS NULL
+          OR lease_expires_at <= $2::timestamptz
+          OR delivery_deadline_at <= $2::timestamptz
+        )
         AND (delivery_token IS NULL OR delivery_deadline_at <= $2::timestamptz)
       ORDER BY available_at, tenant_id, case_id, session_id, message_id
       FOR UPDATE SKIP LOCKED
