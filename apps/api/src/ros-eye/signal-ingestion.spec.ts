@@ -103,11 +103,13 @@ test('partial persistence and replay commit interruption are recoverable and ide
   assert.equal(replayAdmission.snapshot()[0]?.state, 'COMMITTED');
 });
 
-test('duplicate after committed admission cannot create duplicate intent', async () => {
+test('true replay after committed admission is rejected and cannot create duplicate intent', async () => {
   const { service, intentStore } = fixture();
   const signal = phoneMotionSimulator();
   assert.equal((await service.ingest(request(signal))).disposition, 'ACCEPTED');
-  assert.equal((await service.ingest(request(signal, { correlationId: 'correlation-002', traceId: 'trace-002' }))).disposition, 'ACCEPTED');
+  const duplicate = await service.ingest(request(signal, { correlationId: 'correlation-002', traceId: 'trace-002' }));
+  assert.equal(duplicate.disposition, 'QUARANTINED');
+  assert.equal(duplicate.reasonCode, 'replay_detected');
   assert.equal(intentStore.records.size, 1);
 });
 
