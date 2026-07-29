@@ -49,7 +49,7 @@ const server = createServer({ maxHeaderSize: 16 * 1024 }, async (request, respon
   }
 
   if (request.url === '/ready' && request.method === 'GET') {
-    const readiness = evaluateReadiness(process.env);
+    const readiness = await evaluateReadiness(process.env);
     response.writeHead(readiness.status === 'ready' ? 200 : 503);
     response.end(JSON.stringify({ ...readiness, service: 'ros-api', traceId }));
     return;

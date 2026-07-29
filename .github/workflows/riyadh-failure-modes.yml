@@ -1,0 +1,103 @@
+name: Riyadh Failure-Mode Safety
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+concurrency:
+  group: riyadh-failure-modes-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI_EVIDENCE_SCHEMA: ros-ci-evidence/v2
+  CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+  TESTED_MERGE_SHA: ${{ github.sha }}
+
+jobs:
+  riyadh-failure-modes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Enable package manager
+        run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Run deterministic failure-mode suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm simulate:riyadh:failures
+          cp artifacts/riyadh-failure-modes/result.json riyadh-failure-mode-result.json
+      - name: Validate failure-mode result
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const exportedResult = JSON.parse(fs.readFileSync('riyadh-failure-mode-result.json', 'utf8'));
+          const artifactResult = JSON.parse(fs.readFileSync('artifacts/riyadh-failure-modes/result.json', 'utf8'));
+          const required = Array.from({ length: 12 }, (_, index) => `HZ-${String(index + 1).padStart(2, '0')}`);
+          const fail = (message) => { throw new Error(message); };
+          if (JSON.stringify(exportedResult) !== JSON.stringify(artifactResult)) fail('exported and artifact results differ');
+          if (artifactResult.suite !== 'riyadh-failure-mode-safety' || artifactResult.passed !== true) fail('suite did not report a safe pass');
+          if (artifactResult.candidateHeadSha !== process.env.CANDIDATE_HEAD_SHA) fail('candidate head SHA mismatch');
+          if (artifactResult.candidateBaseSha !== process.env.CANDIDATE_BASE_SHA) fail('candidate base SHA mismatch');
+          if (artifactResult.testedMergeSha !== process.env.TESTED_MERGE_SHA) fail('tested merge SHA mismatch');
+          if (!Array.isArray(artifactResult.hazards) || artifactResult.hazards.length !== 12) fail('expected exactly 12 hazards');
+          const actual = artifactResult.hazards.map((hazard) => hazard.hazardId).sort();
+          if (JSON.stringify(actual) !== JSON.stringify(required)) fail('hazard set is incomplete or duplicated');
+          if (artifactResult.hazards.some((hazard) => hazard.passed !== true)) fail('one or more hazards did not reach the required safe state');
+          if (artifactResult.hazards.some((hazard) => hazard.evidence?.commitSha !== process.env.TESTED_MERGE_SHA)) fail('hazard evidence is not bound to the tested merge SHA');
+          NODE
+      - name: Write failure-mode evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          cat > riyadh-failure-modes-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "riyadh-failure-modes",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "candidate_head_sha": "${CANDIDATE_HEAD_SHA}",
+            "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
+            "tested_merge_sha": "${TESTED_MERGE_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+      - name: Validate failure-mode evidence package
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate-ci-evidence.mjs riyadh-failure-modes-evidence.json riyadh-failure-modes
+          test -s riyadh-failure-mode-result.json
+          test -s artifacts/riyadh-failure-modes/result.json
+          test -s docs/08-pilot-riyadh/failure-mode-traceability.md
+      - name: Upload failure-mode safety evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: riyadh-failure-modes-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            riyadh-failure-mode-result.json
+            artifacts/riyadh-failure-modes/result.json
+            docs/08-pilot-riyadh/failure-mode-traceability.md
+            riyadh-failure-modes-evidence.json
+          if-no-files-found: error
+          retention-days: 90

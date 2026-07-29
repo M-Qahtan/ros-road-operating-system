@@ -1,0 +1,348 @@
+name: Operational Readiness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: operational-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI_EVIDENCE_SCHEMA: ros-ci-evidence/v2
+  CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+  TESTED_MERGE_SHA: ${{ github.sha }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+      - name: Build workspace
+        run: pnpm build > operational-build.log 2>&1
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Write and validate verification evidence
+        if: always()
+        shell: bash
+        run: |
+          cat > operational-verify-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "verify",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "candidate_head_sha": "${CANDIDATE_HEAD_SHA}",
+            "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
+            "tested_merge_sha": "${TESTED_MERGE_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+          test -s operational-build.log
+          node scripts/validate-ci-evidence.mjs operational-verify-evidence.json verify
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: operational-verify-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            operational-build.log
+            operational-verify-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  postgres-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI_POSTGRES_PASSWORD: ci-release-${{ github.run_id }}-${{ github.run_attempt }}
+      DATABASE_URL: postgresql://ros:ci-release-${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/ros
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: ros
+          POSTGRES_PASSWORD: ci-release-${{ github.run_id }}-${{ github.run_attempt }}
+          POSTGRES_DB: ros
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ros -d ros"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Validate migrations and persistence invariants
+        run: bash scripts/run-postgres-integration.sh
+      - name: Prove backup and clean restore within RTO
+        shell: bash
+        env:
+          PGPASSWORD: ${{ env.CI_POSTGRES_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/reliability
+          createdb -h localhost -U ros ros_restore
+          BACKUP_DIR="$RUNNER_TEMP/backups" bash scripts/postgres-backup.sh
+          BACKUP_FILE=$(find "$RUNNER_TEMP/backups" -name '*.dump' -type f | head -1)
+          started=$(date +%s)
+          RESTORE_DATABASE_URL="postgresql://ros:${CI_POSTGRES_PASSWORD}@localhost:5432/ros_restore" BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh 2>&1 | tee artifacts/reliability/postgres-restore.log
+          elapsed=$(($(date +%s)-started))
+          test "$elapsed" -le 1800
+          printf '{"candidateHeadSha":"%s","candidateBaseSha":"%s","testedMergeSha":"%s","status":"passed","rpoMinutes":5,"rtoTargetSeconds":1800,"restoreElapsedSeconds":%s}\n' "$CANDIDATE_HEAD_SHA" "$CANDIDATE_BASE_SHA" "$TESTED_MERGE_SHA" "$elapsed" > artifacts/reliability/postgres-recovery.json
+      - name: Write and validate PostgreSQL evidence
+        if: always()
+        shell: bash
+        run: |
+          cat > operational-postgres-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "postgres-integration",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "candidate_head_sha": "${CANDIDATE_HEAD_SHA}",
+            "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
+            "tested_merge_sha": "${TESTED_MERGE_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+          test -s artifacts/reliability/postgres-restore.log
+          test -s artifacts/reliability/postgres-recovery.json
+          node scripts/validate-ci-evidence.mjs operational-postgres-evidence.json postgres-integration
+      - name: Upload PostgreSQL recovery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: operational-postgres-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/reliability/postgres-restore.log
+            artifacts/reliability/postgres-recovery.json
+            operational-postgres-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  staging-fault-injection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Generate isolated CI credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg="$(openssl rand -hex 24)"
+          redis="$(openssl rand -hex 24)"
+          minio="$(openssl rand -hex 24)"
+          object="$(openssl rand -hex 24)"
+          jwt="$(openssl rand -hex 32)"
+          {
+            echo "POSTGRES_USER=ros"
+            echo "POSTGRES_PASSWORD=${pg}"
+            echo "POSTGRES_DB=ros"
+            echo "DATABASE_URL=postgresql://ros:${pg}@postgres:5432/ros"
+            echo "REDIS_PASSWORD=${redis}"
+            echo "REDIS_URL=redis://:${redis}@redis:6379"
+            echo "MINIO_ROOT_USER=ros-ci-${GITHUB_RUN_ID}"
+            echo "MINIO_ROOT_PASSWORD=${minio}"
+            echo "OBJECT_STORAGE_ENDPOINT=http://minio:9000"
+            echo "OBJECT_STORAGE_ACCESS_KEY=ros-ci-${GITHUB_RUN_ID}"
+            echo "OBJECT_STORAGE_SECRET_KEY=${object}"
+            echo "OBJECT_STORAGE_BUCKET=ros-evidence"
+            echo "JWT_SECRET=${jwt}"
+          } >> "$GITHUB_ENV"
+      - name: Validate and start isolated staging stack
+        run: |
+          bash scripts/validate-environment.sh
+          docker compose -f infrastructure/docker/docker-compose.yml config --quiet
+          docker compose -f infrastructure/docker/docker-compose.yml up -d --build
+      - name: Verify baseline readiness
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            if timeout 5s docker compose -f infrastructure/docker/docker-compose.yml exec -T api node -e "fetch('http://127.0.0.1:3000/ready',{signal:AbortSignal.timeout(2000)}).then(r=>{if(r.status!==200)process.exit(1)})"; then break; fi
+            if [[ "$attempt" == "30" ]]; then exit 1; fi
+            sleep 2
+          done
+      - name: Run safe dependency fault injection
+        run: bash scripts/run-safe-fault-injection.sh
+      - name: Write and validate staging evidence
+        if: always()
+        shell: bash
+        run: |
+          docker compose -f infrastructure/docker/docker-compose.yml ps > artifacts/reliability/staging-compose-ps.log 2>&1 || true
+          docker compose -f infrastructure/docker/docker-compose.yml logs --no-color > artifacts/reliability/staging-compose.log 2>&1 || true
+          cat > operational-staging-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "staging-smoke",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "candidate_head_sha": "${CANDIDATE_HEAD_SHA}",
+            "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
+            "tested_merge_sha": "${TESTED_MERGE_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+          test -s artifacts/reliability/fault-injection.json
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('artifacts/reliability/fault-injection.json','utf8'));if(p.status!=='passed'||p.testedMergeSha!==process.env.TESTED_MERGE_SHA)process.exit(1);"
+          node scripts/validate-ci-evidence.mjs operational-staging-evidence.json staging-smoke
+      - name: Upload staging fault evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: operational-staging-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/reliability/fault-injection.json
+            artifacts/reliability/staging-compose-ps.log
+            artifacts/reliability/staging-compose.log
+            operational-staging-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Stop isolated staging stack
+        if: always()
+        run: docker compose -f infrastructure/docker/docker-compose.yml down -v
+
+  riyadh-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Run Riyadh vertical slice
+        run: |
+          pnpm simulate:riyadh
+          cp artifacts/riyadh-pilot/result.json operational-riyadh-result.json
+      - name: Write and validate Riyadh evidence
+        if: always()
+        shell: bash
+        run: |
+          cat > operational-riyadh-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "riyadh-e2e",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "candidate_head_sha": "${CANDIDATE_HEAD_SHA}",
+            "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
+            "tested_merge_sha": "${TESTED_MERGE_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+          test -s operational-riyadh-result.json
+          test -s docs/08-pilot-riyadh/pilot-e2e-readiness.md
+          node scripts/validate-ci-evidence.mjs operational-riyadh-evidence.json riyadh-e2e
+      - name: Upload Riyadh evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: operational-riyadh-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            operational-riyadh-result.json
+            docs/08-pilot-riyadh/pilot-e2e-readiness.md
+            operational-riyadh-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  security:
+    uses: ./.github/workflows/security.yml
+
+  failure-mode-safety:
+    uses: ./.github/workflows/riyadh-failure-modes.yml
+
+  operational-readiness:
+    if: always()
+    needs: [verify, postgres-restore, staging-fault-injection, riyadh-e2e, security, failure-mode-safety]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERIFY_RESULT: ${{ needs.verify.result }}
+      POSTGRES_RESULT: ${{ needs.postgres-restore.result }}
+      STAGING_RESULT: ${{ needs.staging-fault-injection.result }}
+      RIYADH_RESULT: ${{ needs.riyadh-e2e.result }}
+      SECURITY_RESULT: ${{ needs.security.result }}
+      FAILURE_MODE_RESULT: ${{ needs.failure-mode-safety.result }}
+      READINESS_OUTPUT: artifacts/reliability/operational-readiness.json
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Enforce operational readiness decision
+        run: bash scripts/verify-operational-readiness.sh
+      - name: Write and validate readiness evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          cat > operational-readiness-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "operational-readiness",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "candidate_head_sha": "${CANDIDATE_HEAD_SHA}",
+            "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
+            "tested_merge_sha": "${TESTED_MERGE_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+          test -s artifacts/reliability/operational-readiness.json
+          node scripts/validate-ci-evidence.mjs operational-readiness-evidence.json operational-readiness
+      - name: Upload readiness decision
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: operational-readiness-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/reliability/operational-readiness.json
+            operational-readiness-evidence.json
+          if-no-files-found: error
+          retention-days: 365

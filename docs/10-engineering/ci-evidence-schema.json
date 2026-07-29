@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ros.example/schemas/ci-evidence-v2.json",
+  "title": "ROS CI evidence manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "job",
+    "repository",
+    "workflow",
+    "event",
+    "ref",
+    "candidate_head_sha",
+    "candidate_base_sha",
+    "tested_merge_sha",
+    "run_id",
+    "run_attempt"
+  ],
+  "properties": {
+    "schema": { "const": "ros-ci-evidence/v2" },
+    "job": {
+      "enum": ["verify", "postgres-integration", "staging-smoke", "riyadh-e2e", "riyadh-failure-modes", "operational-readiness"]
+    },
+    "repository": { "type": "string", "minLength": 1 },
+    "workflow": { "type": "string", "minLength": 1 },
+    "event": { "type": "string", "minLength": 1 },
+    "ref": { "type": "string", "minLength": 1 },
+    "candidate_head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "candidate_base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "tested_merge_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "run_id": { "type": "string", "pattern": "^[0-9]+$" },
+    "run_attempt": { "type": "string", "pattern": "^[0-9]+$" }
+  }
+}

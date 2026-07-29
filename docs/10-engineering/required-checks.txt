@@ -1,0 +1,6 @@
+verify
+postgres-integration
+staging-smoke
+riyadh-e2e
+dependency-review
+repository-security
