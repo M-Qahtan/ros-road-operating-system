@@ -6,7 +6,7 @@ This module provides technical controls and review evidence. It does not claim l
 
 ## Purpose and minimum necessary data
 
-Every read, write, export, deletion request, operator view and model recommendation is evaluated against the composite scope `tenantId + caseId`, actor role, approved purpose, lifecycle state, data kind and action. The default decision is deny. Data not listed as minimum necessary for the approved purpose is denied unless a valid, alerted, time-bounded break-glass lease applies.
+Every read, write, export, deletion request, operator view and model recommendation is evaluated against the composite scope `tenantId + caseId`, authenticated `actorId`, actor role, approved purpose, lifecycle state, data kind and action. The default decision is deny. Data not listed as minimum necessary for the approved purpose is denied unless a valid, alerted, time-bounded break-glass lease applies.
 
 Continuous monitoring is prohibited unless a purpose is approved and the lifecycle is `ACTIVE`. Revoked, expired, inactive and deletion-pending states stop normal processing. Legal hold permits only retention administration and scoped security review.
 
@@ -14,7 +14,7 @@ Continuous monitoring is prohibited unless a purpose is approved and the lifecyc
 
 - Signals, indicators, conversation metadata, evidence metadata and operator views are sensitive.
 - Raw conversation, raw evidence, precise location and raw tokens are restricted.
-- Restricted fields are masked by default and cannot be exported through the policy engine.
+- Raw conversation, raw evidence and precise location are denied unless an actor-bound valid break-glass lease explicitly authorizes access; restricted exports remain denied.
 - Raw conversation, evidence, precise location, phone data, medical narrative and tokens are prohibited from general telemetry and CI artifacts.
 - Encryption keys and vendor credentials remain outside domain records and are supplied through deployment-specific secret boundaries.
 
@@ -23,18 +23,19 @@ Continuous monitoring is prohibited unless a purpose is approved and the lifecyc
 RBAC and ABAC are combined. Authorization requires all of:
 
 1. exact tenant and case match;
-2. role permitted for the requested purpose;
-3. lifecycle permits processing;
-4. valid technical consent state where required;
-5. requested data is minimum necessary;
-6. action is allowed for the classification;
-7. exceptional access, when used, is valid and scoped.
+2. a valid authenticated actor identifier;
+3. role permitted for the requested purpose;
+4. lifecycle permits processing;
+5. valid technical consent state where required;
+6. requested data is minimum necessary;
+7. action is allowed for the classification;
+8. exceptional access, when used, is valid and bound to the same authenticated actor.
 
-A session or resource identifier alone is never an authorization boundary.
+A session, resource or lease identifier alone is never an authorization boundary.
 
 ## Break-glass
 
-Break-glass is limited to safety operators and security reviewers. It requires a reason code, alert identifier, actor, purpose, tenant, case, issue time and expiry. Duration is capped at 15 minutes. It is never silent, permanent or cross-case. Expired, mismatched or previously reviewed leases do not grant access. Every use requires immutable audit and post-use review.
+Break-glass is limited to safety operators and security reviewers. It requires a reason code, alert identifier, authenticated actor, purpose, tenant, case, issue time and expiry. Duration is capped at 15 minutes. It is never silent, permanent, transferable or cross-case. The requester `actorId` must exactly match the lease `actorId`; missing or mismatched identity fails closed. Expired, mismatched or previously reviewed leases do not grant access. Every use requires immutable audit and post-use review.
 
 ## Retention, deletion and legal hold
 
