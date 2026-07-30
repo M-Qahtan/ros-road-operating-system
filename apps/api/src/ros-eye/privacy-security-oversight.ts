@@ -1,4 +1,4 @@
-export const PRIVACY_POLICY_VERSION = 'ros-eye.privacy-security.v3' as const;
+export const PRIVACY_POLICY_VERSION = 'ros-eye.privacy-security.v4' as const;
 export const BREAK_GLASS_MAX_MS = 900_000;
 
 export type DataKind = 'SIGNAL'|'INDICATOR'|'CONVERSATION_METADATA'|'CONVERSATION_RAW'|'EVIDENCE_METADATA'|'EVIDENCE_RAW'|'PRECISE_LOCATION'|'RAW_TOKEN'|'OPERATOR_VIEW';
@@ -15,6 +15,7 @@ export interface AccessRequest extends Scope {
  readonly sessionId:string|null; readonly subjectId:string|null; readonly consentGrantId:string|null; readonly idempotencyKey?:string;
 }
 export interface AccessDecision { readonly allowed:boolean; readonly mode:'DENY'|'MASKED'|'FULL'; readonly reasonCode:string; readonly policyVersion:typeof PRIVACY_POLICY_VERSION; readonly receiptId?:string }
+export interface PrivacyClockPort { now():Promise<string> }
 
 export interface ConsentGrantReceipt extends Scope {
  readonly grantId:string; readonly sessionId:string; readonly subjectId:string; readonly purposes:readonly Purpose[];
@@ -37,16 +38,16 @@ export interface BreakGlassGrantInput extends Scope {
  readonly reasonCode:string; readonly occurredAt:string; readonly policyVersion:typeof PRIVACY_POLICY_VERSION;
 }
 export interface BreakGlassGrantReceipt extends BreakGlassGrantInput { readonly alertReceiptId:string; readonly auditEventId:string; readonly status:'AUTHORIZED' }
+export interface BreakGlassLeaseLookup extends Scope { readonly leaseId:string; readonly actorId:string; readonly role:Role; readonly purpose:Purpose }
 export interface BreakGlassGrantTransaction {
+ findLeaseForUpdate(input:BreakGlassLeaseLookup):Promise<BreakGlassLease|null>;
+ findAuthorized(input:Scope & {grantId:string;actorId:string;leaseId:string}):Promise<BreakGlassGrantReceipt|null>;
  consumeAbuse(input:BreakGlassGrantInput):Promise<'ALLOW'|'RATE_LIMIT'|'ANOMALY_REVIEW'>;
  reserveAlert(input:BreakGlassGrantInput):Promise<{status:'RESERVED'|'EXISTS'|'FAILED';receiptId:string|null}>;
  appendAudit(input:BreakGlassGrantInput & {alertReceiptId:string}):Promise<{status:'APPENDED'|'IDEMPOTENT'|'FAILED';eventId:string|null}>;
  finalizeGrant(input:BreakGlassGrantInput & {alertReceiptId:string;auditEventId:string}):Promise<{status:'AUTHORIZED'|'IDEMPOTENT'|'CONFLICT';receipt:BreakGlassGrantReceipt|null}>;
 }
-export interface BreakGlassGrantRepositoryPort {
- transaction<T>(work:(tx:BreakGlassGrantTransaction)=>Promise<T>):Promise<T>;
- findAuthorized(scope:Scope & {grantId:string;actorId:string;leaseId:string}):Promise<BreakGlassGrantReceipt|null>;
-}
+export interface BreakGlassGrantRepositoryPort { transaction<T>(work:(tx:BreakGlassGrantTransaction)=>Promise<T>):Promise<T> }
 export interface PrivacyIdFactoryPort { create(namespace:string,material:string):Promise<string> }
 
 export interface RecommendationApprovalReceipt extends Scope {
@@ -87,8 +88,11 @@ export function evaluateAccess(r:AccessRequest):AccessDecision{
 }
 
 export class PrivacyAccessOrchestrator {
- constructor(private readonly grants:BreakGlassGrantRepositoryPort,private readonly ids:PrivacyIdFactoryPort,private readonly consent:ConsentAuthorityPort){}
- async authorizeAccess(r:AccessRequest):Promise<AccessDecision>{
+ constructor(private readonly grants:BreakGlassGrantRepositoryPort,private readonly ids:PrivacyIdFactoryPort,private readonly consent:ConsentAuthorityPort,private readonly clock:PrivacyClockPort){}
+ async authorizeAccess(request:AccessRequest):Promise<AccessDecision>{
+  const trustedNow=await this.clock.now();
+  if(!validTime(trustedNow))return deny('trusted_clock_unavailable');
+  const r:AccessRequest={...request,now:trustedNow};
   const common=validateCommon(r); if(common!==null)return common;
   if(r.dataKind==='RAW_TOKEN')return deny('raw_token_denied');
   if(r.action==='EXPORT'&&restrictedRaw.includes(r.dataKind))return deny('restricted_export_denied');
@@ -98,18 +102,25 @@ export class PrivacyAccessOrchestrator {
    if(!minimum[r.purpose].includes(r.dataKind))return deny('minimum_necessary_denied');
    return allow(r.action==='MASKED_READ'?'MASKED':'FULL','policy_allow');
   }
-  if(!validBreakGlass(r.breakGlass,r))return deny('break_glass_required');
+  if(r.breakGlass===null||!validId(r.breakGlass.leaseId))return deny('break_glass_required');
   if(!validId(r.idempotencyKey??''))return deny('idempotency_required');
-  const lease=r.breakGlass;
-  const grantId=await this.ids.create('break-glass-grant',`${r.tenantId}|${r.caseId}|${r.actorId}|${lease.leaseId}|${r.purpose}|${r.dataKind}|${r.action}|${r.idempotencyKey}`);
-  const existing=await this.grants.findAuthorized({...r,grantId,leaseId:lease.leaseId});
-  if(existing!==null)return allow('FULL','break_glass_authorized',existing.grantId);
-  const input:BreakGlassGrantInput={tenantId:r.tenantId,caseId:r.caseId,grantId,idempotencyKey:r.idempotencyKey!,actorId:r.actorId,leaseId:lease.leaseId,role:r.role,purpose:r.purpose,dataKind:r.dataKind,action:r.action,reasonCode:lease.reasonCode,occurredAt:r.now,policyVersion:PRIVACY_POLICY_VERSION};
+  const requestedLease=r.breakGlass;
+  const grantId=await this.ids.create('break-glass-grant',`${r.tenantId}|${r.caseId}|${r.actorId}|${requestedLease.leaseId}|${r.purpose}|${r.dataKind}|${r.action}|${r.idempotencyKey}`);
   return this.grants.transaction(async tx=>{
+   const lookup:BreakGlassLeaseLookup={tenantId:r.tenantId,caseId:r.caseId,leaseId:requestedLease.leaseId,actorId:r.actorId,role:r.role,purpose:r.purpose};
+   const authoritativeLease=await tx.findLeaseForUpdate(lookup);
+   if(!validBreakGlass(authoritativeLease,r))return deny('break_glass_authoritative_lease_invalid');
+   const existing=await tx.findAuthorized({tenantId:r.tenantId,caseId:r.caseId,grantId,actorId:r.actorId,leaseId:authoritativeLease.leaseId});
+   if(existing!==null)return allow('FULL','break_glass_authorized',existing.grantId);
+   const input:BreakGlassGrantInput={tenantId:r.tenantId,caseId:r.caseId,grantId,idempotencyKey:r.idempotencyKey!,actorId:r.actorId,leaseId:authoritativeLease.leaseId,role:r.role,purpose:r.purpose,dataKind:r.dataKind,action:r.action,reasonCode:authoritativeLease.reasonCode,occurredAt:trustedNow,policyVersion:PRIVACY_POLICY_VERSION};
    const abuse=await tx.consumeAbuse(input); if(abuse!=='ALLOW')return deny(abuse==='RATE_LIMIT'?'break_glass_rate_limited':'break_glass_anomaly_review');
    const alert=await tx.reserveAlert(input); if(alert.status==='FAILED'||alert.receiptId===null)return deny('break_glass_alert_not_durable');
    const audit=await tx.appendAudit({...input,alertReceiptId:alert.receiptId}); if(audit.status==='FAILED'||audit.eventId===null)return deny('break_glass_audit_not_durable');
-   const finalized=await tx.finalizeGrant({...input,alertReceiptId:alert.receiptId,auditEventId:audit.eventId});
+   const finalNow=await this.clock.now();
+   if(!validTime(finalNow))return deny('trusted_clock_unavailable');
+   const finalLease=await tx.findLeaseForUpdate(lookup);
+   if(!validBreakGlass(finalLease,{...r,now:finalNow}))return deny('break_glass_lease_invalidated');
+   const finalized=await tx.finalizeGrant({...input,occurredAt:finalNow,alertReceiptId:alert.receiptId,auditEventId:audit.eventId});
    if((finalized.status==='AUTHORIZED'||finalized.status==='IDEMPOTENT')&&finalized.receipt!==null)return allow('FULL','break_glass_authorized',finalized.receipt.grantId);
    return deny('break_glass_grant_conflict');
   });
@@ -160,8 +171,8 @@ export function redactForGeneralTelemetry(value:Readonly<Record<string,unknown>>
 export const THREAT_CONTROL_MATRIX=Object.freeze([
  {threat:'SOURCE_IMPERSONATION',control:'source binding and scoped idempotency',test:'source impersonation denial',owner:'Security Engineering',residualRisk:'P1'},
  {threat:'STALKING_MONITORING_ABUSE',control:'authoritative consent and tenant-case ABAC',test:'fabricated consent and cross-case denial',owner:'Privacy Engineering',residualRisk:'P1'},
- {threat:'ACCOUNT_TAKEOVER',control:'actor-bound anomaly hook and expiring break-glass',test:'actor mismatch and expired lease denial',owner:'Identity Security',residualRisk:'P1'},
- {threat:'INSIDER_MISUSE',control:'atomic durable alert audit and abuse grant',test:'invented receipt and adapter failure denial',owner:'Security Operations',residualRisk:'P1'},
+ {threat:'ACCOUNT_TAKEOVER',control:'authoritative actor-bound lease lock and finalization revalidation',test:'actor mismatch expiry revocation and mid-flight invalidation denial',owner:'Identity Security',residualRisk:'P1'},
+ {threat:'INSIDER_MISUSE',control:'atomic durable alert audit abuse and authoritative lease grant',test:'invented receipt adapter failure and invalidated lease denial',owner:'Security Operations',residualRisk:'P1'},
  {threat:'EVIDENCE_EXFILTRATION',control:'restricted export deny and telemetry allowlist',test:'raw evidence export and nested telemetry denial',owner:'Data Protection',residualRisk:'P1'},
  {threat:'MODEL_AUTHORITY_ABUSE',control:'authoritative scoped human approval receipt',test:'synthetic approval and proposer self-approval denial',owner:'Responsible AI',residualRisk:'P1'}
 ] as const);
