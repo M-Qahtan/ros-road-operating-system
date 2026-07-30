@@ -9,7 +9,8 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "node --test $(find dist -name '*.spec.js' -print | sort)",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "simulate:riyadh": "pnpm build && node dist/e2e/run-riyadh-pilot.js"
+    "simulate:riyadh": "pnpm build && node dist/e2e/run-riyadh-pilot.js",
+    "evaluate:safety-fusion": "pnpm build && node dist/e2e/run-safety-fusion-evaluation.js"
   },
   "dependencies": {
     "@ros/contracts": "workspace:*",
