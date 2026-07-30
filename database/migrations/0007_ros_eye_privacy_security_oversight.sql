@@ -130,6 +130,38 @@ CREATE TABLE IF NOT EXISTS ros_eye_break_glass_grants (
     REFERENCES ros_eye_privacy_audit(tenant_id, case_id, event_id)
 );
 
+CREATE OR REPLACE FUNCTION enforce_active_ros_eye_break_glass_lease()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  lease_row ros_eye_break_glass_leases%ROWTYPE;
+BEGIN
+  SELECT * INTO lease_row
+  FROM ros_eye_break_glass_leases
+  WHERE tenant_id = NEW.tenant_id
+    AND case_id = NEW.case_id
+    AND lease_id = NEW.lease_id
+    AND actor_id = NEW.actor_id
+    AND purpose = NEW.purpose
+  FOR UPDATE;
+
+  IF NOT FOUND
+    OR lease_row.actor_role <> NEW.actor_role
+    OR lease_row.reviewed_at IS NOT NULL
+    OR lease_row.revoked_at IS NOT NULL
+    OR NEW.authorized_at < lease_row.issued_at
+    OR NEW.authorized_at >= lease_row.expires_at THEN
+    RAISE EXCEPTION 'break-glass lease is not active at grant finalization';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS ros_eye_break_glass_grant_requires_active_lease ON ros_eye_break_glass_grants;
+CREATE TRIGGER ros_eye_break_glass_grant_requires_active_lease
+BEFORE INSERT ON ros_eye_break_glass_grants
+FOR EACH ROW EXECUTE FUNCTION enforce_active_ros_eye_break_glass_lease();
+
 CREATE TABLE IF NOT EXISTS ros_eye_recommendation_approvals (
   tenant_id text NOT NULL,
   case_id text NOT NULL,
@@ -206,10 +238,10 @@ FOR EACH ROW EXECUTE FUNCTION reject_ros_eye_privacy_audit_mutation();
 
 COMMENT ON TABLE ros_eye_privacy_audit IS 'Structured immutable audit only; raw conversation, evidence, precise location, telephone data, medical narrative and tokens are prohibited.';
 COMMENT ON TABLE ros_eye_consent_grants IS 'Authoritative consent receipts bound to tenant, case, session, subject, exact purpose/data/action, language and protocol state.';
-COMMENT ON TABLE ros_eye_break_glass_leases IS 'Actor-bound, time-bounded, reasoned and post-reviewed exceptional-access leases.';
+COMMENT ON TABLE ros_eye_break_glass_leases IS 'Actor-bound, time-bounded, reasoned and post-reviewed exceptional-access leases. Grant finalization locks and revalidates this authoritative row.';
 COMMENT ON TABLE ros_eye_break_glass_alert_outbox IS 'Durable non-caller-supplied alert reservations. Provider delivery is asynchronous and must not hold authorization row locks.';
 COMMENT ON TABLE ros_eye_break_glass_abuse_usage IS 'Idempotent abuse and rate-limit consumption bound to one exceptional-access grant.';
-COMMENT ON TABLE ros_eye_break_glass_grants IS 'Authorization exists only after durable alert reservation, ALLOW abuse decision and immutable audit append are present in one transaction.';
+COMMENT ON TABLE ros_eye_break_glass_grants IS 'Authorization exists only after durable alert reservation, ALLOW abuse decision, immutable audit append and active authoritative lease validation in one transaction.';
 COMMENT ON TABLE ros_eye_recommendation_approvals IS 'Human approvals are scoped, time-bounded, separation-of-duties constrained and audit-linked; model output is never authority.';
 COMMENT ON TABLE ros_eye_recommendation_executions IS 'Idempotent execution intents require immutable audit and, for high/critical risk, a matching authoritative approval.';
 COMMENT ON TABLE ros_eye_retention_controls IS 'Content lifecycle controls preserve audit records independently from content deletion.';
