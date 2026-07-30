@@ -8,13 +8,21 @@ This module provides technical controls and review evidence. It does not claim l
 
 Every request is evaluated against `tenantId + caseId`, authenticated `actorId`, role, approved purpose, lifecycle state, data kind and action. The default decision is deny. Continuous monitoring is prohibited unless purpose is approved and lifecycle is `ACTIVE`.
 
+## Authoritative consent boundary
+
+Consent-dependent processing never trusts timestamps or lifecycle values supplied by the caller. The access orchestrator loads a durable consent receipt bound to tenant, case, HumanContact session, subject, exact purposes, data classes, actions, disclosure language, protocol version, consent-policy version, grant time, expiry and revocation state.
+
+The receipt is eligible only after the #31 contact runtime has completed consent and language selection and reached `CONTACTING`, `AWAITING_RESPONSE`, `HUMAN_REVIEW`, or `ESCALATED`. Missing records, fabricated identifiers, consent-store failure, `CONSENT_PENDING`, `LANGUAGE_SELECTION`, purpose expansion, cross-session/subject reuse, expiry or revocation return `DENY`.
+
 ## Classification and telemetry
 
-Signals, indicators, conversation metadata, evidence metadata and operator views are sensitive. Conversation bodies, evidence payloads, precise location and tokens are restricted. The pure policy evaluator never grants restricted access. Restricted exports remain denied. Sensitive payloads and exceptional-access receipts are excluded from general telemetry and CI artifacts.
+Signals, indicators, conversation metadata, evidence metadata and operator views are sensitive. Conversation bodies, evidence payloads, precise location and tokens are restricted. The pure policy evaluator never grants restricted access. Restricted exports remain denied.
+
+General telemetry uses an explicit typed scalar allowlist. Unknown keys, nested objects, arrays, aliases, exceptional-access receipts and unapproved values are discarded before serialization. This same boundary applies to logs, traces, error metadata, snapshots and CI artifact inputs.
 
 ## Deny-by-default access control
 
-Authorization requires exact tenant/case scope, authenticated actor identity, role-purpose compatibility, valid lifecycle and consent state where required, minimum-necessary data, and an allowed action. A session, resource, lease, alert identifier or caller-supplied receipt is never proof of authorization.
+Authorization requires exact tenant/case scope, authenticated actor identity, role-purpose compatibility, valid lifecycle, authoritative consent where required, minimum-necessary data, and an allowed action. A session, resource, lease, alert identifier or caller-supplied receipt is never proof of authorization.
 
 ## Durable break-glass protocol
 
@@ -22,7 +30,7 @@ Break-glass is limited to safety operators and security reviewers. A lease is ca
 
 Restricted `FULL` access is granted only after one repository transaction proves:
 
-1. actor, scope, lease, purpose, lifecycle, consent and policy version are valid;
+1. actor, scope, lease, purpose, lifecycle, authoritative consent and policy version are valid;
 2. abuse and rate-limit consumption returns `ALLOW`;
 3. a durable alert outbox reservation is persisted with a repository-generated receipt;
 4. an immutable use-audit event is appended and linked to that receipt;
@@ -47,7 +55,9 @@ Deletion purges content while preserving immutable structured audit. Legal hold 
 
 ## Human oversight
 
-High and critical recommendations require explicit human approval, an explanation identifier and reversibility where safe. A model recommendation never becomes authority by itself. This policy does not weaken the #31 sequence `consent -> language -> contacting -> awaiting response`, durable deadlines, nonblocking outbox reservations, operator takeover, delivery deadlines or fail-closed transitions.
+High and critical recommendations require an authoritative approval receipt loaded at the execution boundary. The receipt is bound to tenant, case, recommendation/version, exact action, risk, approver identity and authorized role, proposer identity, explanation artifact hash, policy version, approval time, expiry and revocation status. Separation of duties prevents the proposing component from approving itself.
+
+Execution is fail-closed when the approval is missing, synthetic, mismatched, expired, revoked, unaudited, unavailable or replayed against another action or recommendation. Model output alone can never reach an execution port. This policy does not weaken the #31 sequence `consent -> language -> contacting -> awaiting response`, durable deadlines, nonblocking outbox reservations, operator takeover, delivery deadlines or fail-closed transitions.
 
 ## Release evidence
 
