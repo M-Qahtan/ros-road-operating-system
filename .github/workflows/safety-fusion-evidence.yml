@@ -1,0 +1,79 @@
+name: Safety Fusion Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/ros-eye/safety-fusion*.ts'
+      - 'apps/api/src/ros-eye/governed-safety-fusion*.ts'
+      - 'apps/api/src/e2e/run-safety-fusion-evaluation.ts'
+      - 'packages/contracts/src/safety-fusion.ts'
+      - 'database/migrations/0009_ros_eye_safety_fusion_governance.sql'
+      - 'database/tests/0009_safety_fusion_governance.sql'
+      - '.github/workflows/safety-fusion-evidence.yml'
+      - 'package.json'
+      - 'apps/api/package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+  TESTED_MERGE_SHA: ${{ github.sha }}
+
+jobs:
+  safety-fusion-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out tested candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Enable package manager
+        run: corepack enable
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build workspace
+        run: pnpm build
+      - name: Generate safety-fusion evaluation evidence
+        run: node apps/api/dist/e2e/run-safety-fusion-evaluation.js
+      - name: Validate SHA-bound passing evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s artifacts/ros-eye/safety-fusion-evidence.json
+          test -s artifacts/ros-eye/safety-fusion-metrics.json
+          node <<'NODE'
+          const fs = require('node:fs');
+          const evidence = JSON.parse(fs.readFileSync('artifacts/ros-eye/safety-fusion-evidence.json', 'utf8'));
+          const metrics = JSON.parse(fs.readFileSync('artifacts/ros-eye/safety-fusion-metrics.json', 'utf8'));
+          const expected = {
+            candidateHeadSha: process.env.CANDIDATE_HEAD_SHA,
+            candidateBaseSha: process.env.CANDIDATE_BASE_SHA,
+            testedMergeSha: process.env.TESTED_MERGE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT)
+          };
+          for (const [key, value] of Object.entries(expected)) {
+            if (evidence[key] !== value) throw new Error(`${key} mismatch`);
+          }
+          if (!evidence.metrics?.passed || !metrics.passed) throw new Error('evaluation did not pass');
+          for (const key of ['weightedFalseNegativeScore','underTriageCount','missedHumanReviewCount','deterministicMismatchCount']) {
+            if (metrics[key] !== 0) throw new Error(`${key} must be zero`);
+          }
+          if (!/^sha256:[a-f0-9]{64}$/.test(evidence.fixtureDigest)) throw new Error('fixture digest invalid');
+          if (!/^sha256:[a-f0-9]{64}$/.test(evidence.resultsDigest)) throw new Error('results digest invalid');
+          NODE
+      - name: Upload safety-fusion evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: safety-fusion-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ros-eye/
+          if-no-files-found: error
+          retention-days: 365
