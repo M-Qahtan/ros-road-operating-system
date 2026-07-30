@@ -6,58 +6,49 @@ This module provides technical controls and review evidence. It does not claim l
 
 ## Purpose and minimum necessary data
 
-Every read, write, export, deletion request, operator view and model recommendation is evaluated against the composite scope `tenantId + caseId`, authenticated `actorId`, actor role, approved purpose, lifecycle state, data kind and action. The default decision is deny. Data not listed as minimum necessary for the approved purpose is denied unless a valid, alerted, time-bounded break-glass lease applies.
+Every request is evaluated against `tenantId + caseId`, authenticated `actorId`, role, approved purpose, lifecycle state, data kind and action. The default decision is deny. Continuous monitoring is prohibited unless purpose is approved and lifecycle is `ACTIVE`.
 
-Continuous monitoring is prohibited unless a purpose is approved and the lifecycle is `ACTIVE`. Revoked, expired, inactive and deletion-pending states stop normal processing. Legal hold permits only retention administration and scoped security review.
+## Classification and telemetry
 
-## Classification and telemetry boundary
-
-- Signals, indicators, conversation metadata, evidence metadata and operator views are sensitive.
-- Raw conversation, raw evidence, precise location and raw tokens are restricted.
-- Raw conversation, raw evidence and precise location are denied unless an actor-bound valid break-glass lease explicitly authorizes access; restricted exports remain denied.
-- Raw conversation, evidence, precise location, phone data, medical narrative and tokens are prohibited from general telemetry and CI artifacts.
-- Encryption keys and vendor credentials remain outside domain records and are supplied through deployment-specific secret boundaries.
+Signals, indicators, conversation metadata, evidence metadata and operator views are sensitive. Conversation bodies, evidence payloads, precise location and tokens are restricted. The pure policy evaluator never grants restricted access. Restricted exports remain denied. Sensitive payloads and exceptional-access receipts are excluded from general telemetry and CI artifacts.
 
 ## Deny-by-default access control
 
-RBAC and ABAC are combined. Authorization requires all of:
+Authorization requires exact tenant/case scope, authenticated actor identity, role-purpose compatibility, valid lifecycle and consent state where required, minimum-necessary data, and an allowed action. A session, resource, lease, alert identifier or caller-supplied receipt is never proof of authorization.
 
-1. exact tenant and case match;
-2. a valid authenticated actor identifier;
-3. role permitted for the requested purpose;
-4. lifecycle permits processing;
-5. valid technical consent state where required;
-6. requested data is minimum necessary;
-7. action is allowed for the classification;
-8. exceptional access, when used, is valid and bound to the same authenticated actor.
+## Durable break-glass protocol
 
-A session, resource or lease identifier alone is never an authorization boundary.
+Break-glass is limited to safety operators and security reviewers. A lease is capped at 15 minutes and bound to tenant, case, actor, role and purpose. Expired, reviewed, revoked, mismatched or replayed leases fail closed.
 
-## Break-glass
+Restricted `FULL` access is granted only after one repository transaction proves:
 
-Break-glass is limited to safety operators and security reviewers. It requires a reason code, alert identifier, authenticated actor, purpose, tenant, case, issue time and expiry. Duration is capped at 15 minutes. It is never silent, permanent, transferable or cross-case. The requester `actorId` must exactly match the lease `actorId`; missing or mismatched identity fails closed. Expired, mismatched or previously reviewed leases do not grant access. Every use requires immutable audit and post-use review.
+1. actor, scope, lease, purpose, lifecycle, consent and policy version are valid;
+2. abuse and rate-limit consumption returns `ALLOW`;
+3. a durable alert outbox reservation is persisted with a repository-generated receipt;
+4. an immutable use-audit event is appended and linked to that receipt;
+5. the grant is finalized with database linkage to lease, abuse decision, alert reservation and audit event.
+
+Any adapter failure, unknown state, conflict or missing receipt returns `DENY`. Duplicate requests use a stable scoped idempotency key and converge on one logical grant, one alert reservation and one audit intent.
+
+Provider delivery is asynchronous and must not run inside the authorization transaction or while holding a long-lived PostgreSQL lock.
+
+## Crash and race behavior
+
+- A crash before finalization leaves no authorized grant.
+- Reserved alert work is recoverable from the durable outbox.
+- Concurrent duplicates converge on one grant identity.
+- Expiry, review or revocation before finalization denies access.
+- Cross-tenant, cross-case and cross-actor reuse is denied.
+- Invented alert or audit identifiers cannot satisfy the database relationships required for authorization.
 
 ## Retention, deletion and legal hold
 
-Vendor-neutral ports separate policy from storage. Deletion purges content while preserving immutable structured audit. Legal hold blocks content purge until released. Tenant and case remain part of every retention key. The database migration stores audit, break-glass and retention controls independently so deletion cannot erase accountability.
+Deletion purges content while preserving immutable structured audit. Legal hold blocks content purge until released. Tenant and case remain part of every retention key.
 
 ## Human oversight
 
-High and critical recommendations require explicit human approval, an explanation identifier and reversibility where safe. A model recommendation never becomes authority by itself. Human override remains explicit and auditable. This policy does not weaken the #31 sequence `consent -> language -> contacting -> awaiting response`, durable deadlines, nonblocking outbox reservations, operator takeover, AbortSignal delivery deadlines or fail-closed transitions.
-
-## Abuse controls
-
-The runtime exposes vendor-neutral hooks for rate limits and anomaly review. The threat matrix covers source impersonation, stalking or monitoring abuse, account takeover, insider misuse, evidence exfiltration and model authority abuse. Each row names its control, deterministic test, accountable owner and residual risk. Residual P0 is not accepted by this implementation and requires founder governance.
+High and critical recommendations require explicit human approval, an explanation identifier and reversibility where safe. A model recommendation never becomes authority by itself. This policy does not weaken the #31 sequence `consent -> language -> contacting -> awaiting response`, durable deadlines, nonblocking outbox reservations, operator takeover, delivery deadlines or fail-closed transitions.
 
 ## Release evidence
 
-Required evidence on the final stable head:
-
-- verify, build, lint, typecheck and tests;
-- PostgreSQL migration, backup and clean restore;
-- staging readiness and fault injection;
-- Riyadh E2E and failure-mode safety;
-- secret scan, dependency review and CycloneDX SBOM;
-- operational readiness;
-- evidence v2 binding candidate head, candidate base, tested merge, run ID and attempt;
-- independent council and continuous assurance with no unresolved material blocker.
+The final stable head must pass verify, build, lint, typecheck, tests, PostgreSQL migration/backup/restore, staging readiness, Riyadh E2E, failure-mode safety, security, dependency review, secret scan, SBOM and operational readiness. Evidence v2 must bind candidate head, candidate base, tested merge, run ID and attempt, with no unresolved material blocker.
