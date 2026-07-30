@@ -43,14 +43,18 @@ function input(overrides: Partial<SafetyFusionInput>): SafetyFusionInput {
   };
 }
 
-function clearGuard(kind: SafetyFusionGuardKind, inputVersion = 1): SafetyFusionGuardResult {
+function guardResult(kind: SafetyFusionGuardKind, disposition: SafetyFusionGuardResult['disposition'], reasonCode: string, inputVersion = 1): SafetyFusionGuardResult {
   return {
     kind,
-    disposition: 'CLEAR',
-    reasonCode: 'synthetic_fixture_clear',
+    disposition,
+    reasonCode,
     guardVersion: `ros-eye.safety-fusion.guard.${kind.toLowerCase()}.fixture.v1`,
     evaluatedInputVersion: inputVersion
   };
+}
+
+function clearGuard(kind: SafetyFusionGuardKind, inputVersion = 1): SafetyFusionGuardResult {
+  return guardResult(kind, 'CLEAR', 'synthetic_fixture_clear', inputVersion);
 }
 
 const CLEAR_GUARDS: readonly SafetyFusionGuardResult[] = [
@@ -120,7 +124,7 @@ export const SAFETY_FUSION_SYNTHETIC_FIXTURES: readonly SafetyFusionEvaluationFi
       evidence: [evidence({ evidenceId: 'stale-impact', observedAt: '2026-07-30T22:30:00.000Z', receivedAt: '2026-07-30T22:31:00.000Z' })]
     }),
     guardResults: [
-      { ...clearGuard('DATA_QUALITY'), disposition: 'DEGRADED', reasonCode: 'stale_sparse_fixture' },
+      guardResult('DATA_QUALITY', 'DEGRADED', 'stale_sparse_fixture'),
       clearGuard('DRIFT'), clearGuard('OUT_OF_DISTRIBUTION'), clearGuard('ADVERSARIAL_INPUT')
     ],
     expectedMinimumSeverity: 'S3',
