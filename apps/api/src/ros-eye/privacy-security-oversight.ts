@@ -157,15 +157,43 @@ export function createBreakGlassLease(input:Omit<BreakGlassLease,'expiresAt'|'re
  return {...input,expiresAt:new Date(Date.parse(input.issuedAt)+input.durationMs).toISOString(),reviewedAt:null,revokedAt:null};
 }
 
-const TELEMETRY_ALLOWLIST=new Set(['eventType','state','reasonCode','policyVersion','role','purpose','lifecycle','dataKind','action','outcome','attempt','durationMs']);
-export function redactForGeneralTelemetry(value:Readonly<Record<string,unknown>>):Readonly<Record<string,string|number|boolean|null>>{
- const output:Record<string,string|number|boolean|null>={};
+const TELEMETRY_STRING_VOCABULARY={
+ eventType:['privacy_decision','break_glass_decision','consent_decision','recommendation_execution_decision','retention_decision'],
+ state:['INACTIVE','CONSENT_PENDING','LANGUAGE_SELECTION','ACTIVE','REVOKED','EXPIRED','LEGAL_HOLD','DELETION_PENDING','CONTACTING','AWAITING_RESPONSE','HUMAN_REVIEW','ESCALATED','APPROVED','AUTHORIZED','DENIED','MASKED','FULL','FAILED','IDEMPOTENT','RATE_LIMIT','ANOMALY_REVIEW'],
+ reasonCode:['raw_token_denied','restricted_export_denied','delete_role_denied','authoritative_consent_required','break_glass_orchestration_required','minimum_necessary_denied','policy_allow','purpose_allowed','trusted_clock_unavailable','break_glass_required','idempotency_required','break_glass_authoritative_lease_invalid','break_glass_authorized','break_glass_rate_limited','break_glass_anomaly_review','break_glass_alert_not_durable','break_glass_audit_not_durable','break_glass_lease_invalidated','break_glass_grant_conflict','consent_record_required','consent_record_missing','consent_record_invalid','scope_or_actor_mismatch','role_or_time_denied','lifecycle_denied','immediate_safety_review','review_required'],
+ policyVersion:[PRIVACY_POLICY_VERSION],
+ role:['SYSTEM_WORKER','SAFETY_OPERATOR','SECURITY_REVIEWER','RETENTION_ADMIN','AUDITOR'],
+ purpose:['SAFETY_CONTACT','INCIDENT_TRIAGE','OPERATOR_REVIEW','SECURITY_INVESTIGATION','RETENTION_ADMIN'],
+ lifecycle:['INACTIVE','CONSENT_PENDING','LANGUAGE_SELECTION','ACTIVE','REVOKED','EXPIRED','LEGAL_HOLD','DELETION_PENDING'],
+ dataKind:['SIGNAL','INDICATOR','CONVERSATION_METADATA','CONVERSATION_RAW','EVIDENCE_METADATA','EVIDENCE_RAW','PRECISE_LOCATION','RAW_TOKEN','OPERATOR_VIEW'],
+ action:['READ','MASKED_READ','WRITE','DELETE','EXPORT'],
+ outcome:['ALLOW','DENY','MASKED','FULL','AUTHORIZED','IDEMPOTENT','FAILED','RATE_LIMIT','ANOMALY_REVIEW']
+} as const;
+const TELEMETRY_NUMBER_BOUNDS={attempt:{min:1,max:100},durationMs:{min:0,max:3_600_000}} as const;
+type TelemetryStringKey=keyof typeof TELEMETRY_STRING_VOCABULARY;
+type TelemetryNumberKey=keyof typeof TELEMETRY_NUMBER_BOUNDS;
+const TELEMETRY_ALLOWLIST=new Set<string>([...Object.keys(TELEMETRY_STRING_VOCABULARY),...Object.keys(TELEMETRY_NUMBER_BOUNDS)]);
+
+/**
+ * General telemetry accepts only registered machine codes and bounded integers.
+ * Any malformed allowlisted field drops the whole event so caller-controlled prose
+ * can never survive beside otherwise-valid telemetry fields.
+ */
+export function redactForGeneralTelemetry(value:Readonly<Record<string,unknown>>):Readonly<Record<string,string|number>>{
+ const output:Record<string,string|number>={};
  for(const [key,entry] of Object.entries(value)){
   if(!TELEMETRY_ALLOWLIST.has(key))continue;
-  if(entry===null||typeof entry==='boolean'||typeof entry==='number')output[key]=entry;
-  else if(typeof entry==='string')output[key]=entry.length<=128?entry:'[REDACTED]';
+  if(key in TELEMETRY_STRING_VOCABULARY){
+   const allowed=TELEMETRY_STRING_VOCABULARY[key as TelemetryStringKey] as readonly string[];
+   if(typeof entry!=='string'||!allowed.includes(entry))return Object.freeze({});
+   output[key]=entry;
+   continue;
+  }
+  const bounds=TELEMETRY_NUMBER_BOUNDS[key as TelemetryNumberKey];
+  if(typeof entry!=='number'||!Number.isSafeInteger(entry)||entry<bounds.min||entry>bounds.max)return Object.freeze({});
+  output[key]=entry;
  }
- return output;
+ return Object.freeze(output);
 }
 
 export const THREAT_CONTROL_MATRIX=Object.freeze([
@@ -173,7 +201,7 @@ export const THREAT_CONTROL_MATRIX=Object.freeze([
  {threat:'STALKING_MONITORING_ABUSE',control:'authoritative consent and tenant-case ABAC',test:'fabricated consent and cross-case denial',owner:'Privacy Engineering',residualRisk:'P1'},
  {threat:'ACCOUNT_TAKEOVER',control:'authoritative actor-bound lease lock and finalization revalidation',test:'actor mismatch expiry revocation and mid-flight invalidation denial',owner:'Identity Security',residualRisk:'P1'},
  {threat:'INSIDER_MISUSE',control:'atomic durable alert audit abuse and authoritative lease grant',test:'invented receipt adapter failure and invalidated lease denial',owner:'Security Operations',residualRisk:'P1'},
- {threat:'EVIDENCE_EXFILTRATION',control:'restricted export deny and telemetry allowlist',test:'raw evidence export and nested telemetry denial',owner:'Data Protection',residualRisk:'P1'},
+ {threat:'EVIDENCE_EXFILTRATION',control:'restricted export deny and strict telemetry vocabularies',test:'raw evidence export and telemetry canary rejection',owner:'Data Protection',residualRisk:'P1'},
  {threat:'MODEL_AUTHORITY_ABUSE',control:'authoritative scoped human approval receipt',test:'synthetic approval and proposer self-approval denial',owner:'Responsible AI',residualRisk:'P1'}
 ] as const);
 
