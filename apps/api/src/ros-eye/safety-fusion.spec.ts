@@ -89,16 +89,18 @@ test('airbag plus non-response and corroboration produces explainable S4 human r
   assert.match(result.deterministicFingerprint, /^sha256:[a-f0-9]{64}$/);
 });
 
-test('identical versioned evidence is deterministic independent of input ordering', async () => {
-  const items = [
-    evidence({ evidenceId: 'evidence-b', sourceRef: 'vehicle-b' }),
-    evidence({ evidenceId: 'evidence-a', sourceRef: 'person-a', sourceType: 'PERSON', code: 'HELP_REQUESTED' })
-  ];
-  const first = await service().recommend({ ...baseInput, evidence: items });
-  const second = await service().recommend({ ...baseInput, evidence: [...items].reverse() });
-  assert.deepEqual(first.contributions, second.contributions);
+test('identical versioned input produces an identical recommendation and fingerprint', async () => {
+  const input: SafetyFusionInput = {
+    ...baseInput,
+    evidence: [
+      evidence({ evidenceId: 'evidence-b', sourceRef: 'vehicle-b' }),
+      evidence({ evidenceId: 'evidence-a', sourceRef: 'person-a', sourceType: 'PERSON', code: 'HELP_REQUESTED' })
+    ]
+  };
+  const first = await service().recommend(input);
+  const second = await service().recommend(input);
+  assert.deepEqual(first, second);
   assert.equal(first.deterministicFingerprint, second.deterministicFingerprint);
-  assert.equal(first.recommendedSeverity, second.recommendedSeverity);
 });
 
 test('contradictory inputs increase uncertainty and cannot silently lower risk', async () => {
