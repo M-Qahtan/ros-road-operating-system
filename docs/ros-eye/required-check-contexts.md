@@ -14,3 +14,5 @@ Required contexts:
 8. `operational-readiness`
 
 All eight contexts must be successful on the final candidate head before merge. Evidence v2 must bind the candidate head SHA, candidate base SHA, tested merge SHA, workflow run ID, and attempt.
+
+The final merge attempt must use the same test merge SHA exercised by the successful workflow artifacts; PR metadata must remain unchanged between the final verification and merge attempt.
