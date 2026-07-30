@@ -18,7 +18,7 @@ The receipt is eligible only after the #31 contact runtime has completed consent
 
 Signals, indicators, conversation metadata, evidence metadata and operator views are sensitive. Conversation bodies, evidence payloads, precise location and tokens are restricted. The pure policy evaluator never grants restricted access. Restricted exports remain denied.
 
-General telemetry uses an explicit typed scalar allowlist. Unknown keys, nested objects, arrays, aliases, exceptional-access receipts and unapproved values are discarded before serialization. This same boundary applies to logs, traces, error metadata, snapshots and CI artifact inputs.
+General telemetry uses strict per-field vocabularies for machine codes and bounded safe integers for attempts and durations. Unknown keys and nested aliases are discarded. If any allowlisted field has an unregistered value, free-form text, invalid type, non-finite number, fractional number, negative value or unreasonable bound, the entire telemetry event is dropped before serialization. This same boundary applies to logs, traces, error metadata, snapshots and CI artifact inputs.
 
 ## Deny-by-default access control
 
