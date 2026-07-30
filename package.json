@@ -14,7 +14,8 @@
     "typecheck": "turbo run typecheck",
     "verify": "node scripts/verify-repository.mjs",
     "simulate:riyadh": "pnpm build && node apps/api/dist/e2e/run-riyadh-pilot.js",
-    "simulate:riyadh:failures": "pnpm build && node apps/api/dist/e2e/run-riyadh-failure-modes.js"
+    "simulate:riyadh:failures": "pnpm build && node apps/api/dist/e2e/run-riyadh-failure-modes.js",
+    "evaluate:safety-fusion": "pnpm --filter @ros/api evaluate:safety-fusion"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
