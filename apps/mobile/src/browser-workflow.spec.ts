@@ -65,7 +65,8 @@ test('restart restores consent, queue and status without sensitive free text', a
   assert.equal(restarted.state.session.consent, 'GRANTED');
   assert.equal(restarted.state.pending.length, 1);
   assert.match(html, /دون اتصال/);
-  assert.doesNotMatch(html, /تشخيص|ضمان وصول/);
+  assert.match(html, /لا يتصل حاليًا بالإسعاف أو المرور/);
+  assert.doesNotMatch(html, /تم إرسال الإسعاف|سيصل الإسعاف|تم تشخيص/);
 });
 
 test('large-control and screen-reader oriented semantics exist on the critical path', async () => {
