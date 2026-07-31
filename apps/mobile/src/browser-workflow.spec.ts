@@ -43,7 +43,7 @@ test('offline and reconnect path remains visible and does not lose pending escal
   await flow.companion.respond(['HELP_REQUESTED']);
   let html = renderFieldCompanion(flow.companion.state);
   assert.match(html, /أنت دون اتصال/);
-  assert.match(html, /بياناتك المنظمة محفوظة محليًا/);
+  assert.match(html, /لن تفقد ردودك؛ ستبقى في قائمة محلية/);
   assert.equal(flow.companion.state.pending.length, 1);
   await flow.companion.updateDevice({ network: 'ONLINE' });
   html = renderFieldCompanion(flow.companion.state);
