@@ -10,6 +10,7 @@
     "test": "node --test $(find dist -name '*.spec.js' -print | sort)",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "simulate:riyadh": "pnpm build && node dist/e2e/run-riyadh-pilot.js",
+    "simulate:ros-eye": "pnpm build && node dist/e2e/run-ros-eye-pilot.js",
     "evaluate:safety-fusion": "pnpm build && node dist/e2e/run-safety-fusion-evaluation.js"
   },
   "dependencies": {

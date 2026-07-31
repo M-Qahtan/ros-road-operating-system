@@ -1,0 +1,94 @@
+name: ROS Eye Pilot Readiness
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/e2e/ros-eye-pilot*.ts'
+      - 'apps/api/src/e2e/run-ros-eye-pilot.ts'
+      - 'apps/api/src/ros-eye/**'
+      - 'apps/mobile/**'
+      - 'apps/operations-dashboard/src/human-safety-*.ts'
+      - 'apps/operations-dashboard/public/human-safety.html'
+      - 'packages/contracts/src/**'
+      - 'docs/ros-eye/pilot-readiness.md'
+      - '.github/workflows/ros-eye-pilot-readiness.yml'
+      - 'package.json'
+      - 'apps/api/package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+  TESTED_MERGE_SHA: ${{ github.sha }}
+
+jobs:
+  ros-eye-pilot-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out tested candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Enable package manager
+        run: corepack enable
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run full ROS Eye deterministic pilot simulation
+        run: pnpm simulate:ros-eye
+      - name: Validate SHA-bound pilot evidence and safe authorization boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='artifacts/ros-eye/pilot-readiness'
+          test -s "$root/result.json"
+          test -s "$root/pilot-readiness-report.json"
+          test -s "$root/evidence.json"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const root = 'artifacts/ros-eye/pilot-readiness';
+          const result = JSON.parse(fs.readFileSync(`${root}/result.json`, 'utf8'));
+          const report = JSON.parse(fs.readFileSync(`${root}/pilot-readiness-report.json`, 'utf8'));
+          const evidence = JSON.parse(fs.readFileSync(`${root}/evidence.json`, 'utf8'));
+          const expected = {
+            candidateHeadSha: process.env.CANDIDATE_HEAD_SHA,
+            candidateBaseSha: process.env.CANDIDATE_BASE_SHA,
+            testedMergeSha: process.env.TESTED_MERGE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT)
+          };
+          for (const [key, value] of Object.entries(expected)) {
+            if (evidence[key] !== value) throw new Error(`${key} mismatch`);
+          }
+          if (!result.passed || evidence.passed !== true) throw new Error('pilot scenario did not pass');
+          if (result.readiness?.decision !== 'ENGINEERING_READY_FOR_CONTROLLED_PILOT_PREPARATION') throw new Error('invalid readiness decision');
+          if (evidence.decision !== result.readiness.decision || report.decision !== result.readiness.decision) throw new Error('decision mismatch');
+          if (result.readiness.publicRoadDeploymentAuthorized !== false || result.readiness.realEmergencyIntegrationAuthorized !== false) throw new Error('unsafe authorization claim');
+          if (report.authorizationBoundary?.publicRoadDeploymentAuthorized !== false || report.authorizationBoundary?.realEmergencyIntegrationAuthorized !== false) throw new Error('report authorization boundary invalid');
+          if (!Array.isArray(result.hazards) || result.hazards.length < 14 || result.hazards.some((hazard) => hazard.status !== 'PASS')) throw new Error('hazard safe-state evidence incomplete');
+          if (evidence.hazardCount !== result.hazards.length || evidence.passedHazards !== result.hazards.length) throw new Error('hazard count mismatch');
+          if (!/^sha256:[a-f0-9]{64}$/.test(result.deterministicFingerprint)) throw new Error('deterministic fingerprint invalid');
+          if (!/^sha256:[a-f0-9]{64}$/.test(evidence.resultDigest) || !/^sha256:[a-f0-9]{64}$/.test(evidence.hazardDigest)) throw new Error('evidence digest invalid');
+          const resultDigest = `sha256:${crypto.createHash('sha256').update(JSON.stringify(result)).digest('hex')}`;
+          const hazardDigest = `sha256:${crypto.createHash('sha256').update(JSON.stringify(result.hazards)).digest('hex')}`;
+          if (resultDigest !== evidence.resultDigest || hazardDigest !== evidence.hazardDigest) throw new Error('evidence digest mismatch');
+          const serialized = JSON.stringify({ result, report, evidence });
+          for (const forbidden of ['phoneNumber','medicalNarrative','accessToken','refreshToken','authorizationHeader','patientName','nationalId','rawConversation','preciseLatitude','preciseLongitude']) {
+            if (new RegExp(forbidden, 'i').test(serialized)) throw new Error(`forbidden field in evidence: ${forbidden}`);
+          }
+          NODE
+      - name: Upload ROS Eye pilot-readiness evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ros-eye-pilot-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ros-eye/pilot-readiness/
+          if-no-files-found: error
+          retention-days: 365
