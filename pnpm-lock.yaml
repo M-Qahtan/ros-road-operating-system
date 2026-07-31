@@ -31,7 +31,15 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
-  apps/mobile: {}
+  apps/mobile:
+    dependencies:
+      '@ros/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   apps/operations-dashboard:
     dependencies:
@@ -60,12 +68,12 @@ importers:
 packages:
 
   '@turbo/darwin-64@2.10.6':
-    resolution: {integrity: sha512-S+yIyZkmjYBQbIM7sTqMAwnLeMjSK60Q9grUDPbTWvkRjbsn5k1Rt5sPvTX80M4PnlYQBwLiYsjlu6tHsuIqQQ==}
+    resolution: {integrity: sha512-S+yIyZkmjYBQbIM7sTqMAwnLeMjXk1Rt5sPvTX80M4PnlYQBwLiYsjlu6tHsuIqQQ==}
     cpu: [x64]
     os: [darwin]
 
   '@turbo/darwin-arm64@2.10.6':
-    resolution: {integrity: sha512-gnS8G78EjvJzDc1+tFES5BYXdlF+292n+h57G9G+5LJYelRh195f4Ed22RCo4EFIbI4Du9S5xfE9YjrqhoZaxQ==}
+    resolution: {integrity: sha512-gnS8G78EjvJzDc1+tFES5BYXdlF+292n+h57G9G+5LJYelRh195f4Ed22RSo4EFIbI4Du9S5xfE9YjrqhoZaxQ==}
     cpu: [arm64]
     os: [darwin]
 
