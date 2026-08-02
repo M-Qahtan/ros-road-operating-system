@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.10.0"
+  required_version = "= 1.15.8"
 
   backend "s3" {}
 
@@ -12,7 +12,8 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region              = var.aws_region
+  allowed_account_ids = [var.expected_aws_account_id]
 
   default_tags {
     tags = merge(var.tags, {

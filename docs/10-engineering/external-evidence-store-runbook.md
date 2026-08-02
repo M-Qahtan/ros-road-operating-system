@@ -29,35 +29,68 @@ No lifecycle deletion rule is configured. The compliance lock is the minimum per
 ## Prerequisites
 
 - An AWS account approved for ROS program evidence and data residency.
-- Terraform 1.10 or later and AWS provider credentials with permission to create S3, KMS, IAM OIDC/roles, and CloudTrail resources.
+- Terraform exactly `1.15.8` and AWS provider credentials with permission to create S3, KMS, IAM OIDC/roles, and CloudTrail resources.
 - A protected `main` branch. The AWS trust is bound to repository ID `1310606342`, owner ID `125224479`, `refs/heads/main`, and workflow `Archive CI Evidence`.
-- An organization-managed encrypted and locked Terraform backend. Do not store production Terraform state in this public repository.
+- An organization-managed encrypted and locked Terraform backend. Its partial configuration must restrict `allowed_account_ids` to the approved 12-digit AWS account. Do not store production Terraform state in this public repository.
+- The backend principal needs `s3:GetObject` and `s3:PutObject` only on the selected state key, plus `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on the matching `<key>.tflock`. It must not receive broad bucket write/delete access.
 - GitHub CLI authenticated as a repository administrator for setting non-secret repository variables and dispatching the proof run.
 
 Compliance mode is intentionally irreversible during an object's retention period. Test names and account/region choices before `terraform apply`; deleting the AWS account is the only early removal path documented by AWS for a compliance-locked version.
 
-## 1. Provision AWS resources
+## 1. Initialize and produce the reviewed plan
 
 From `infrastructure/evidence-store/aws`, copy `backend.hcl.example` outside the repository and point it to a pre-existing, versioned, KMS-encrypted, non-public Terraform state bucket with native S3 lockfiles:
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
-terraform init -backend-config=/secure/path/ros-evidence-backend.hcl
+terraform init -backend-config=/secure/path/ros-evidence-backend.hcl -input=false -lockfile=readonly
 terraform fmt -check
 terraform validate
-terraform plan -out=rel-013.tfplan
-terraform apply rel-013.tfplan
+terraform plan -input=false -lock-timeout=5m -out=rel-013.tfplan
+terraform show -no-color rel-013.tfplan
+sha256sum rel-013.tfplan
 ```
-
-Review and commit the generated `.terraform.lock.hcl` so provider versions and checksums are fixed before the production apply. Never commit `terraform.tfstate`, plan files, backend credentials, or a populated `terraform.tfvars` containing account-specific data.
 
 Choose a globally unique lowercase `evidence_bucket_name`. If the AWS account already has the GitHub Actions OIDC provider, set `create_github_oidc_provider = false` and provide its exact ARN instead of attempting to create a duplicate.
 
 When this root creates the OIDC provider, the AWS provider omits a manually pinned certificate thumbprint so IAM retrieves the trusted top-intermediate CA. Do not reintroduce a leaf-certificate thumbprint that would rotate independently of this configuration.
 
-Review the plan for exactly two Object-Locked buckets, one KMS key, one append-only GitHub role, one unattached read-only verifier policy, and one CloudTrail trail. Reject a plan that includes bucket/key destruction, public access, governance mode, retention below 365, static IAM credentials, or wildcard write access. Attach `independent_verifier_policy_arn` only to a separately governed release/safety reviewer role, preferably through IAM Identity Center.
+The committed `.terraform.lock.hcl` pins the signed AWS provider for both `linux_amd64` CI and the founder's `windows_amd64` workstation. `-lockfile=readonly` makes initialization fail instead of silently changing that reviewed dependency selection. When a provider upgrade is intentionally approved, regenerate and review the lock file explicitly:
 
-## 2. Configure GitHub repository variables
+```bash
+terraform providers lock -platform=linux_amd64 -platform=windows_amd64
+git diff -- .terraform.lock.hcl
+```
+
+Review the saved plan and record its lowercase SHA-256 in the controlled approval record. Never commit `terraform.tfstate`, plan files, backend credentials, a plan transcript containing account identifiers, or a populated `terraform.tfvars` containing account-specific data.
+
+For the first empty state, expect exactly `22 to add, 0 to change, 0 to destroy` when Terraform creates the GitHub OIDC provider, or `21 to add, 0 to change, 0 to destroy` when an existing provider ARN is supplied. Review the plan for exactly two Object-Locked buckets, one KMS key, one append-only GitHub role, one unattached read-only verifier policy, and one CloudTrail trail. Reject any unexpected count, update, deletion, replacement, bucket/key destruction, public access, governance mode, retention below 365, static IAM credentials, or wildcard write access. Attach `independent_verifier_policy_arn` only to a separately governed release/safety reviewer role, preferably through IAM Identity Center.
+
+Do not run `apply` until the founder and the infrastructure/security reviewer approve the exact saved-plan SHA-256.
+
+## 2. Apply the approved saved plan
+
+Apply only the unchanged plan whose SHA-256 was approved. Recompute the digest immediately before `apply` and fail closed on any mismatch:
+
+```bash
+approved_plan_sha256="replace-with-approved-lowercase-sha256"
+actual_plan_sha256="$(sha256sum rel-013.tfplan | cut -d ' ' -f 1)"
+test "$actual_plan_sha256" = "$approved_plan_sha256"
+terraform apply -input=false rel-013.tfplan
+```
+
+PowerShell equivalent:
+
+```powershell
+$approvedPlanSha256 = "replace-with-approved-lowercase-sha256"
+$actualPlanSha256 = (Get-FileHash -LiteralPath ".\rel-013.tfplan" -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actualPlanSha256 -ne $approvedPlanSha256) {
+  throw "Saved Terraform plan digest does not match the approved SHA-256"
+}
+terraform apply -input=false ".\rel-013.tfplan"
+```
+
+## 3. Configure GitHub repository variables
 
 The workflow uses repository variables, not secrets, because all values are identifiers and OIDC supplies temporary credentials. From the Terraform directory:
 
@@ -82,7 +115,7 @@ gh variable set ROS_EVIDENCE_BUCKET --body $evidence.ROS_EVIDENCE_BUCKET
 gh variable set ROS_EVIDENCE_KMS_KEY_ARN --body $evidence.ROS_EVIDENCE_KMS_KEY_ARN
 ```
 
-## 3. Run the live proof
+## 4. Run the live proof
 
 After the archiver exists on `main`, select a completed same-repository CI or readiness run with artifacts and dispatch:
 
@@ -95,7 +128,7 @@ gh run watch --exit-status
 
 The job must publish a summary containing the source SHA, artifact count, receipt key, receipt version ID, and immutable-through timestamp. Capture the archive workflow run URL in the WP-00 evidence manifest.
 
-## 4. Independently verify AWS state
+## 5. Independently verify AWS state
 
 Use the bucket, receipt key, and receipt version ID from the successful workflow summary:
 

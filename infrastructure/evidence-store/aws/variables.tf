@@ -9,6 +9,16 @@ variable "aws_region" {
   }
 }
 
+variable "expected_aws_account_id" {
+  description = "Exact approved AWS account ID; provider operations fail closed in every other account."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.expected_aws_account_id))
+    error_message = "expected_aws_account_id must be exactly 12 decimal digits."
+  }
+}
+
 variable "evidence_bucket_name" {
   description = "Globally unique S3 bucket name for immutable ROS evidence."
   type        = string

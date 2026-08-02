@@ -138,7 +138,7 @@ jobs:
           {
             terraform version
             terraform -chdir=infrastructure/evidence-store/aws fmt -check -recursive
-            terraform -chdir=infrastructure/evidence-store/aws init -backend=false -input=false -no-color
+            terraform -chdir=infrastructure/evidence-store/aws init -backend=false -input=false -no-color -lockfile=readonly
             terraform -chdir=infrastructure/evidence-store/aws validate -no-color
           } 2>&1 | tee terraform-evidence.log
       - name: Write Terraform evidence manifest

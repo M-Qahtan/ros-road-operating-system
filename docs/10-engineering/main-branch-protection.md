@@ -4,18 +4,21 @@ This document defines the minimum merge controls for `main` in the ROS repositor
 
 ## Required workflow triggers
 
-The `CI` and `Security` workflows must run on every pull request and every push to `main`.
+The `CI`, `Security`, `Riyadh Failure-Mode Safety`, and `Operational Readiness` workflows must run on every pull request and every push to `main`.
 
 ## Required checks
 
 The `main` ruleset requires these GitHub Actions checks:
 
 1. `verify`
-2. `postgres-integration`
-3. `staging-smoke`
-4. `riyadh-e2e`
-5. `dependency-review`
-6. `repository-security`
+2. `terraform-evidence`
+3. `postgres-integration`
+4. `staging-smoke`
+5. `riyadh-e2e`
+6. `dependency-review`
+7. `repository-security`
+8. `riyadh-failure-modes`
+9. `operational-readiness`
 
 A missing, skipped, cancelled, stale, or failed required check blocks merge.
 

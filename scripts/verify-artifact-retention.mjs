@@ -15,6 +15,9 @@ const receiptSchema = JSON.parse(
 );
 const runbook = await readFile('docs/10-engineering/external-evidence-store-runbook.md', 'utf8');
 const gitignore = await readFile('.gitignore', 'utf8');
+const requiredChecks = (await readFile('docs/10-engineering/required-checks.txt', 'utf8'))
+  .split(/\r?\n/u)
+  .filter(Boolean);
 
 if (receiptSchema?.properties?.schema?.const !== 'ros-external-evidence/v1'
     || receiptSchema?.properties?.archive?.properties?.object_lock_mode?.const !== 'COMPLIANCE'
@@ -23,6 +26,21 @@ if (receiptSchema?.properties?.schema?.const !== 'ros-external-evidence/v1'
 }
 if (!runbook.includes('## REL-013 live acceptance record') || !runbook.includes('independent')) {
   throw new Error('external evidence runbook is missing live or independent acceptance controls');
+}
+for (const check of [
+  'verify',
+  'terraform-evidence',
+  'postgres-integration',
+  'staging-smoke',
+  'riyadh-e2e',
+  'dependency-review',
+  'repository-security',
+  'riyadh-failure-modes',
+  'operational-readiness'
+]) {
+  if (!requiredChecks.includes(check)) {
+    throw new Error(`canonical main ruleset is missing required check: ${check}`);
+  }
 }
 for (const ignored of ['**/.terraform/*', '*.tfstate', '*.tfvars', '*.tfplan', 'backend.hcl']) {
   if (!gitignore.split(/\r?\n/u).includes(ignored)) {
@@ -94,15 +112,36 @@ const terraformSource = (
 ).join('\n');
 const terraformExample = await readFile(join(terraformDirectory, 'terraform.tfvars.example'), 'utf8');
 const backendExample = await readFile(join(terraformDirectory, 'backend.hcl.example'), 'utf8');
+const dependencyLock = await readFile(join(terraformDirectory, '.terraform.lock.hcl'), 'utf8');
+const ciSource = await readFile(join(workflowDirectory, 'ci.yml'), 'utf8');
 if (!/aws_region\s*=\s*"me-central-1"/u.test(terraformExample)
+    || !/expected_aws_account_id\s*=\s*"[0-9]{12}"/u.test(terraformExample)
     || !/retention_days\s*=\s*365/u.test(terraformExample)) {
-  throw new Error('Terraform example does not preserve the approved Riyadh/365-day defaults');
+  throw new Error('Terraform example does not preserve the approved account/Riyadh/365-day defaults');
 }
 if (!/backend\s+"s3"/u.test(terraformSource)
     || !/encrypt\s*=\s*true/u.test(backendExample)
     || !/use_lockfile\s*=\s*true/u.test(backendExample)
-    || !/kms_key_id\s*=/u.test(backendExample)) {
+    || !/kms_key_id\s*=/u.test(backendExample)
+    || !/allowed_account_ids\s*=\s*\["[0-9]{12}"\]/u.test(backendExample)) {
   throw new Error('Terraform remote state is not configured for encrypted S3 locking');
+}
+if (!/required_version\s*=\s*"= 1\.15\.8"/u.test(terraformSource)
+    || !/allowed_account_ids\s*=\s*\[var\.expected_aws_account_id\]/u.test(terraformSource)) {
+  throw new Error('Terraform execution is not pinned to the approved CLI and AWS account');
+}
+const providerHashes = dependencyLock.match(/^\s*"(?:h1|zh):[^\n]+"/gmu) ?? [];
+const platformHashes = dependencyLock.match(/^\s*"h1:[^\n]+"/gmu) ?? [];
+if (!/provider\s+"registry\.terraform\.io\/hashicorp\/aws"/u.test(dependencyLock)
+    || !/version\s*=\s*"6\.57\.1"/u.test(dependencyLock)
+    || !/constraints\s*=\s*"~> 6\.0"/u.test(dependencyLock)
+    || platformHashes.length !== 2
+    || providerHashes.length < 18) {
+  throw new Error('Terraform dependency lock does not preserve the reviewed Linux/Windows AWS provider selection');
+}
+if (!/terraform_version:\s*1\.15\.8/u.test(ciSource)
+    || !/terraform\s+-chdir=infrastructure\/evidence-store\/aws\s+init[^\n]*-lockfile=readonly/u.test(ciSource)) {
+  throw new Error('Terraform CI does not enforce the reviewed CLI and read-only dependency lock');
 }
 
 const complianceModeCount = (terraformSource.match(/mode\s*=\s*"COMPLIANCE"/gu) ?? []).length;

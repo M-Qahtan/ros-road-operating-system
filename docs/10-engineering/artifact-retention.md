@@ -11,7 +11,7 @@ The authoritative archive requires:
 - customer-managed KMS encryption and SHA-256 checksum verification;
 - no public access and TLS 1.2 or later;
 - GitHub OIDC with no long-lived AWS credentials;
-- an append-only role with no delete, retention mutation, or bypass permissions;
+- an append-only role with no delete, retention shortening, or bypass permissions; its only retention mutation is `s3:PutObjectRetention` to set or extend `COMPLIANCE` retention on evidence it can write;
 - a WORM receipt binding source SHA/run/artifact IDs to digest, object key, version, KMS key, and retain-until time;
 - CloudTrail data-event audit logs in a separate immutable bucket.
 
