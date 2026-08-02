@@ -38,7 +38,8 @@ const requiredKeys = [
   'candidate_base_sha',
   'tested_merge_sha',
   'run_id',
-  'run_attempt'
+  'run_attempt',
+  'retention_days'
 ];
 
 const actualKeys = Object.keys(manifest).sort();
@@ -63,6 +64,9 @@ for (const key of ['candidate_head_sha', 'candidate_base_sha', 'tested_merge_sha
 if (!/^[0-9]+$/.test(manifest.run_id) || !/^[0-9]+$/.test(manifest.run_attempt)) {
   fail('run_id and run_attempt must be decimal strings');
 }
+if (!/^[0-9]+$/.test(manifest.retention_days) || Number(manifest.retention_days) < 365) {
+  fail('retention_days must be a decimal string of at least 365');
+}
 
 const expected = {
   schema: process.env.CI_EVIDENCE_SCHEMA,
@@ -75,7 +79,8 @@ const expected = {
   candidate_base_sha: process.env.CANDIDATE_BASE_SHA,
   tested_merge_sha: process.env.TESTED_MERGE_SHA,
   run_id: process.env.GITHUB_RUN_ID,
-  run_attempt: process.env.GITHUB_RUN_ATTEMPT
+  run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+  retention_days: process.env.CI_EVIDENCE_RETENTION_DAYS
 };
 
 for (const [key, expectedValue] of Object.entries(expected)) {

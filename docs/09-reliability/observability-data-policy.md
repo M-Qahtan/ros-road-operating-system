@@ -33,7 +33,7 @@ Telemetry fields follow an allow-list. Unknown fields are rejected or redacted b
 ## Retention
 
 - routine application telemetry: 30 days unless a shorter approved period applies;
-- security and release evidence: 90 days minimum;
+- security and release evidence: 365 days minimum;
 - final release decisions: 365 days;
 - incident evidence: retained according to legal hold, safety, privacy, and governmental requirements.
 

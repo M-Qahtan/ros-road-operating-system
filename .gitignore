@@ -14,3 +14,14 @@ coverage/
 .next/
 *.tsbuildinfo
 storage/
+.terraform/
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+backend.hcl
+*.backend.hcl
+crash.log
+crash.*.log

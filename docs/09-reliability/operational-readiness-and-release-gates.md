@@ -14,6 +14,8 @@ A release candidate is acceptable only when all mandatory gates complete with th
 6. Security dependency audit, tracked-file secret scanning, immutable action pins, and CycloneDX SBOM evidence.
 7. Final operational-readiness decision tied to the candidate and tested merge SHAs.
 8. Active `main` ruleset enforcement with no routine bypass.
+9. A successful external evidence receipt for every release-relevant source run, with verified KMS encryption, S3 version ID, SHA-256, `COMPLIANCE` Object Lock, and effective retention of at least 365 days.
+10. Terraform formatting, backend-disabled initialization, and provider-backed validation for the external evidence root; live plan/apply approval remains a separate gate.
 
 ## Non-authorized capabilities
 
@@ -37,6 +39,7 @@ Release is blocked when:
 - liveness is lost during a controlled dependency fault without an approved architecture reason;
 - recovery cannot be demonstrated;
 - evidence is absent, empty, malformed, stale, or associated with another commit;
+- the external archive receipt is absent, points to another source run/SHA, lacks a version ID, or fails KMS/checksum/Object-Lock/retention verification;
 - security, privacy, audit, or human-authority boundaries are weakened;
 - a required conversation or material review finding remains unresolved.
 

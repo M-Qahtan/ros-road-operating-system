@@ -15,6 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -71,9 +72,10 @@ jobs:
           if (!/^sha256:[a-f0-9]{64}$/.test(evidence.resultsDigest)) throw new Error('results digest invalid');
           NODE
       - name: Upload safety-fusion evidence
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: safety-fusion-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/ros-eye/
           if-no-files-found: error
-          retention-days: 365
+          retention-days: 90
