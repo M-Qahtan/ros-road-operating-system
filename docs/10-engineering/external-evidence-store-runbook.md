@@ -17,12 +17,12 @@ REL-013 is closed only after all live acceptance checks in this runbook pass. A 
 | Public exposure | All four S3 public-access controls enabled; bucket policy must report non-public |
 | Transport | TLS required; versions below TLS 1.2 denied |
 | Workload identity | GitHub OIDC; no long-lived AWS access keys |
-| Least privilege | GitHub role can append, verify, and set/extend `COMPLIANCE` retention only under `evidence/github/1310606342/*`; bucket policy rejects retention below 365 days, and the role has no delete or governance-bypass rights |
+| Least privilege | GitHub role can append, verify, and set/extend `COMPLIANCE` retention only under `evidence/github/1310606342/*`; bucket policy rejects retention below 365 days, and the role has no delete or governance-bypass rights; KMS use is restricted to S3 in the approved account and evidence-bucket encryption context |
 | Provenance | Same-repository completed run, immutable repository ID, source SHA, workflow/run/attempt, artifact ID, SHA-256, KMS key, object key, and version ID |
 | Audit | Multi-region CloudTrail S3 data events with digest validation, delivered to a separate KMS-encrypted Object-Locked audit bucket |
 | Terraform safety | Evidence bucket, audit bucket, and KMS key use `prevent_destroy`; S3 `force_destroy` is false |
 
-The privileged workflow is triggered through `workflow_run` and checks out `main` explicitly. It downloads source artifacts as opaque ZIP bytes and never extracts or executes pull-request content. Fork runs are rejected before AWS archival.
+The privileged workflow is triggered through `workflow_run` and checks out the trusted `main` event SHA explicitly. It downloads source artifacts as opaque ZIP bytes and never extracts or executes pull-request content. Fork runs are rejected before AWS archival.
 
 No lifecycle deletion rule is configured. The compliance lock is the minimum period during which deletion is technically impossible; reaching day 365 does not automatically delete evidence. Any later disposal requires a separately approved records-management decision.
 

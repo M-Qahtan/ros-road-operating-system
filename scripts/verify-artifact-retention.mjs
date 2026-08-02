@@ -62,8 +62,9 @@ if (!/^\s*actions:\s*read\s*$/mu.test(archiveSource)
 if (!/uses:\s*aws-actions\/configure-aws-credentials@[0-9a-f]{40}/u.test(archiveSource)) {
   throw new Error('AWS credential action is not pinned to a full commit SHA');
 }
-if (!/ref:\s*main\s*$/mu.test(archiveSource) || /workflow_run\.head_sha/u.test(archiveSource)) {
-  throw new Error('archive workflow must check out trusted main, never source-run code');
+if (!/ref:\s*\$\{\{\s*github\.sha\s*\}\}\s*$/mu.test(archiveSource)
+    || /workflow_run\.head_sha/u.test(archiveSource)) {
+  throw new Error('archive workflow must check out the triggering trusted-main SHA, never source-run code');
 }
 if (!/node scripts\/archive-github-evidence\.mjs/u.test(archiveSource)) {
   throw new Error('archive workflow does not execute the verified ROS archiver');
@@ -157,7 +158,10 @@ for (const [label, pattern] of [
   ['workflow OIDC condition', /token\.actions\.githubusercontent\.com:workflow/u],
   ['append-only evidence prefix', /evidence\/github\/\$\{var\.repository_id\}/u],
   ['object retention permission', /"s3:PutObjectRetention"/u],
-  ['minimum-retention bucket denial', /s3:object-lock-remaining-retention-days/u]
+  ['minimum-retention bucket denial', /s3:object-lock-remaining-retention-days/u],
+  ['KMS S3 service boundary', /kms:ViaService/u],
+  ['KMS caller-account boundary', /kms:CallerAccount/u],
+  ['KMS evidence-bucket context', /kms:EncryptionContext:aws:s3:arn/u]
 ]) {
   if (!pattern.test(terraformSource)) throw new Error(`external evidence Terraform is missing ${label}`);
 }

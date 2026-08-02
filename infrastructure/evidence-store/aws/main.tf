@@ -569,11 +569,27 @@ data "aws_iam_policy_document" "archive" {
     effect = "Allow"
     actions = [
       "kms:Decrypt",
-      "kms:DescribeKey",
-      "kms:Encrypt",
       "kms:GenerateDataKey"
     ]
     resources = [aws_kms_key.evidence.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["s3.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:CallerAccount"
+      values   = [var.expected_aws_account_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:s3:arn"
+      values   = [aws_s3_bucket.evidence.arn]
+    }
   }
 }
 
