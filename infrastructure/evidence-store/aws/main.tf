@@ -328,8 +328,8 @@ data "aws_iam_policy_document" "evidence_bucket" {
   }
 
   statement {
-    sid       = "DenyRetentionBelowMinimum"
-    effect    = "Deny"
+    sid    = "DenyRetentionBelowMinimum"
+    effect = "Deny"
     actions = [
       "s3:PutObject",
       "s3:PutObjectRetention"

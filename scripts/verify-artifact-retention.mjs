@@ -140,7 +140,8 @@ if (/s3:(DeleteObject|DeleteObjectVersion|BypassGovernanceRetention)/u.test(arch
 if (!/actions\s*=\s*\[[\s\S]*?"s3:PutObjectRetention"[\s\S]*?\]/u.test(archivePolicy)) {
   throw new Error('GitHub archive role cannot apply the explicit Object Lock retention required by PutObject');
 }
-const minimumRetentionStatementStart = terraformSource.indexOf('sid       = "DenyRetentionBelowMinimum"');
+const minimumRetentionSid = /sid\s*=\s*"DenyRetentionBelowMinimum"/u.exec(terraformSource);
+const minimumRetentionStatementStart = minimumRetentionSid?.index ?? -1;
 const minimumRetentionStatementEnd = terraformSource.indexOf(
   'resource "aws_s3_bucket_policy" "evidence"',
   minimumRetentionStatementStart
