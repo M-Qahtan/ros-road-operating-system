@@ -1,6 +1,9 @@
 verify
+terraform-evidence
 postgres-integration
 staging-smoke
 riyadh-e2e
 dependency-review
 repository-security
+riyadh-failure-modes
+operational-readiness

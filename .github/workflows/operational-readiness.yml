@@ -11,10 +11,12 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
 
 env:
-  CI_EVIDENCE_SCHEMA: ros-ci-evidence/v2
+  CI_EVIDENCE_SCHEMA: ros-ci-evidence/v3
+  CI_EVIDENCE_RETENTION_DAYS: '365'
   CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   CANDIDATE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
   TESTED_MERGE_SHA: ${{ github.sha }}
@@ -56,13 +58,15 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
           test -s operational-build.log
           node scripts/validate-ci-evidence.mjs operational-verify-evidence.json verify
       - name: Upload verification evidence
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: operational-verify-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -132,7 +136,8 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
           test -s artifacts/reliability/postgres-restore.log
@@ -140,6 +145,7 @@ jobs:
           node scripts/validate-ci-evidence.mjs operational-postgres-evidence.json postgres-integration
       - name: Upload PostgreSQL recovery evidence
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: operational-postgres-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -215,7 +221,8 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
           test -s artifacts/reliability/fault-injection.json
@@ -223,6 +230,7 @@ jobs:
           node scripts/validate-ci-evidence.mjs operational-staging-evidence.json staging-smoke
       - name: Upload staging fault evidence
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: operational-staging-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -271,7 +279,8 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
           test -s operational-riyadh-result.json
@@ -279,6 +288,7 @@ jobs:
           node scripts/validate-ci-evidence.mjs operational-riyadh-evidence.json riyadh-e2e
       - name: Upload Riyadh evidence
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: operational-riyadh-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -331,13 +341,15 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
           test -s artifacts/reliability/operational-readiness.json
           node scripts/validate-ci-evidence.mjs operational-readiness-evidence.json operational-readiness
       - name: Upload readiness decision
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: operational-readiness-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -345,4 +357,4 @@ jobs:
             artifacts/reliability/operational-readiness.json
             operational-readiness-evidence.json
           if-no-files-found: error
-          retention-days: 365
+          retention-days: 90

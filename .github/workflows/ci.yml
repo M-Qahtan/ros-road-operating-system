@@ -10,10 +10,12 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
 
 env:
-  CI_EVIDENCE_SCHEMA: ros-ci-evidence/v2
+  CI_EVIDENCE_SCHEMA: ros-ci-evidence/v3
+  CI_EVIDENCE_RETENTION_DAYS: '365'
   CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   CANDIDATE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
   TESTED_MERGE_SHA: ${{ github.sha }}
@@ -50,7 +52,8 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
           node scripts/validate-ci-evidence.mjs validator-valid.json verify
@@ -87,7 +90,8 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
       - name: Validate verification evidence
@@ -99,6 +103,7 @@ jobs:
           node scripts/validate-ci-evidence.mjs verify-evidence.json verify
       - name: Upload verification evidence
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: verify-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -106,7 +111,74 @@ jobs:
             build.log
             verify-evidence.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
+
+  terraform-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+      - name: Validate external evidence Terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          {
+            terraform version
+            terraform -chdir=infrastructure/evidence-store/aws fmt -check -recursive
+            terraform -chdir=infrastructure/evidence-store/aws init -backend=false -input=false -no-color -lockfile=readonly
+            terraform -chdir=infrastructure/evidence-store/aws validate -no-color
+          } 2>&1 | tee terraform-evidence.log
+      - name: Write Terraform evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          cat > terraform-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "terraform-evidence",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "candidate_head_sha": "${CANDIDATE_HEAD_SHA}",
+            "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
+            "tested_merge_sha": "${TESTED_MERGE_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
+          }
+          EOF
+      - name: Validate Terraform evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s terraform-evidence.log
+          node scripts/validate-ci-evidence.mjs terraform-evidence.json terraform-evidence
+      - name: Upload Terraform evidence
+        if: always()
+        id: upload-evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: terraform-evidence-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            terraform-evidence.log
+            terraform-evidence.json
+          if-no-files-found: error
+          retention-days: 90
 
   postgres-integration:
     runs-on: ubuntu-latest
@@ -165,7 +237,8 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
       - name: Validate PostgreSQL evidence
@@ -177,6 +250,7 @@ jobs:
           node scripts/validate-ci-evidence.mjs postgres-integration-evidence.json postgres-integration
       - name: Upload PostgreSQL evidence
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: postgres-integration-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -184,7 +258,7 @@ jobs:
             postgres-restore.log
             postgres-integration-evidence.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
   staging-smoke:
     runs-on: ubuntu-latest
@@ -255,7 +329,8 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
       - name: Validate staging smoke evidence
@@ -268,6 +343,7 @@ jobs:
           node scripts/validate-ci-evidence.mjs staging-smoke-evidence.json staging-smoke
       - name: Upload staging smoke evidence
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: staging-smoke-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -276,7 +352,7 @@ jobs:
             staging-compose.log
             staging-smoke-evidence.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
       - if: always()
         run: docker compose -f infrastructure/docker/docker-compose.yml down -v
 
@@ -316,7 +392,8 @@ jobs:
             "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
             "tested_merge_sha": "${TESTED_MERGE_SHA}",
             "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
           }
           EOF
       - name: Validate Riyadh E2E evidence package
@@ -330,6 +407,7 @@ jobs:
           node scripts/validate-ci-evidence.mjs riyadh-e2e-evidence.json riyadh-e2e
       - name: Upload Riyadh E2E evidence package
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: riyadh-e2e-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -339,4 +417,4 @@ jobs:
             docs/08-pilot-riyadh/pilot-e2e-readiness.md
             riyadh-e2e-evidence.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90

@@ -7,6 +7,7 @@
 ## Current foundation checks
 
 - `verify`
+- `terraform-evidence`
 - `postgres-integration`
 - `staging-smoke`
 - `riyadh-e2e`
@@ -15,7 +16,7 @@
 - `riyadh-failure-modes`
 - `operational-readiness`
 
-The final two checks are added to the ruleset after their workflows are merged and have produced successful `main` runs.
+All nine checks are canonical and must be present in the active `main` ruleset. A documented check name without matching live ruleset enforcement is not sufficient.
 
 ## Blocking semantics
 

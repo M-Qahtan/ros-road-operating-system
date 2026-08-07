@@ -12,7 +12,7 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "verify": "node scripts/verify-repository.mjs",
+    "verify": "node scripts/verify-repository.mjs && node --check scripts/archive-github-evidence.mjs && node --test scripts/external-evidence.spec.mjs && node scripts/verify-artifact-retention.mjs && bash scripts/verify-gate-negatives.sh",
     "simulate:riyadh": "pnpm build && node apps/api/dist/e2e/run-riyadh-pilot.js",
     "simulate:riyadh:failures": "pnpm build && node apps/api/dist/e2e/run-riyadh-failure-modes.js",
     "simulate:ros-eye": "pnpm build && node apps/api/dist/e2e/run-ros-eye-pilot.js",
