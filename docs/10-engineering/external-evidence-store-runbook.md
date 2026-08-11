@@ -18,11 +18,11 @@ REL-013 is closed only after all live acceptance checks in this runbook pass. A 
 | Transport | TLS required; versions below TLS 1.2 denied |
 | Workload identity | GitHub OIDC; no long-lived AWS access keys |
 | Least privilege | GitHub role can append, verify, and set/extend `COMPLIANCE` retention only under `evidence/github/1310606342/*`; bucket policy rejects retention below 365 days, and the role has no delete or governance-bypass rights; KMS use is restricted to S3 in the approved account and evidence-bucket encryption context |
-| Provenance | Same-repository completed run, immutable repository ID, source SHA, workflow/run/attempt, artifact ID, SHA-256, KMS key, object key, and version ID |
+| Provenance | Same-repository successful run, immutable repository ID, source SHA, workflow/run/attempt, artifact ID, SHA-256, KMS key, object key, and version ID |
 | Audit | Multi-region CloudTrail S3 data events with digest validation, delivered to a separate KMS-encrypted Object-Locked audit bucket |
 | Terraform safety | Evidence bucket, audit bucket, and KMS key use `prevent_destroy`; S3 `force_destroy` is false |
 
-The privileged workflow is triggered through `workflow_run` and checks out the trusted `main` event SHA explicitly. It downloads source artifacts as opaque ZIP bytes and never extracts or executes pull-request content. Fork runs are rejected before AWS archival.
+The privileged workflow is triggered only through `workflow_run` and checks out the trusted `main` event SHA explicitly. It downloads source artifacts as opaque ZIP bytes and never extracts or executes pull-request content. Fork runs and source runs that do not conclude `success` are rejected before AWS archival.
 
 No lifecycle deletion rule is configured. The compliance lock is the minimum period during which deletion is technically impossible; reaching day 365 does not automatically delete evidence. Any later disposal requires a separately approved records-management decision.
 
@@ -33,7 +33,7 @@ No lifecycle deletion rule is configured. The compliance lock is the minimum per
 - A protected `main` branch. The AWS trust is bound to repository ID `1310606342`, owner ID `125224479`, `refs/heads/main`, and workflow `Archive CI Evidence`.
 - An organization-managed encrypted and locked Terraform backend. Its partial configuration must restrict `allowed_account_ids` to the approved 12-digit AWS account. Do not store production Terraform state in this public repository.
 - The backend principal needs `s3:GetObject` and `s3:PutObject` only on the selected state key, plus `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on the matching `<key>.tflock`. It must not receive broad bucket write/delete access.
-- GitHub CLI authenticated as a repository administrator for setting non-secret repository variables and dispatching the proof run.
+- GitHub CLI authenticated as a repository administrator for setting non-secret repository variables and, when a controlled first proof is needed, dispatching an eligible source workflow on `main` and observing the automatically triggered archive run.
 
 Compliance mode is intentionally irreversible during an object's retention period. Test names and account/region choices before `terraform apply`; deleting the AWS account is the only early removal path documented by AWS for a compliance-locked version.
 
@@ -117,16 +117,25 @@ gh variable set ROS_EVIDENCE_KMS_KEY_ARN --body $evidence.ROS_EVIDENCE_KMS_KEY_A
 
 ## 4. Run the live proof
 
-After the archiver exists on `main`, select a completed same-repository CI or readiness run with artifacts and dispatch:
+After the archiver exists on `main` and the repository variables are configured, produce or select a **successful same-repository subscribed source workflow run on `main`**. Do not dispatch `Archive CI Evidence` directly; it intentionally has no `workflow_dispatch` entry. The privileged archive must be started only by GitHub's `workflow_run` event after an eligible source workflow concludes successfully.
+
+For a controlled first proof, `ROS Eye Pilot Readiness` is an eligible subscribed source workflow and supports manual dispatch on `main`:
 
 ```bash
-gh workflow run archive-ci-evidence.yml -f source_run_id=REPLACE_WITH_RUN_ID
-gh run watch --exit-status
+gh workflow run ros-eye-pilot-readiness.yml --ref main
+gh run list --workflow "ROS Eye Pilot Readiness" --branch main --limit 5
+# Record the successful SOURCE_RUN_ID from the list, then:
+gh run watch SOURCE_RUN_ID --exit-status
+
+gh run list --workflow "Archive CI Evidence" --branch main --limit 10
+# Select the archive run whose workflow_run source is SOURCE_RUN_ID, then:
+gh run watch ARCHIVE_RUN_ID --exit-status
+gh run view ARCHIVE_RUN_ID --log
 ```
 
-`workflow_run` will archive future subscribed runs automatically. Manual dispatch exists for the first proof and controlled recovery only.
+Alternatively, use the first naturally occurring successful subscribed `main` run after merge. In both cases, verify that the archive run is causally bound to the selected source run and source SHA; do not substitute an unrelated successful run.
 
-The job must publish a summary containing the source SHA, artifact count, receipt key, receipt version ID, and immutable-through timestamp. Capture the archive workflow run URL in the WP-00 evidence manifest.
+The archive job must publish a summary containing the source SHA, artifact count, receipt key, receipt version ID, and immutable-through timestamp. Capture both the source workflow run URL and archive workflow run URL in the WP-00 evidence manifest.
 
 ## 5. Independently verify AWS state
 
@@ -160,14 +169,15 @@ All items are mandatory:
 - [ ] GitHub obtained AWS credentials through OIDC; no long-lived AWS keys exist in repository configuration.
 - [ ] The GitHub role has the conditionally required `PutObjectRetention` permission, while the bucket policy denies retention below 365 days; it has no `DeleteObject`, `DeleteObjectVersion`, `BypassGovernanceRetention`, KMS administration, or wildcard actions.
 - [ ] CloudTrail is logging and log-file validation is enabled; the audit bucket is independently WORM-protected.
-- [ ] An independent release/safety reviewer records the receipt key/version and archive workflow URL.
+- [ ] An independent release/safety reviewer records the source run, receipt key/version, and archive workflow URL.
 
 Only after this checklist and the remaining R1/R2/R3 CI gates pass may WP00-B004 / REL-013 change from `PROVISIONING REQUIRED` to `CLOSED`. The overall WP-00 decision remains separate and still requires the full tested-merge acceptance set.
 
 ## Failure and recovery
 
-- Missing AWS variables, failed OIDC, an empty artifact set, a fork run, a wrong repository ID, a public bucket, governance mode, wrong KMS key, missing `VersionId`, checksum mismatch, or retention below 365 fails the archive job closed.
-- Re-running archival creates new locked versions; it never mutates or deletes prior versions.
+- Missing AWS variables, failed OIDC, an empty artifact set, a fork run, a source run whose conclusion is not `success`, a wrong repository ID, a public bucket, governance mode, wrong KMS key, missing `VersionId`, checksum mismatch, or retention below 365 fails the archive job closed.
+- A controlled retry must preserve the original source run/attempt identity in the receipt. Do not treat a different source run as equivalent evidence merely because it tests the same commit.
+- Re-running an already successful archive workflow can create additional locked S3 versions; avoid gratuitous reruns and record the canonical receipt version selected for acceptance. Durable replay idempotency remains a hardening item before repeated production-scale archival.
 - Disabling the workflow stops new archival but cannot erase existing objects.
 - KMS key deletion must remain prohibited operationally. `prevent_destroy` blocks Terraform destruction, but AWS account administrators also need MFA, separation of duties, and alerts for key-disable or deletion-schedule attempts.
 - A legal hold may extend protection. It must never be used to shorten or bypass the 365-day control.
