@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { Readable, Transform } from 'node:stream';
@@ -86,7 +86,17 @@ async function githubApi(path) {
   return response.json();
 }
 
-function awsJson(service, operation, args, timeout = 120_000) {
+function parseAwsJson(service, operation, result) {
+  const output = String(result.stdout ?? '').trim();
+  if (output.length === 0) return {};
+  try {
+    return JSON.parse(output);
+  } catch (error) {
+    throw new Error(`AWS CLI ${service} ${operation} returned invalid JSON: ${error.message}`);
+  }
+}
+
+function runAws(service, operation, args, timeout = 120_000) {
   const command = ['--region', region, '--no-cli-pager', service, operation, ...args, '--output', 'json'];
   const result = spawnSync('aws', command, {
     encoding: 'utf8',
@@ -95,17 +105,52 @@ function awsJson(service, operation, args, timeout = 120_000) {
     timeout
   });
   if (result.error) throw new Error(`AWS CLI ${service} ${operation} failed: ${result.error.message}`);
+  return result;
+}
+
+function awsJson(service, operation, args, timeout = 120_000) {
+  const result = runAws(service, operation, args, timeout);
   if (result.status !== 0) {
     const detail = String(result.stderr ?? '').trim().slice(0, 2_000);
     throw new Error(`AWS CLI ${service} ${operation} exited ${result.status}: ${detail}`);
   }
-  const output = String(result.stdout ?? '').trim();
-  if (output.length === 0) return {};
-  try {
-    return JSON.parse(output);
-  } catch (error) {
-    throw new Error(`AWS CLI ${service} ${operation} returned invalid JSON: ${error.message}`);
+  return parseAwsJson(service, operation, result);
+}
+
+function awsJsonIfFound(service, operation, args, timeout = 120_000) {
+  const result = runAws(service, operation, args, timeout);
+  if (result.status !== 0) {
+    const detail = String(result.stderr ?? '').trim().slice(0, 2_000);
+    if (/(?:\b404\b|Not Found|NoSuchKey|NoSuchVersion)/iu.test(detail)) return null;
+    throw new Error(`AWS CLI ${service} ${operation} exited ${result.status}: ${detail}`);
   }
+  return parseAwsJson(service, operation, result);
+}
+
+function downloadS3Version(key, versionId, targetPath) {
+  const command = [
+    '--region', region,
+    '--no-cli-pager',
+    '--output', 'json',
+    's3api', 'get-object',
+    '--bucket', bucket,
+    '--key', key,
+    '--version-id', versionId,
+    '--checksum-mode', 'ENABLED',
+    targetPath
+  ];
+  const result = spawnSync('aws', command, {
+    encoding: 'utf8',
+    env: process.env,
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: 120_000
+  });
+  if (result.error) throw new Error(`AWS CLI s3api get-object failed: ${result.error.message}`);
+  if (result.status !== 0) {
+    const detail = String(result.stderr ?? '').trim().slice(0, 2_000);
+    throw new Error(`AWS CLI s3api get-object exited ${result.status}: ${detail}`);
+  }
+  return parseAwsJson('s3api', 'get-object', result);
 }
 
 async function listArtifacts() {
@@ -211,6 +256,39 @@ function verifyBucket() {
   assertBucketPosture(posture, { minimumRetentionDays, kmsKeyArn });
 }
 
+function assertExpectedMetadata(head, metadata, key) {
+  for (const [metadataKey, metadataValue] of Object.entries(metadata)) {
+    if (head.Metadata?.[metadataKey] !== String(metadataValue)) {
+      throw new Error(`existing S3 object metadata mismatch for ${key}: ${metadataKey}`);
+    }
+  }
+}
+
+function verifyExistingObject({ key, sha256Hex, checksumBase64, contentLength, metadata }) {
+  const head = awsJsonIfFound('s3api', 'head-object', [
+    '--bucket', bucket,
+    '--key', key,
+    '--checksum-mode', 'ENABLED'
+  ]);
+  if (head === null) return null;
+
+  const versionId = String(head.VersionId ?? '');
+  if (versionId.length === 0 || versionId === 'null') {
+    throw new Error(`existing S3 object has no version ID for ${key}`);
+  }
+  assertExpectedMetadata(head, { ...metadata, sha256: sha256Hex }, key);
+  const retention = awsJson('s3api', 'get-object-retention', [
+    '--bucket', bucket,
+    '--key', key,
+    '--version-id', versionId
+  ]);
+  const verified = assertObjectProof(
+    { upload: { VersionId: versionId, ChecksumSHA256: head.ChecksumSHA256 }, head, retention },
+    { minimumRetentionDays, kmsKeyArn, contentLength, sha256Hex, checksumBase64 }
+  );
+  return { ...verified, key, reused: true };
+}
+
 function uploadAndVerify({ path, key, contentType, sha256Hex, checksumBase64, contentLength, metadata }) {
   const retainUntil = computeRetainUntil(new Date(), minimumRetentionDays);
   const upload = awsJson('s3api', 'put-object', [
@@ -244,7 +322,11 @@ function uploadAndVerify({ path, key, contentType, sha256Hex, checksumBase64, co
     { upload, head, retention },
     { minimumRetentionDays, kmsKeyArn, contentLength, sha256Hex, checksumBase64 }
   );
-  return { ...verified, key };
+  return { ...verified, key, reused: false };
+}
+
+function uploadOrReuse(params) {
+  return verifyExistingObject(params) ?? uploadAndVerify(params);
 }
 
 function safeReceiptPath() {
@@ -254,6 +336,68 @@ function safeReceiptPath() {
     throw new Error('ARCHIVE_RECEIPT_PATH must be inside RUNNER_TEMP');
   }
   return requested;
+}
+
+async function loadExistingReceipt({ receiptKey, receiptPath, sourceRun, archivedArtifacts }) {
+  const head = awsJsonIfFound('s3api', 'head-object', [
+    '--bucket', bucket,
+    '--key', receiptKey,
+    '--checksum-mode', 'ENABLED'
+  ]);
+  if (head === null) return null;
+
+  const versionId = String(head.VersionId ?? '');
+  if (versionId.length === 0 || versionId === 'null') {
+    throw new Error(`existing archive receipt has no version ID for ${receiptKey}`);
+  }
+  assertExpectedMetadata(head, {
+    schema: 'ros-external-evidence-v1',
+    'source-run-id': String(sourceRun.id),
+    'source-run-attempt': String(sourceRun.run_attempt),
+    'source-head-sha': sourceRun.head_sha
+  }, receiptKey);
+  const retention = awsJson('s3api', 'get-object-retention', [
+    '--bucket', bucket,
+    '--key', receiptKey,
+    '--version-id', versionId
+  ]);
+
+  await mkdir(dirname(receiptPath), { recursive: true, mode: 0o700 });
+  downloadS3Version(receiptKey, versionId, receiptPath);
+  const receiptBytes = await readFile(receiptPath);
+  const receiptSha256 = sha256(receiptBytes);
+  const checksumBase64 = sha256Base64(receiptBytes);
+  const verified = assertObjectProof(
+    { upload: { VersionId: versionId, ChecksumSHA256: head.ChecksumSHA256 }, head, retention },
+    {
+      minimumRetentionDays,
+      kmsKeyArn,
+      contentLength: receiptBytes.length,
+      sha256Hex: receiptSha256,
+      checksumBase64
+    }
+  );
+
+  let receipt;
+  try {
+    receipt = JSON.parse(receiptBytes.toString('utf8'));
+  } catch (error) {
+    throw new Error(`existing archive receipt is not valid JSON: ${error.message}`);
+  }
+  assertReceipt(receipt);
+  const expectedReceipt = buildReceipt({
+    sourceRun,
+    archive: { bucket, region, kmsKeyArn, minimumRetentionDays },
+    artifacts: archivedArtifacts,
+    generatedAt: receipt.generated_at
+  });
+  if (JSON.stringify(receipt) !== JSON.stringify(expectedReceipt)) {
+    throw new Error('existing archive receipt does not match the current source run and artifact proofs');
+  }
+  return {
+    proof: { ...verified, key: receiptKey, reused: true },
+    receiptSha256
+  };
 }
 
 async function writeWorkflowOutput(values) {
@@ -281,6 +425,7 @@ async function writeSummary(sourceRun, receiptProof, artifactCount) {
     `- Archived artifacts: ${artifactCount}`,
     `- Receipt key: \`${receiptProof.key}\``,
     `- Receipt version: \`${receiptProof.versionId}\``,
+    `- Receipt disposition: ${receiptProof.reused ? 'reused existing immutable version' : 'created new immutable version'}`,
     `- Immutable through: ${receiptProof.retainUntil}`,
     `- Encryption: AWS KMS`,
     `- Object Lock: COMPLIANCE`
@@ -336,7 +481,7 @@ try {
     }
     const checksumBase64 = Buffer.from(verifiedFile.sha256Hex, 'hex').toString('base64');
     const key = buildArtifactKey(prefix, artifact.id, downloaded.sha256Hex);
-    const proof = uploadAndVerify({
+    const proof = uploadOrReuse({
       path: localPath,
       key,
       contentType: 'application/zip',
@@ -369,33 +514,47 @@ try {
     });
   }
 
-  const receipt = buildReceipt({
-    sourceRun,
-    archive: { bucket, region, kmsKeyArn, minimumRetentionDays },
-    artifacts: archivedArtifacts,
-    generatedAt: new Date().toISOString()
-  });
-  assertReceipt(receipt);
   const receiptPath = safeReceiptPath();
-  await mkdir(dirname(receiptPath), { recursive: true, mode: 0o700 });
-  const receiptBytes = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
-  await writeFile(receiptPath, receiptBytes, { mode: 0o600 });
-  const receiptSha256 = sha256(receiptBytes);
   const receiptKey = `${prefix}/receipt.json`;
-  const receiptProof = uploadAndVerify({
-    path: receiptPath,
-    key: receiptKey,
-    contentType: 'application/json',
-    sha256Hex: receiptSha256,
-    checksumBase64: sha256Base64(receiptBytes),
-    contentLength: receiptBytes.length,
-    metadata: {
-      schema: 'ros-external-evidence-v1',
-      'source-run-id': String(sourceRun.id),
-      'source-run-attempt': String(sourceRun.run_attempt),
-      'source-head-sha': sourceRun.head_sha
-    }
+  const existingReceipt = await loadExistingReceipt({
+    receiptKey,
+    receiptPath,
+    sourceRun,
+    archivedArtifacts
   });
+
+  let receiptProof;
+  let receiptSha256;
+  if (existingReceipt) {
+    receiptProof = existingReceipt.proof;
+    receiptSha256 = existingReceipt.receiptSha256;
+  } else {
+    const receipt = buildReceipt({
+      sourceRun,
+      archive: { bucket, region, kmsKeyArn, minimumRetentionDays },
+      artifacts: archivedArtifacts,
+      generatedAt: new Date().toISOString()
+    });
+    assertReceipt(receipt);
+    await mkdir(dirname(receiptPath), { recursive: true, mode: 0o700 });
+    const receiptBytes = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+    await writeFile(receiptPath, receiptBytes, { mode: 0o600 });
+    receiptSha256 = sha256(receiptBytes);
+    receiptProof = uploadAndVerify({
+      path: receiptPath,
+      key: receiptKey,
+      contentType: 'application/json',
+      sha256Hex: receiptSha256,
+      checksumBase64: sha256Base64(receiptBytes),
+      contentLength: receiptBytes.length,
+      metadata: {
+        schema: 'ros-external-evidence-v1',
+        'source-run-id': String(sourceRun.id),
+        'source-run-attempt': String(sourceRun.run_attempt),
+        'source-head-sha': sourceRun.head_sha
+      }
+    });
+  }
 
   await writeWorkflowOutput({
     receipt_key: receiptProof.key,
@@ -406,8 +565,9 @@ try {
   });
   await writeSummary(sourceRun, receiptProof, archivedArtifacts.length);
   console.log(
-    `Archived ${archivedArtifacts.length} artifact(s) for run ${sourceRun.id}/${sourceRun.run_attempt}; `
-    + `receipt ${receiptProof.key} version ${receiptProof.versionId} retained through ${receiptProof.retainUntil}.`
+    `${receiptProof.reused ? 'Reused' : 'Archived'} ${archivedArtifacts.length} artifact(s) for run `
+    + `${sourceRun.id}/${sourceRun.run_attempt}; receipt ${receiptProof.key} version `
+    + `${receiptProof.versionId} retained through ${receiptProof.retainUntil}.`
   );
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
