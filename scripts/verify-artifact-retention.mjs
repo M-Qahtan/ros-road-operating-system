@@ -20,12 +20,18 @@ const requiredChecks = (await readFile('docs/10-engineering/required-checks.txt'
   .filter(Boolean);
 
 if (receiptSchema?.properties?.schema?.const !== 'ros-external-evidence/v1'
+    || receiptSchema?.properties?.source_run?.properties?.conclusion?.const !== 'success'
     || receiptSchema?.properties?.archive?.properties?.object_lock_mode?.const !== 'COMPLIANCE'
     || receiptSchema?.properties?.archive?.properties?.minimum_retention_days?.minimum !== MINIMUM_RETENTION_DAYS) {
-  throw new Error('external evidence receipt schema does not enforce the approved lock and retention contract');
+  throw new Error('external evidence receipt schema does not enforce the approved source, lock, and retention contract');
 }
 if (!runbook.includes('## REL-013 live acceptance record') || !runbook.includes('independent')) {
   throw new Error('external evidence runbook is missing live or independent acceptance controls');
+}
+if (runbook.includes('gh workflow run archive-ci-evidence.yml')
+    || !runbook.includes('gh workflow run ros-eye-pilot-readiness.yml --ref main')
+    || !runbook.includes('workflow_run')) {
+  throw new Error('external evidence runbook must use an eligible source workflow and automatic workflow_run archival');
 }
 for (const check of [
   'verify',
@@ -53,6 +59,9 @@ if (/pull_request_target\s*:/u.test(archiveSource)) {
 }
 if (!/^\s*workflow_run:\s*$/mu.test(archiveSource)) {
   throw new Error('archive workflow is not isolated behind workflow_run');
+}
+if (/^\s*workflow_dispatch:\s*$/mu.test(archiveSource)) {
+  throw new Error('privileged archive workflow must not expose manual workflow_dispatch');
 }
 if (!/^\s*actions:\s*read\s*$/mu.test(archiveSource)
     || !/^\s*contents:\s*read\s*$/mu.test(archiveSource)
