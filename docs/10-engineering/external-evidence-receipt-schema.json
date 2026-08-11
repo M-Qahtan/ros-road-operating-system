@@ -32,7 +32,7 @@
         "workflow": { "type": "string", "minLength": 1 },
         "workflow_id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
         "event": { "enum": ["pull_request", "push", "workflow_dispatch"] },
-        "conclusion": { "type": ["string", "null"] },
+        "conclusion": { "const": "success" },
         "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "head_branch": { "type": "string", "minLength": 1 },
         "run_id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
