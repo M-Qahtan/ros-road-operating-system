@@ -10,6 +10,7 @@ const workflowNames = (await readdir(workflowDirectory))
   .sort();
 
 const archiveSource = await readFile(join(workflowDirectory, archiveWorkflowName), 'utf8');
+const archiverSource = await readFile('scripts/archive-github-evidence.mjs', 'utf8');
 const receiptSchema = JSON.parse(
   await readFile('docs/10-engineering/external-evidence-receipt-schema.json', 'utf8')
 );
@@ -32,6 +33,16 @@ if (runbook.includes('gh workflow run archive-ci-evidence.yml')
     || !runbook.includes('gh workflow run ros-eye-pilot-readiness.yml --ref main')
     || !runbook.includes('workflow_run')) {
   throw new Error('external evidence runbook must use an eligible source workflow and automatic workflow_run archival');
+}
+if (!runbook.includes('reused existing immutable version')
+    || !runbook.includes('same canonical receipt `VersionId`')) {
+  throw new Error('external evidence runbook is missing the controlled replay-idempotency proof');
+}
+if (!archiverSource.includes('function uploadOrReuse')
+    || !archiverSource.includes('async function loadExistingReceipt')
+    || !archiverSource.includes('verifyExistingObject')
+    || !archiverSource.includes('reused existing immutable version')) {
+  throw new Error('external evidence archiver is missing replay-idempotent object or receipt reuse controls');
 }
 for (const check of [
   'verify',
