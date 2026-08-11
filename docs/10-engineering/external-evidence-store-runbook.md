@@ -19,6 +19,7 @@ REL-013 is closed only after all live acceptance checks in this runbook pass. A 
 | Workload identity | GitHub OIDC; no long-lived AWS access keys |
 | Least privilege | GitHub role can append, verify, and set/extend `COMPLIANCE` retention only under `evidence/github/1310606342/*`; bucket policy rejects retention below 365 days, and the role has no delete or governance-bypass rights; KMS use is restricted to S3 in the approved account and evidence-bucket encryption context |
 | Provenance | Same-repository successful run, immutable repository ID, source SHA, workflow/run/attempt, artifact ID, SHA-256, KMS key, object key, and version ID |
+| Replay safety | Re-running the archive for the same source run/attempt and content reuses the already verified immutable artifact and receipt versions instead of creating new WORM versions; any mismatch fails closed |
 | Audit | Multi-region CloudTrail S3 data events with digest validation, delivered to a separate KMS-encrypted Object-Locked audit bucket |
 | Terraform safety | Evidence bucket, audit bucket, and KMS key use `prevent_destroy`; S3 `force_destroy` is false |
 
@@ -135,7 +136,19 @@ gh run view ARCHIVE_RUN_ID --log
 
 Alternatively, use the first naturally occurring successful subscribed `main` run after merge. In both cases, verify that the archive run is causally bound to the selected source run and source SHA; do not substitute an unrelated successful run.
 
-The archive job must publish a summary containing the source SHA, artifact count, receipt key, receipt version ID, and immutable-through timestamp. Capture both the source workflow run URL and archive workflow run URL in the WP-00 evidence manifest.
+The archive job must publish a summary containing the source SHA, artifact count, receipt key, receipt version ID, receipt disposition, and immutable-through timestamp. Capture both the source workflow run URL and archive workflow run URL in the WP-00 evidence manifest.
+
+### Controlled replay-idempotency proof
+
+After the first archive run succeeds, perform one controlled rerun of that **same archive workflow run**. Do not create a different source run for this check:
+
+```bash
+gh run rerun ARCHIVE_RUN_ID
+gh run watch ARCHIVE_RUN_ID --exit-status
+gh run view ARCHIVE_RUN_ID --log
+```
+
+The rerun must report `reused existing immutable version`, return the same canonical receipt `VersionId`, and preserve the same artifact version IDs recorded by the receipt. A rerun that creates a new immutable version for identical source evidence fails this hardening check.
 
 ## 5. Independently verify AWS state
 
@@ -169,6 +182,7 @@ All items are mandatory:
 - [ ] GitHub obtained AWS credentials through OIDC; no long-lived AWS keys exist in repository configuration.
 - [ ] The GitHub role has the conditionally required `PutObjectRetention` permission, while the bucket policy denies retention below 365 days; it has no `DeleteObject`, `DeleteObjectVersion`, `BypassGovernanceRetention`, KMS administration, or wildcard actions.
 - [ ] CloudTrail is logging and log-file validation is enabled; the audit bucket is independently WORM-protected.
+- [ ] A controlled rerun for the same source run/attempt reuses the same canonical receipt `VersionId` and the receipt's existing artifact version IDs.
 - [ ] An independent release/safety reviewer records the source run, receipt key/version, and archive workflow URL.
 
 Only after this checklist and the remaining R1/R2/R3 CI gates pass may WP00-B004 / REL-013 change from `PROVISIONING REQUIRED` to `CLOSED`. The overall WP-00 decision remains separate and still requires the full tested-merge acceptance set.
@@ -177,7 +191,7 @@ Only after this checklist and the remaining R1/R2/R3 CI gates pass may WP00-B004
 
 - Missing AWS variables, failed OIDC, an empty artifact set, a fork run, a source run whose conclusion is not `success`, a wrong repository ID, a public bucket, governance mode, wrong KMS key, missing `VersionId`, checksum mismatch, or retention below 365 fails the archive job closed.
 - A controlled retry must preserve the original source run/attempt identity in the receipt. Do not treat a different source run as equivalent evidence merely because it tests the same commit.
-- Re-running an already successful archive workflow can create additional locked S3 versions; avoid gratuitous reruns and record the canonical receipt version selected for acceptance. Durable replay idempotency remains a hardening item before repeated production-scale archival.
+- Re-running an already successful archive workflow for identical source evidence must reuse the verified existing artifact and receipt versions. If an existing deterministic key has mismatched metadata, checksum, KMS binding, retention, or receipt content, archival fails closed rather than writing another version.
 - Disabling the workflow stops new archival but cannot erase existing objects.
 - KMS key deletion must remain prohibited operationally. `prevent_destroy` blocks Terraform destruction, but AWS account administrators also need MFA, separation of duties, and alerts for key-disable or deletion-schedule attempts.
 - A legal hold may extend protection. It must never be used to shorten or bypass the 365-day control.
