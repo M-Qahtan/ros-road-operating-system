@@ -54,6 +54,18 @@ test('source runs are bound to the immutable repository identity', () => {
   );
 });
 
+test('source runs must complete successfully before archival', () => {
+  for (const conclusion of ['failure', 'cancelled', 'skipped', null]) {
+    assert.throws(
+      () => assertSourceRun(
+        { ...sourceRun, conclusion },
+        { repository: repository.full_name, repositoryId: String(repository.id), runId: String(sourceRun.id) }
+      ),
+      /did not conclude successfully/u
+    );
+  }
+});
+
 test('archive keys are deterministic and content-addressed', () => {
   const prefix = buildArchivePrefix({
     repositoryId: repository.id,
@@ -187,4 +199,37 @@ test('receipt preserves SHA, version, digest, encryption, and lock proof', () =>
     generatedAt: '2026-07-31T00:11:00.000Z'
   });
   assert.equal(assertReceipt(receipt), receipt);
+});
+
+test('receipt rejects a non-success source conclusion', () => {
+  const receipt = buildReceipt({
+    sourceRun,
+    archive: {
+      bucket: 'ros-evidence-example',
+      region: 'me-central-1',
+      kmsKeyArn,
+      minimumRetentionDays: 365
+    },
+    artifacts: [{
+      artifact_id: '300',
+      name: 'verify-evidence',
+      size_in_bytes: 10,
+      github_created_at: '2026-07-31T00:00:00.000Z',
+      github_expires_at: '2026-10-29T00:00:00.000Z',
+      sha256: 'd'.repeat(64),
+      checksum_sha256_base64: Buffer.alloc(32, 2).toString('base64'),
+      object_key: `evidence/github/${repository.id}/${sourceRun.head_sha}/200/100/2/artifacts/300-${'d'.repeat(64)}.zip`,
+      version_id: 'version-1',
+      etag: 'etag',
+      encryption: 'aws:kms',
+      kms_key_arn: kmsKeyArn,
+      object_lock_mode: 'COMPLIANCE',
+      retain_until: '2027-08-01T00:00:00.000Z'
+    }],
+    generatedAt: '2026-07-31T00:11:00.000Z'
+  });
+  assert.throws(
+    () => assertReceipt({ ...receipt, source_run: { ...receipt.source_run, conclusion: 'failure' } }),
+    /did not conclude successfully/u
+  );
 });
