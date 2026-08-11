@@ -108,6 +108,7 @@ export function assertSourceRun(run, expected) {
     throw new Error('fork workflow evidence is not eligible for privileged archival');
   }
   if (run.status !== 'completed') throw new Error('workflow run is not complete');
+  if (run.conclusion !== 'success') throw new Error('workflow run did not conclude successfully');
   if (!ARCHIVABLE_WORKFLOWS.includes(run.name)) throw new Error(`workflow is not archivable: ${run.name}`);
   if (!['pull_request', 'push', 'workflow_dispatch'].includes(run.event)) {
     throw new Error(`workflow event is not archivable: ${run.event}`);
@@ -242,6 +243,9 @@ export function assertReceipt(receipt) {
   }
   assertRepository(receipt.source_run?.repository, 'receipt repository');
   assertSha(receipt.source_run?.head_sha, 'receipt head SHA');
+  if (receipt.source_run?.conclusion !== 'success') {
+    throw new Error('archive receipt source run did not conclude successfully');
+  }
   if (!ARCHIVABLE_WORKFLOWS.includes(receipt.source_run?.workflow)) {
     throw new Error('archive receipt workflow is not allowlisted');
   }
