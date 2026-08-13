@@ -1,5 +1,14 @@
 import { access, readFile } from 'node:fs/promises';
 
+if (
+  process.env.GITHUB_ACTIONS === 'true' &&
+  process.env.GITHUB_WORKFLOW === 'CI' &&
+  process.env.GITHUB_JOB === 'verify' &&
+  process.env.GITHUB_HEAD_REF === 'gate-b/negative-merge-block-proof'
+) {
+  throw new Error('Gate B negative proof: intentionally failing the required verify check.');
+}
+
 const required = [
   'README.md',
   'package.json',
