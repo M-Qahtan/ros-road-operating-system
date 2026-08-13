@@ -1,0 +1,16 @@
+aws_region              = "me-central-1"
+expected_aws_account_id = "123456789012"
+evidence_bucket_name    = "ros-evidence-replace-with-unique-suffix"
+
+# Set this to false and provide the ARN when the AWS account already has the
+# GitHub Actions OIDC provider under central platform ownership.
+create_github_oidc_provider       = true
+existing_github_oidc_provider_arn = null
+
+retention_days = 365
+
+tags = {
+  Environment = "program-evidence"
+  DataClass    = "CI-SAFETY-EVIDENCE"
+  Owner        = "ROS-Platform"
+}

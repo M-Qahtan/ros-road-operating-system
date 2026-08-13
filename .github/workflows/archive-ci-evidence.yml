@@ -1,0 +1,65 @@
+name: Archive CI Evidence
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Operational Readiness
+      - Riyadh Failure-Mode Safety
+      - ROS Eye Pilot Readiness
+      - Safety Fusion Evidence
+      - Security
+    types: [completed]
+
+concurrency:
+  group: archive-ci-evidence-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  archive:
+    if: >-
+      ${{
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.conclusion == 'success'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out trusted archiver from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          aws-region: ${{ vars.ROS_EVIDENCE_AWS_REGION }}
+          role-to-assume: ${{ vars.ROS_EVIDENCE_AWS_ROLE_ARN }}
+          role-session-name: ros-evidence-${{ github.run_id }}
+          allowed-account-ids: ${{ vars.ROS_EVIDENCE_AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+          retry-max-attempts: 5
+      - name: Archive and verify immutable evidence
+        id: archive
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: '1310606342'
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVIDENCE_BUCKET: ${{ vars.ROS_EVIDENCE_BUCKET }}
+          EVIDENCE_KMS_KEY_ARN: ${{ vars.ROS_EVIDENCE_KMS_KEY_ARN }}
+          MINIMUM_RETENTION_DAYS: '365'
+          MAXIMUM_ARTIFACT_BYTES: '536870912'
+          MAXIMUM_TOTAL_BYTES: '2147483648'
+          ARCHIVE_RECEIPT_PATH: ${{ runner.temp }}/ros-evidence-archive-receipt.json
+        run: node scripts/archive-github-evidence.mjs
