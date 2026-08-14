@@ -540,7 +540,7 @@ data "aws_iam_policy_document" "archive" {
     sid    = "VerifyFrankfurtEvidenceBucketPosture"
     effect = "Allow"
     actions = [
-      "s3:GetBucketEncryption",
+      "s3:GetEncryptionConfiguration",
       "s3:GetBucketLocation",
       "s3:GetBucketObjectLockConfiguration",
       "s3:GetBucketPolicyStatus",
@@ -604,7 +604,7 @@ data "aws_iam_policy_document" "independent_verifier" {
     sid    = "VerifyFrankfurtBucketPosture"
     effect = "Allow"
     actions = [
-      "s3:GetBucketEncryption",
+      "s3:GetEncryptionConfiguration",
       "s3:GetBucketLocation",
       "s3:GetBucketObjectLockConfiguration",
       "s3:GetBucketPolicyStatus",
