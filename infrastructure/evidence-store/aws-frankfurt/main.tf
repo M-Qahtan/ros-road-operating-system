@@ -4,7 +4,7 @@ data "aws_partition" "current" {}
 locals {
   repository_full_name       = "${var.repository_owner}/${var.repository_name}"
   trusted_ref                = "refs/heads/${var.trusted_branch}"
-  oidc_subject               = "repo:${local.repository_full_name}:ref:${local.trusted_ref}"
+  oidc_subject               = "repo:${var.repository_owner}@${var.repository_owner_id}/${var.repository_name}@${var.repository_id}:ref:${local.trusted_ref}"
   evidence_prefix            = "evidence/github/${var.repository_id}"
   audit_bucket_name          = coalesce(var.audit_bucket_name, "${var.evidence_bucket_name}-audit")
   trail_name                 = "ros-evidence-euc1-${var.repository_id}"
