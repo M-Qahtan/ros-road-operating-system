@@ -90,7 +90,7 @@ if (!/node scripts\/archive-github-evidence\.mjs/u.test(archiveSource)) {
   throw new Error('archive workflow does not execute the verified ROS archiver');
 }
 for (const workflow of ARCHIVABLE_WORKFLOWS) {
-  if (!archiveSource.includes(`      - ${workflow}\n`)) {
+  if (!archiveSource.split(/\r?\n/u).includes(`      - ${workflow}`)) {
     throw new Error(`archive workflow does not subscribe to ${workflow}`);
   }
 }
