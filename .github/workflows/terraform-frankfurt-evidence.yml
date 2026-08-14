@@ -6,6 +6,7 @@ on:
       - 'infrastructure/evidence-store/aws/**'
       - 'infrastructure/evidence-store/aws-frankfurt/**'
       - 'scripts/verify-frankfurt-evidence-root.mjs'
+      - 'scripts/verify-frankfurt-immutable-oidc-subject.mjs'
       - '.github/workflows/terraform-frankfurt-evidence.yml'
       - 'docs/10-engineering/external-evidence-store-runbook.md'
       - 'docs/10-engineering/gate-c-frankfurt-*.md'
@@ -15,6 +16,7 @@ on:
       - 'infrastructure/evidence-store/aws/**'
       - 'infrastructure/evidence-store/aws-frankfurt/**'
       - 'scripts/verify-frankfurt-evidence-root.mjs'
+      - 'scripts/verify-frankfurt-immutable-oidc-subject.mjs'
       - '.github/workflows/terraform-frankfurt-evidence.yml'
       - 'docs/10-engineering/external-evidence-store-runbook.md'
       - 'docs/10-engineering/gate-c-frankfurt-*.md'
@@ -50,6 +52,9 @@ jobs:
 
       - name: Prove Frankfurt architecture, negatives, and legacy non-interference
         run: node scripts/verify-frankfurt-evidence-root.mjs
+
+      - name: Prove immutable GitHub OIDC subject binding
+        run: node scripts/verify-frankfurt-immutable-oidc-subject.mjs
 
       - name: Format Frankfurt Terraform
         run: terraform -chdir=infrastructure/evidence-store/aws-frankfurt fmt -check -recursive
