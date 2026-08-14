@@ -289,9 +289,9 @@ function verifyExistingObject({ key, sha256Hex, checksumBase64, contentLength, m
   return { ...verified, key, reused: true };
 }
 
-function uploadAndVerify({ path, key, contentType, sha256Hex, checksumBase64, contentLength, metadata }) {
+function conditionalUploadAndVerify({ path, key, contentType, sha256Hex, checksumBase64, contentLength, metadata }) {
   const retainUntil = computeRetainUntil(new Date(), minimumRetentionDays);
-  const upload = awsJson('s3api', 'put-object', [
+  const result = runAws('s3api', 'put-object', [
     '--bucket', bucket,
     '--key', key,
     '--body', path,
@@ -302,8 +302,17 @@ function uploadAndVerify({ path, key, contentType, sha256Hex, checksumBase64, co
     '--object-lock-retain-until-date', retainUntil,
     '--checksum-algorithm', 'SHA256',
     '--checksum-sha256', checksumBase64,
-    '--metadata', JSON.stringify({ ...metadata, sha256: sha256Hex })
+    '--metadata', JSON.stringify({ ...metadata, sha256: sha256Hex }),
+    '--if-none-match', '*'
   ]);
+
+  if (result.status !== 0) {
+    const detail = String(result.stderr ?? '').trim().slice(0, 2_000);
+    if (/(?:\b412\b|PreconditionFailed|Precondition Failed)/iu.test(detail)) return null;
+    throw new Error(`AWS CLI s3api put-object exited ${result.status}: ${detail}`);
+  }
+
+  const upload = parseAwsJson('s3api', 'put-object', result);
   const versionId = String(upload.VersionId ?? '');
   if (versionId.length === 0) throw new Error(`S3 did not return a version ID for ${key}`);
 
@@ -326,7 +335,14 @@ function uploadAndVerify({ path, key, contentType, sha256Hex, checksumBase64, co
 }
 
 function uploadOrReuse(params) {
-  return verifyExistingObject(params) ?? uploadAndVerify(params);
+  const created = conditionalUploadAndVerify(params);
+  if (created !== null) return created;
+
+  const existing = verifyExistingObject(params);
+  if (existing === null) {
+    throw new Error(`conditional S3 write reported an existing object but HEAD returned not found for ${params.key}`);
+  }
+  return existing;
 }
 
 function safeReceiptPath() {
@@ -516,44 +532,50 @@ try {
 
   const receiptPath = safeReceiptPath();
   const receiptKey = `${prefix}/receipt.json`;
-  const existingReceipt = await loadExistingReceipt({
-    receiptKey,
-    receiptPath,
+  const receipt = buildReceipt({
     sourceRun,
-    archivedArtifacts
+    archive: { bucket, region, kmsKeyArn, minimumRetentionDays },
+    artifacts: archivedArtifacts,
+    generatedAt: new Date().toISOString()
+  });
+  assertReceipt(receipt);
+  await mkdir(dirname(receiptPath), { recursive: true, mode: 0o700 });
+  const receiptBytes = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+  await writeFile(receiptPath, receiptBytes, { mode: 0o600 });
+  const candidateReceiptSha256 = sha256(receiptBytes);
+
+  const createdReceipt = conditionalUploadAndVerify({
+    path: receiptPath,
+    key: receiptKey,
+    contentType: 'application/json',
+    sha256Hex: candidateReceiptSha256,
+    checksumBase64: sha256Base64(receiptBytes),
+    contentLength: receiptBytes.length,
+    metadata: {
+      schema: 'ros-external-evidence-v1',
+      'source-run-id': String(sourceRun.id),
+      'source-run-attempt': String(sourceRun.run_attempt),
+      'source-head-sha': sourceRun.head_sha
+    }
   });
 
   let receiptProof;
   let receiptSha256;
-  if (existingReceipt) {
+  if (createdReceipt !== null) {
+    receiptProof = createdReceipt;
+    receiptSha256 = candidateReceiptSha256;
+  } else {
+    const existingReceipt = await loadExistingReceipt({
+      receiptKey,
+      receiptPath,
+      sourceRun,
+      archivedArtifacts
+    });
+    if (existingReceipt === null) {
+      throw new Error('conditional receipt write reported an existing object but receipt HEAD returned not found');
+    }
     receiptProof = existingReceipt.proof;
     receiptSha256 = existingReceipt.receiptSha256;
-  } else {
-    const receipt = buildReceipt({
-      sourceRun,
-      archive: { bucket, region, kmsKeyArn, minimumRetentionDays },
-      artifacts: archivedArtifacts,
-      generatedAt: new Date().toISOString()
-    });
-    assertReceipt(receipt);
-    await mkdir(dirname(receiptPath), { recursive: true, mode: 0o700 });
-    const receiptBytes = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
-    await writeFile(receiptPath, receiptBytes, { mode: 0o600 });
-    receiptSha256 = sha256(receiptBytes);
-    receiptProof = uploadAndVerify({
-      path: receiptPath,
-      key: receiptKey,
-      contentType: 'application/json',
-      sha256Hex: receiptSha256,
-      checksumBase64: sha256Base64(receiptBytes),
-      contentLength: receiptBytes.length,
-      metadata: {
-        schema: 'ros-external-evidence-v1',
-        'source-run-id': String(sourceRun.id),
-        'source-run-attempt': String(sourceRun.run_attempt),
-        'source-head-sha': sourceRun.head_sha
-      }
-    });
   }
 
   await writeWorkflowOutput({
