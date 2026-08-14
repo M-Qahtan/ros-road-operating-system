@@ -1,0 +1,61 @@
+name: Terraform Frankfurt Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/evidence-store/aws/**'
+      - 'infrastructure/evidence-store/aws-frankfurt/**'
+      - 'scripts/verify-frankfurt-evidence-root.mjs'
+      - '.github/workflows/terraform-frankfurt-evidence.yml'
+      - 'docs/10-engineering/external-evidence-store-runbook.md'
+      - 'docs/10-engineering/gate-c-frankfurt-*.md'
+  push:
+    branches: [main]
+    paths:
+      - 'infrastructure/evidence-store/aws/**'
+      - 'infrastructure/evidence-store/aws-frankfurt/**'
+      - 'scripts/verify-frankfurt-evidence-root.mjs'
+      - '.github/workflows/terraform-frankfurt-evidence.yml'
+      - 'docs/10-engineering/external-evidence-store-runbook.md'
+      - 'docs/10-engineering/gate-c-frankfurt-*.md'
+
+permissions:
+  contents: read
+
+env:
+  LEGACY_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+
+jobs:
+  terraform-frankfurt-evidence:
+    name: terraform-frankfurt-evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository without write credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Prove Frankfurt architecture, negatives, and legacy non-interference
+        run: node scripts/verify-frankfurt-evidence-root.mjs
+
+      - name: Format Frankfurt Terraform
+        run: terraform -chdir=infrastructure/evidence-store/aws-frankfurt fmt -check -recursive
+
+      - name: Initialize Frankfurt Terraform without backend
+        run: terraform -chdir=infrastructure/evidence-store/aws-frankfurt init -backend=false -input=false -no-color -lockfile=readonly
+
+      - name: Validate Frankfurt Terraform
+        run: terraform -chdir=infrastructure/evidence-store/aws-frankfurt validate -no-color
