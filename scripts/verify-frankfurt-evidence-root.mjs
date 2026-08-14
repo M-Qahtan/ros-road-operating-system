@@ -114,6 +114,8 @@ function collectViolations(candidate) {
   }
   requireText(archive.includes('"s3:PutObject"'), 'ARCHIVE_PUT_OBJECT');
   requireText(archive.includes('"s3:PutObjectRetention"'), 'ARCHIVE_PUT_RETENTION');
+  requireText(archive.includes('"s3:GetEncryptionConfiguration"'), 'ARCHIVE_BUCKET_ENCRYPTION_READ');
+  requireText(!archive.includes('"s3:GetBucketEncryption"'), 'ARCHIVE_LEGACY_BUCKET_ENCRYPTION_ACTION');
   requireText(archive.includes('"kms:Decrypt"'), 'ARCHIVE_KMS_DECRYPT');
   requireText(archive.includes('"kms:GenerateDataKey"'), 'ARCHIVE_KMS_DATA_KEY');
   requireText(archive.includes('"s3.eu-central-1.amazonaws.com"'), 'ARCHIVE_KMS_VIA_FRANKFURT');
@@ -122,6 +124,8 @@ function collectViolations(candidate) {
     requireText(!verifier.includes(`"${forbidden}"`), `VERIFIER_FORBIDDEN_${forbidden}`);
   }
   requireText(verifier.includes('"s3:GetObjectRetention"'), 'VERIFIER_RETENTION_READ');
+  requireText(verifier.includes('"s3:GetEncryptionConfiguration"'), 'VERIFIER_BUCKET_ENCRYPTION_READ');
+  requireText(!verifier.includes('"s3:GetBucketEncryption"'), 'VERIFIER_LEGACY_BUCKET_ENCRYPTION_ACTION');
   requireText(verifier.includes('"cloudtrail:GetTrailStatus"'), 'VERIFIER_CLOUDTRAIL_READ');
 
   requireText(candidate.backend.includes('key          = "ros/rel-013/evidence-store/eu-central-1/terraform.tfstate"'), 'FRANKFURT_STATE_KEY');
@@ -201,6 +205,22 @@ const negativeFixtures = [
     name: 'reject legacy backend state key reuse',
     expected: 'FRANKFURT_STATE_KEY',
     mutate: (candidate) => ({ ...candidate, backend: candidate.backend.replace('ros/rel-013/evidence-store/eu-central-1/terraform.tfstate', 'ros/rel-013/evidence-store/terraform.tfstate') })
+  },
+  {
+    name: 'reject legacy archive bucket-encryption IAM action',
+    expected: 'ARCHIVE_BUCKET_ENCRYPTION_READ',
+    mutate: (candidate) => ({
+      ...candidate,
+      main: mutateSection(candidate.main, 'data "aws_iam_policy_document" "archive" {', 'resource "aws_iam_role_policy" "github_archive" {', (value) => value.replace('"s3:GetEncryptionConfiguration"', '"s3:GetBucketEncryption"'))
+    })
+  },
+  {
+    name: 'reject legacy verifier bucket-encryption IAM action',
+    expected: 'VERIFIER_BUCKET_ENCRYPTION_READ',
+    mutate: (candidate) => ({
+      ...candidate,
+      main: mutateSection(candidate.main, 'data "aws_iam_policy_document" "independent_verifier" {', 'resource "aws_iam_policy" "independent_verifier" {', (value) => value.replace('"s3:GetEncryptionConfiguration"', '"s3:GetBucketEncryption"'))
+    })
   },
   {
     name: 'reject archive delete permission',
