@@ -156,7 +156,11 @@ The legacy role, legacy bucket, and legacy KMS key must never be used as active 
 
 ## 6. Run the first live proof
 
-Produce or select a successful subscribed same-repository source workflow run on protected `main`. `ROS Eye Pilot Readiness` remains a preferred controlled source workflow.
+Produce or select a successful subscribed same-repository source workflow run on protected `main`. `ROS Eye Pilot Readiness` remains the preferred controlled source workflow and may be dispatched only as the source workflow:
+
+```bash
+gh workflow run ros-eye-pilot-readiness.yml --ref main
+```
 
 Do not dispatch `Archive CI Evidence` directly. The privileged archive workflow must start only through its `workflow_run` subscription after the source workflow concludes successfully.
 
@@ -193,16 +197,11 @@ The receipt is evidence only if all referenced artifact versions pass independen
 
 Rerun the **same archive workflow run** after its first success. Do not create a different source run for this proof.
 
-The rerun must:
-
-- report reuse of the verified immutable artifact versions;
-- reuse the same canonical receipt VersionId;
-- preserve the same artifact VersionIds recorded by the receipt;
-- fail closed on any checksum, metadata, KMS, retention, or receipt-content mismatch.
+The rerun must report `reused existing immutable version`, reuse the same canonical receipt `VersionId`, preserve the same artifact VersionIds recorded by the receipt, and fail closed on any checksum, metadata, KMS, retention, or receipt-content mismatch.
 
 Creating new WORM versions for identical source evidence fails this hardening check.
 
-## Gate C live acceptance record
+## REL-013 live acceptance record
 
 All items are mandatory:
 
