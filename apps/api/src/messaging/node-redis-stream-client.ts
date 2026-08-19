@@ -6,6 +6,7 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 
 export interface RedisRuntimeClient extends RedisStreamClient {
   connect(): Promise<void>;
+  verifyConnection(): Promise<void>;
   close(): Promise<void>;
   readonly isReady: boolean;
 }
@@ -101,6 +102,12 @@ export class NodeRedisStreamClient implements RedisRuntimeClient {
   async connect(): Promise<void> {
     if (!this.client.isOpen) await this.client.connect();
     if (!this.client.isReady) throw new Error('Redis client connected but is not ready');
+  }
+
+  async verifyConnection(): Promise<void> {
+    if (!this.client.isReady) throw new Error('Redis runtime client is not ready');
+    const response = await this.client.ping();
+    if (response !== 'PONG') throw new Error('Redis PING did not return PONG');
   }
 
   async xadd(stream: string, id: '*', fields: Readonly<Record<string, string>>): Promise<string> {
