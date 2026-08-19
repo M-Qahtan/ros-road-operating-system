@@ -1,5 +1,6 @@
 import { createServer, IncomingMessage } from 'node:http';
 import { parsePort } from './config.js';
+import { createRuntimeActorResolver } from './http/runtime-actor-resolver.js';
 import { createRoadEventHttpHandler } from './http/road-event-http.js';
 import { applySecurityHeaders, resolveTraceId } from './request-security.js';
 import { bootstrapRoadEventRuntime } from './runtime/runtime-bootstrap.js';
@@ -9,7 +10,8 @@ import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
 validateRuntimeEnvironment(process.env);
 const port = parsePort(process.env.PORT);
 const runtime = await bootstrapRoadEventRuntime(process.env);
-const handleRoadEvent = createRoadEventHttpHandler(runtime.application);
+const actorResolver = createRuntimeActorResolver(process.env);
+const handleRoadEvent = createRoadEventHttpHandler(runtime.application, actorResolver);
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
