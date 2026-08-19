@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   RoadEvent,
+  RoadEventAccessScope,
   RoadEventConcurrencyError,
   RoadEventListQuery,
   RoadEventNotFoundError,
@@ -22,6 +23,7 @@ import {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
+const ACCESS_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export class ApplicationValidationError extends Error { override readonly name = 'ApplicationValidationError'; }
 export class ApplicationConflictError extends Error { override readonly name = 'ApplicationConflictError'; }
@@ -89,6 +91,14 @@ function requireText(value: string, field: string, maximumLength: number): strin
   return normalized;
 }
 
+function requireAccessScopeValue(value: string, field: string): string {
+  const normalized = value.trim();
+  if (!ACCESS_SCOPE_PATTERN.test(normalized)) {
+    throw new ApplicationValidationError(`${field} must contain 1 to 128 safe scope characters`);
+  }
+  return normalized;
+}
+
 function requireTraceId(value: string): string {
   return requireText(value, 'traceId', 64);
 }
@@ -127,6 +137,7 @@ export class RoadEventApplicationService {
 
   async create(command: CreateRoadEventCommand, context: CommandContext): Promise<RoadEventReadModel> {
     this.authorization.assertAllowed(context.actor, 'road_event:create');
+    const scope = this.accessScope(context.actor);
     requireUuid(command.id, 'id');
     requireTraceId(context.traceId);
     const occurredAt = parseDate(command.occurredAt, 'occurredAt');
@@ -137,8 +148,9 @@ export class RoadEventApplicationService {
       longitude: command.longitude,
       ...(command.severity === undefined ? {} : { severity: command.severity })
     });
-    return this.executeIdempotently('road_event:create', context.idempotencyKey, command, async () => {
+    return this.executeIdempotently(this.operationScope('road_event:create', scope), context.idempotencyKey, command, async () => {
       await this.repository.create(event, {
+        ...scope,
         actorType: this.primaryRole(context.actor),
         actorId: context.actor.actorId,
         action: 'road_event.created',
@@ -153,14 +165,16 @@ export class RoadEventApplicationService {
 
   async reassessSeverity(command: ReassessSeverityCommand, context: CommandContext): Promise<RoadEventReadModel> {
     this.authorization.assertAllowed(context.actor, 'road_event:reassess_severity');
+    const scope = this.accessScope(context.actor);
     requireUuid(command.roadEventId, 'roadEventId');
     validateExpectedVersion(command.expectedVersion);
     const reason = requireText(command.reason, 'reason', 500);
-    return this.executeIdempotently('road_event:reassess_severity', context.idempotencyKey, command, async () => {
-      const event = await this.requireEvent(command.roadEventId);
+    return this.executeIdempotently(this.operationScope('road_event:reassess_severity', scope), context.idempotencyKey, command, async () => {
+      const event = await this.requireEvent(command.roadEventId, scope);
       if (event.version !== command.expectedVersion) throw new RoadEventConcurrencyError('RoadEvent version is stale');
       event.assessSeverity(command.assessment);
       await this.repository.update(event, command.expectedVersion, {
+        ...scope,
         actorType: this.primaryRole(context.actor),
         actorId: context.actor.actorId,
         action: 'road_event.severity_reassessed',
@@ -176,14 +190,16 @@ export class RoadEventApplicationService {
 
   async transition(command: TransitionRoadEventCommand, context: CommandContext): Promise<RoadEventReadModel> {
     this.authorization.assertAllowed(context.actor, command.nextStatus === RoadEventStatus.Closed ? 'road_event:close' : 'road_event:transition');
+    const scope = this.accessScope(context.actor);
     requireUuid(command.roadEventId, 'roadEventId');
     validateExpectedVersion(command.expectedVersion);
     const reason = requireText(command.reason, 'reason', 500);
-    return this.executeIdempotently('road_event:transition', context.idempotencyKey, command, async () => {
-      const event = await this.requireEvent(command.roadEventId);
+    return this.executeIdempotently(this.operationScope('road_event:transition', scope), context.idempotencyKey, command, async () => {
+      const event = await this.requireEvent(command.roadEventId, scope);
       if (event.version !== command.expectedVersion) throw new RoadEventConcurrencyError('RoadEvent version is stale');
       event.transitionTo(command.nextStatus);
       await this.repository.update(event, command.expectedVersion, {
+        ...scope,
         actorType: this.primaryRole(context.actor),
         actorId: context.actor.actorId,
         action: command.nextStatus === RoadEventStatus.Closed ? 'road_event.closed' : 'road_event.transitioned',
@@ -199,15 +215,17 @@ export class RoadEventApplicationService {
 
   async authorizeClosure(command: AuthorizeClosureCommand, context: CommandContext): Promise<RoadEventReadModel> {
     this.authorization.assertAllowed(context.actor, 'road_event:authorize_closure');
+    const scope = this.accessScope(context.actor);
     requireUuid(command.roadEventId, 'roadEventId');
     validateExpectedVersion(command.expectedVersion);
     const reason = requireText(command.reason, 'reason', 500);
     const authorizedAt = parseDate(command.authorizedAt, 'authorizedAt');
-    return this.executeIdempotently('road_event:authorize_closure', context.idempotencyKey, command, async () => {
-      const event = await this.requireEvent(command.roadEventId);
+    return this.executeIdempotently(this.operationScope('road_event:authorize_closure', scope), context.idempotencyKey, command, async () => {
+      const event = await this.requireEvent(command.roadEventId, scope);
       if (event.version !== command.expectedVersion) throw new RoadEventConcurrencyError('RoadEvent version is stale');
       event.authorizeClosure({ actorId: context.actor.actorId, reason, authorizedAt });
       await this.repository.update(event, command.expectedVersion, {
+        ...scope,
         actorType: this.primaryRole(context.actor),
         actorId: context.actor.actorId,
         action: 'road_event.closure_authorized',
@@ -223,6 +241,7 @@ export class RoadEventApplicationService {
 
   async attachSignal(command: AttachSignalCommand, context: CommandContext): Promise<{ readonly attached: true }> {
     this.authorization.assertAllowed(context.actor, 'road_event:attach_signal');
+    const scope = this.accessScope(context.actor);
     requireUuid(command.roadEventId, 'roadEventId');
     requireUuid(command.signalId, 'signalId');
     if (!Number.isFinite(command.matchScore) || command.matchScore < 0 || command.matchScore > 1) {
@@ -231,8 +250,8 @@ export class RoadEventApplicationService {
     if (command.mergeReasons.length === 0 || command.mergeReasons.some((reason) => reason.trim().length === 0)) {
       throw new ApplicationValidationError('mergeReasons must contain at least one non-empty reason');
     }
-    return this.executeIdempotently('road_event:attach_signal', context.idempotencyKey, command, async () => {
-      await this.requireEvent(command.roadEventId);
+    return this.executeIdempotently(this.operationScope('road_event:attach_signal', scope), context.idempotencyKey, command, async () => {
+      await this.requireEvent(command.roadEventId, scope);
       await this.signals.attach({
         roadEventId: command.roadEventId,
         signalId: command.signalId,
@@ -247,23 +266,36 @@ export class RoadEventApplicationService {
 
   async getById(id: string, actor: AuthenticatedActor): Promise<RoadEventReadModel> {
     this.authorization.assertAllowed(actor, 'road_event:read');
-    return toRoadEventReadModel(await this.requireEvent(requireUuid(id, 'roadEventId')));
+    const scope = this.accessScope(actor);
+    return toRoadEventReadModel(await this.requireEvent(requireUuid(id, 'roadEventId'), scope));
   }
 
   async list(query: RoadEventListQuery, actor: AuthenticatedActor): Promise<RoadEventPageReadModel> {
     this.authorization.assertAllowed(actor, 'road_event:list');
-    const page = await this.repository.list(query);
+    const page = await this.repository.list(query, this.accessScope(actor));
     return { ...page, items: page.items.map(toRoadEventReadModel) };
   }
 
   async timeline(id: string, actor: AuthenticatedActor) {
     this.authorization.assertAllowed(actor, 'road_event:audit_read');
-    await this.requireEvent(requireUuid(id, 'roadEventId'));
-    return this.auditTimeline.listForRoadEvent(id);
+    const scope = this.accessScope(actor);
+    await this.requireEvent(requireUuid(id, 'roadEventId'), scope);
+    return this.auditTimeline.listForRoadEvent(id, scope);
   }
 
-  private async requireEvent(id: string): Promise<RoadEvent> {
-    const event = await this.repository.findById(id);
+  private accessScope(actor: AuthenticatedActor): RoadEventAccessScope {
+    return {
+      tenantId: requireAccessScopeValue(actor.tenantId, 'actor.tenantId'),
+      purpose: requireAccessScopeValue(actor.purpose, 'actor.purpose')
+    };
+  }
+
+  private operationScope(operation: string, scope: RoadEventAccessScope): string {
+    return `${operation}:${scope.tenantId}:${scope.purpose}`;
+  }
+
+  private async requireEvent(id: string, scope: RoadEventAccessScope): Promise<RoadEvent> {
+    const event = await this.repository.findById(id, scope);
     if (event === undefined) throw new RoadEventNotFoundError(`RoadEvent ${id} was not found`);
     return event;
   }
