@@ -1,8 +1,10 @@
 import {
   RoadEvent,
+  RoadEventAccessScope,
   RoadEventAlreadyExistsError,
   RoadEventConcurrencyError,
   RoadEventListQuery,
+  RoadEventNotFoundError,
   RoadEventPage,
   RoadEventRepository,
   RoadEventWriteContext
@@ -106,32 +108,48 @@ function eventSnapshot(event: RoadEvent): Readonly<Record<string, unknown>> {
   };
 }
 
+function sameScope(left: RoadEventAccessScope, right: RoadEventAccessScope): boolean {
+  return left.tenantId === right.tenantId && left.purpose === right.purpose;
+}
+
 export class MemoryRoadEventRepository implements RoadEventRepository, AuditTimelinePort {
   private readonly events = new Map<string, RoadEvent>();
+  private readonly scopes = new Map<string, RoadEventAccessScope>();
   private readonly audit = new Map<string, AuditTimelineEntry[]>();
 
   async create(event: RoadEvent, context: RoadEventWriteContext): Promise<void> {
     if (this.events.has(event.id)) throw new RoadEventAlreadyExistsError(`RoadEvent ${event.id} already exists`);
     this.events.set(event.id, cloneEvent(event));
+    this.scopes.set(event.id, { tenantId: context.tenantId, purpose: context.purpose });
     this.appendAudit(event.id, context, null, eventSnapshot(event));
   }
 
   async update(event: RoadEvent, expectedVersion: number, context: RoadEventWriteContext): Promise<void> {
     const current = this.events.get(event.id);
-    if (current === undefined || current.version !== expectedVersion) {
+    const scope = this.scopes.get(event.id);
+    if (current === undefined || scope === undefined || !sameScope(scope, context)) {
+      throw new RoadEventNotFoundError(`RoadEvent ${event.id} was not found`);
+    }
+    if (current.version !== expectedVersion) {
       throw new RoadEventConcurrencyError(`RoadEvent ${event.id} expected version ${expectedVersion}`);
     }
     this.events.set(event.id, cloneEvent(event));
     this.appendAudit(event.id, context, eventSnapshot(current), eventSnapshot(event));
   }
 
-  async findById(id: string): Promise<RoadEvent | undefined> {
+  async findById(id: string, scope: RoadEventAccessScope): Promise<RoadEvent | undefined> {
     const event = this.events.get(id);
-    return event === undefined ? undefined : cloneEvent(event);
+    const storedScope = this.scopes.get(id);
+    if (event === undefined || storedScope === undefined || !sameScope(storedScope, scope)) return undefined;
+    return cloneEvent(event);
   }
 
-  async list(query: RoadEventListQuery): Promise<RoadEventPage> {
+  async list(query: RoadEventListQuery, scope: RoadEventAccessScope): Promise<RoadEventPage> {
     const items = [...this.events.values()]
+      .filter((event) => {
+        const storedScope = this.scopes.get(event.id);
+        return storedScope !== undefined && sameScope(storedScope, scope);
+      })
       .filter((event) => query.statuses === undefined || query.statuses.includes(event.status))
       .filter((event) => query.severities === undefined || query.severities.includes(event.severity.level))
       .filter((event) => query.occurredFrom === undefined || event.occurredAt >= query.occurredFrom)
