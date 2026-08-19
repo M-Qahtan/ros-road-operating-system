@@ -9,8 +9,8 @@ import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
 
 validateRuntimeEnvironment(process.env);
 const port = parsePort(process.env.PORT);
-const runtime = await bootstrapRoadEventRuntime(process.env);
 const actorResolver = createRuntimeActorResolver(process.env);
+const runtime = await bootstrapRoadEventRuntime(process.env);
 const handleRoadEvent = createRoadEventHttpHandler(runtime.application, actorResolver);
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
