@@ -20,6 +20,7 @@ interface JwtPayload {
   readonly client_id?: unknown;
   readonly tenant_id?: unknown;
   readonly purpose?: unknown;
+  readonly ros_roles?: unknown;
   readonly amr?: unknown;
   readonly iat?: unknown;
   readonly exp?: unknown;
@@ -81,11 +82,23 @@ function parseAudience(value: unknown): string | readonly string[] {
   throw new OidcTokenVerificationError('JWT aud claim is required');
 }
 
-function parseAuthenticationMethods(value: unknown): readonly string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.trim().length === 0)) {
-    throw new OidcTokenVerificationError('JWT amr claim must be a string array');
+function parseStringArray(value: unknown, field: string, requireNonEmpty: boolean): readonly string[] {
+  if (
+    !Array.isArray(value)
+    || (requireNonEmpty && value.length === 0)
+    || value.some((item) => typeof item !== 'string' || item.trim().length === 0)
+  ) {
+    throw new OidcTokenVerificationError(`JWT ${field} claim must be a${requireNonEmpty ? ' non-empty' : ''} string array`);
   }
-  return value.map((item) => (item as string).trim());
+  const normalized = value.map((item) => (item as string).trim());
+  if (new Set(normalized).size !== normalized.length) {
+    throw new OidcTokenVerificationError(`JWT ${field} claim must not contain duplicate values`);
+  }
+  return normalized;
+}
+
+function parseAuthenticationMethods(value: unknown): readonly string[] {
+  return parseStringArray(value, 'amr', false);
 }
 
 function assertStrongRs256Key(publicKey: KeyObject): void {
@@ -149,6 +162,7 @@ export class Rs256OidcTokenVerifier implements OidcTokenVerifierPort {
       clientId,
       tenantId: requiredString(payload.tenant_id, 'tenant_id'),
       purpose: requiredString(payload.purpose, 'purpose'),
+      roles: parseStringArray(payload.ros_roles, 'ros_roles', true),
       authenticationMethods: parseAuthenticationMethods(payload.amr),
       issuedAtEpochSeconds: requiredInteger(payload.iat, 'iat'),
       expiresAtEpochSeconds: requiredInteger(payload.exp, 'exp')
