@@ -27,7 +27,16 @@ export interface IdempotencyRecord<T> {
   readonly value: T;
 }
 
+export class IdempotencyInFlightError extends Error {
+  override readonly name = 'IdempotencyInFlightError';
+}
+
 export interface IdempotencyPort {
+  /**
+   * Ensures only one operation for a scope/key can cross the get -> operation -> put
+   * boundary at a time. Production implementations must coordinate across processes.
+   */
+  executeExclusively<T>(scope: string, key: string, operation: () => Promise<T>): Promise<T>;
   get<T>(scope: string, key: string): Promise<IdempotencyRecord<T> | undefined>;
   put<T>(scope: string, key: string, record: IdempotencyRecord<T>): Promise<void>;
 }
