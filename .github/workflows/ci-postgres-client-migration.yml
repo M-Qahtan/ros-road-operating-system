@@ -1,9 +1,7 @@
 name: CI PostgreSQL Client Migration
 
 on:
-  push:
-    branches:
-      - agent/runtime-production-readiness
+  pull_request:
     paths:
       - .github/workflows/ci-postgres-client-migration.yml
 
@@ -16,7 +14,12 @@ concurrency:
 
 jobs:
   migrate:
-    if: github.repository == 'M-Qahtan/ros-road-operating-system' && github.ref == 'refs/heads/agent/runtime-production-readiness'
+    if: >-
+      ${{
+        github.repository == 'M-Qahtan/ros-road-operating-system' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.ref == 'agent/runtime-production-readiness'
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
