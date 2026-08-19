@@ -15,6 +15,7 @@ const CLAIMS: VerifiedOidcClaims = {
   clientId: 'traffic-sandbox',
   tenantId: 'riyadh-pilot',
   purpose: 'TRAFFIC_COORDINATION',
+  roles: ['INTEGRATION_SERVICE'],
   authenticationMethods: ['pwd', 'mfa'],
   issuedAtEpochSeconds: NOW - 60,
   expiresAtEpochSeconds: NOW + 300
@@ -111,7 +112,7 @@ test('simulation header resolver rejects missing role or access scope', async ()
   );
 });
 
-test('trusted OIDC resolver maps verified subject, tenant and purpose and ignores self-attested headers', async () => {
+test('trusted integration resolver maps verified subject, tenant and purpose and ignores self-attested headers', async () => {
   const oidc = createOidcIntegrationActorResolver(verifier(), POLICY, trustedClock);
   const resolver = createActorResolverForEnvironment({ NODE_ENV: 'production' }, oidc);
 
@@ -132,7 +133,7 @@ test('trusted OIDC resolver maps verified subject, tenant and purpose and ignore
   );
 });
 
-test('trusted OIDC resolver rejects missing bearer token, invalid claims and non-UUID subjects', async () => {
+test('trusted integration resolver rejects missing bearer token, invalid claims and non-UUID subjects', async () => {
   const resolver = createOidcIntegrationActorResolver(verifier(), POLICY, trustedClock);
   await assert.rejects(resolver.resolve({}), /Bearer authorization is required/);
 
@@ -157,7 +158,7 @@ test('trusted OIDC resolver rejects missing bearer token, invalid claims and non
   );
 });
 
-test('trusted OIDC resolver fails closed when the injected verifier clock is invalid', async () => {
+test('trusted integration resolver fails closed when the injected verifier clock is invalid', async () => {
   const resolver = createOidcIntegrationActorResolver(verifier(), POLICY, () => 0);
   await assert.rejects(
     resolver.resolve({ authorization: 'Bearer signed-token' }),
