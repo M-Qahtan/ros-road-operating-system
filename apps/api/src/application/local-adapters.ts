@@ -12,6 +12,7 @@ import {
   AuditTimelinePort,
   AuthenticatedActor,
   AuthorizationPort,
+  IdempotencyInFlightError,
   IdempotencyPort,
   IdempotencyRecord,
   RoadEventPermission,
@@ -46,6 +47,21 @@ export class RoleMatrixAuthorizationAdapter implements AuthorizationPort {
 
 export class MemoryIdempotencyAdapter implements IdempotencyPort {
   private readonly records = new Map<string, IdempotencyRecord<unknown>>();
+  private readonly inFlight = new Set<string>();
+
+  async executeExclusively<T>(scope: string, key: string, operation: () => Promise<T>): Promise<T> {
+    const composite = `${scope}:${key}`;
+    if (this.inFlight.has(composite)) {
+      throw new IdempotencyInFlightError('Equivalent idempotent request is already in progress');
+    }
+    this.inFlight.add(composite);
+    try {
+      return await operation();
+    } finally {
+      this.inFlight.delete(composite);
+    }
+  }
+
   async get<T>(scope: string, key: string): Promise<IdempotencyRecord<T> | undefined> {
     return this.records.get(`${scope}:${key}`) as IdempotencyRecord<T> | undefined;
   }
