@@ -14,6 +14,8 @@ const OPERATOR_ID = '90000000-0000-4000-8000-000000000010';
 const SUPERVISOR_ID = '90000000-0000-4000-8000-000000000011';
 const SIGNAL_A = '90000000-0000-4000-8000-000000000101';
 const SIGNAL_B = '90000000-0000-4000-8000-000000000102';
+const TENANT_ID = 'riyadh-pilot';
+const PURPOSE = 'ROAD_SAFETY_OPERATIONS';
 
 interface Notification { readonly key: string; readonly agency: 'AMBULANCE_SIM' | 'TRAFFIC_SIM' | 'TOWING_SIM'; readonly traceId: string; }
 interface EvidenceRecord { readonly id: string; readonly roadEventId: string; readonly checksum: string; readonly status: 'AVAILABLE' | 'QUARANTINED'; }
@@ -70,8 +72,8 @@ export async function runRiyadhPilotSimulation(): Promise<RiyadhPilotResult> {
     signals,
     repository
   );
-  const operator = { actorId: OPERATOR_ID, roles: ['OPERATOR'] as const };
-  const supervisor = { actorId: SUPERVISOR_ID, roles: ['SUPERVISOR'] as const };
+  const operator = { actorId: OPERATOR_ID, roles: ['OPERATOR'] as const, tenantId: TENANT_ID, purpose: PURPOSE };
+  const supervisor = { actorId: SUPERVISOR_ID, roles: ['SUPERVISOR'] as const, tenantId: TENANT_ID, purpose: PURPOSE };
   const baseContext = { actor: operator, traceId: 'riyadh-pilot-trace', idempotencyKey: 'pilot-create-0001' };
 
   const createStarted = performance.now();
