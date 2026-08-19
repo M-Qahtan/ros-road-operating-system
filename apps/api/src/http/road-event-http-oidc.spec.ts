@@ -36,11 +36,11 @@ const POLICY: IntegrationPrincipalPolicy = {
   maxClockSkewSeconds: 30
 };
 
-function verifier(): OidcTokenVerifierPort {
-  return { verifyBearerToken: async () => CLAIMS };
+function verifier(claims: VerifiedOidcClaims = CLAIMS): OidcTokenVerifierPort {
+  return { verifyBearerToken: async () => claims };
 }
 
-function fixture() {
+function fixture(claims: VerifiedOidcClaims = CLAIMS) {
   const repository = new MemoryRoadEventRepository();
   const application = new RoadEventApplicationService(
     repository,
@@ -49,10 +49,13 @@ function fixture() {
     new MemorySignalAttachmentAdapter(),
     repository
   );
-  return createRoadEventHttpHandler(
-    application,
-    createOidcIntegrationActorResolver(verifier(), POLICY, () => NOW)
-  );
+  return {
+    handle: createRoadEventHttpHandler(
+      application,
+      createOidcIntegrationActorResolver(verifier(claims), POLICY, () => NOW)
+    ),
+    repository
+  };
 }
 
 function request(headers: Readonly<Record<string, string | undefined>>): HttpRequest {
@@ -71,25 +74,48 @@ function request(headers: Readonly<Record<string, string | undefined>>): HttpReq
   };
 }
 
-test('HTTP command path awaits trusted OIDC actor and ignores self-attested role headers', async () => {
-  const handle = fixture();
+test('HTTP command path awaits trusted OIDC actor and ignores self-attested role and scope headers', async () => {
+  const { handle, repository } = fixture();
   const response = await handle(request({
     authorization: 'Bearer signed-token',
     'x-actor-id': 'attacker',
     'x-ros-roles': 'SUPERVISOR',
+    'x-tenant-id': 'attacker-tenant',
+    'x-purpose': 'INSURANCE_COORDINATION',
     'idempotency-key': 'oidc-create-0001'
   }));
 
   assert.equal(response.status, 201);
   assert.equal((response.body as { success: boolean }).success, true);
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, {
+    tenantId: 'riyadh-pilot',
+    purpose: 'TRAFFIC_COORDINATION'
+  })).total, 1);
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, {
+    tenantId: 'attacker-tenant',
+    purpose: 'INSURANCE_COORDINATION'
+  })).total, 0);
 });
 
 test('HTTP command path fails closed when trusted bearer identity is absent', async () => {
-  const handle = fixture();
+  const { handle } = fixture();
   const response = await handle(request({
     'x-actor-id': ACTOR_ID,
     'x-ros-roles': 'SUPERVISOR',
+    'x-tenant-id': 'riyadh-pilot',
+    'x-purpose': 'TRAFFIC_COORDINATION',
     'idempotency-key': 'oidc-create-0002'
+  }));
+
+  assert.equal(response.status, 403);
+  assert.equal((response.body as { error: { code: string } }).error.code, 'FORBIDDEN');
+});
+
+test('HTTP command path rejects cryptographically verified claims outside policy scope', async () => {
+  const { handle } = fixture({ ...CLAIMS, purpose: 'INSURANCE_COORDINATION' });
+  const response = await handle(request({
+    authorization: 'Bearer signed-token',
+    'idempotency-key': 'oidc-create-0003'
   }));
 
   assert.equal(response.status, 403);
