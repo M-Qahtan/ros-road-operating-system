@@ -75,11 +75,21 @@ function productionEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Proces
   };
 }
 
-test('development keeps deterministic simulation auth without OIDC configuration', async () => {
+const simulationScope = {
+  'x-tenant-id': 'riyadh-pilot',
+  'x-purpose': 'TRAFFIC_COORDINATION'
+} as const;
+
+test('development keeps deterministic scoped simulation auth without OIDC configuration', async () => {
   const resolver = createRuntimeActorResolver({ NODE_ENV: 'development' });
   assert.deepEqual(
-    await resolver.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR' }),
-    { actorId: 'operator-1', roles: ['OPERATOR'] }
+    await resolver.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR', ...simulationScope }),
+    {
+      actorId: 'operator-1',
+      roles: ['OPERATOR'],
+      tenantId: 'riyadh-pilot',
+      purpose: 'TRAFFIC_COORDINATION'
+    }
   );
 });
 
@@ -98,15 +108,22 @@ test('production fails closed unless OIDC profile and required trust inputs are 
   );
 });
 
-test('production runtime verifies signed bearer identity through configured JWKS trust anchor', async () => {
+test('production runtime verifies signed bearer identity and propagates trusted resource scope', async () => {
   const resolver = createRuntimeActorResolver(productionEnvironment(), { jwksFetch: fakeFetch });
   assert.deepEqual(
     await resolver.resolve({
       authorization: `Bearer ${token()}`,
       'x-actor-id': 'attacker',
-      'x-ros-roles': 'SUPERVISOR'
+      'x-ros-roles': 'SUPERVISOR',
+      'x-tenant-id': 'other-tenant',
+      'x-purpose': 'INSURANCE_COORDINATION'
     }),
-    { actorId: ACTOR_ID, roles: ['INTEGRATION_SERVICE'] }
+    {
+      actorId: ACTOR_ID,
+      roles: ['INTEGRATION_SERVICE'],
+      tenantId: 'riyadh-pilot',
+      purpose: 'TRAFFIC_COORDINATION'
+    }
   );
 });
 
@@ -118,14 +135,23 @@ test('production preserves an exact trailing-slash issuer trust value', async ()
   );
   assert.deepEqual(
     await resolver.resolve({ authorization: `Bearer ${token({ iss: issuer })}` }),
-    { actorId: ACTOR_ID, roles: ['INTEGRATION_SERVICE'] }
+    {
+      actorId: ACTOR_ID,
+      roles: ['INTEGRATION_SERVICE'],
+      tenantId: 'riyadh-pilot',
+      purpose: 'TRAFFIC_COORDINATION'
+    }
   );
 });
 
-test('production runtime rejects a correctly signed token for an unauthorized tenant', async () => {
+test('production runtime rejects a correctly signed token for an unauthorized tenant or purpose', async () => {
   const resolver = createRuntimeActorResolver(productionEnvironment(), { jwksFetch: fakeFetch });
   await assert.rejects(
     resolver.resolve({ authorization: `Bearer ${token({ tenant_id: 'other-tenant' })}` }),
+    /Trusted OIDC\/JWT identity could not be verified/
+  );
+  await assert.rejects(
+    resolver.resolve({ authorization: `Bearer ${token({ purpose: 'INSURANCE_COORDINATION' })}` }),
     /Trusted OIDC\/JWT identity could not be verified/
   );
 });
@@ -136,8 +162,13 @@ test('non-production staging still requires explicit simulation or OIDC profile'
     /ROS_AUTH_PROFILE=oidc/
   );
   const resolver = createRuntimeActorResolver({ NODE_ENV: 'staging', ROS_AUTH_PROFILE: 'simulation' });
-  assert.equal(
-    (await resolver.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR' })).actorId,
-    'operator-1'
+  assert.deepEqual(
+    await resolver.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR', ...simulationScope }),
+    {
+      actorId: 'operator-1',
+      roles: ['OPERATOR'],
+      tenantId: 'riyadh-pilot',
+      purpose: 'TRAFFIC_COORDINATION'
+    }
   );
 });
