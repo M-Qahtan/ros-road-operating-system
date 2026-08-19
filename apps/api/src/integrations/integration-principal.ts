@@ -32,6 +32,7 @@ export interface IntegrationPrincipalPolicy {
   readonly issuer: string;
   readonly audience: string;
   readonly allowedClientIds: readonly string[];
+  readonly allowedTenantIds: readonly string[];
   readonly allowedPurposes: readonly IntegrationPurpose[];
   readonly requireMfa: boolean;
   readonly maxTokenAgeSeconds: number;
@@ -85,6 +86,7 @@ export async function resolveTrustedIntegrationPrincipal(
   if (claims.issuer !== policy.issuer) throw new IntegrationPrincipalError('OIDC issuer is not trusted');
   if (!hasAudience(claims.audience, policy.audience)) throw new IntegrationPrincipalError('OIDC audience is not trusted');
   if (!policy.allowedClientIds.includes(clientId)) throw new IntegrationPrincipalError('OIDC client is not authorized');
+  if (!policy.allowedTenantIds.includes(tenantId)) throw new IntegrationPrincipalError('OIDC tenant is not authorized');
   if (!policy.allowedPurposes.includes(purpose)) throw new IntegrationPrincipalError('Integration purpose is not authorized');
 
   if (!validInteger(claims.issuedAtEpochSeconds) || !validInteger(claims.expiresAtEpochSeconds)) {
