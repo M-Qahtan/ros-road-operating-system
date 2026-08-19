@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { RoadEventAccessScope, RoadEventNotFoundError } from '@ros/domain';
 import {
   AuditTimelineEntry,
   AuditTimelinePort,
@@ -12,6 +13,7 @@ import { PostgresPool } from './postgres-types.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const ACCESS_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 interface IdempotencyRow {
   readonly fingerprint: string;
@@ -54,6 +56,14 @@ function requireUuid(value: string, field: string): string {
   return value;
 }
 
+function requireAccessScope(scope: RoadEventAccessScope): RoadEventAccessScope {
+  const tenantId = scope.tenantId.trim();
+  const purpose = scope.purpose.trim();
+  if (!ACCESS_SCOPE_PATTERN.test(tenantId)) throw new TypeError('tenantId is not a valid access scope');
+  if (!ACCESS_SCOPE_PATTERN.test(purpose)) throw new TypeError('purpose is not a valid access scope');
+  return { tenantId, purpose };
+}
+
 function asIso(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(date.getTime())) throw new TypeError('Audit timestamp is invalid');
@@ -92,9 +102,6 @@ export class PostgresIdempotencyAdapter implements IdempotencyPort {
       completed = true;
       return value;
     } finally {
-      // On any operation error or process crash, intentionally retain the durable
-      // reservation. Automatic expiry could re-execute a command whose domain
-      // commit outcome is unknown, so recovery requires explicit reconciliation.
       if (completed) {
         const releaseClient = await this.pool.connect();
         try {
@@ -178,6 +185,7 @@ export class PostgresSignalAttachmentAdapter implements SignalAttachmentPort {
     const signalId = requireUuid(input.signalId, 'signalId');
     const actorId = requireUuid(input.actor.actorId, 'actorId');
     const traceId = requireUuid(input.traceId, 'traceId');
+    const scope = requireAccessScope(input.actor);
     if (!Number.isFinite(input.matchScore) || input.matchScore < 0 || input.matchScore > 1) {
       throw new RangeError('matchScore must be between 0 and 1');
     }
@@ -189,6 +197,14 @@ export class PostgresSignalAttachmentAdapter implements SignalAttachmentPort {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const scoped = await client.query(
+        `SELECT id FROM road_events
+          WHERE id = $1::uuid AND tenant_id = $2 AND purpose = $3
+          FOR SHARE`,
+        [roadEventId, scope.tenantId, scope.purpose]
+      );
+      if (scoped.rowCount !== 1) throw new RoadEventNotFoundError(`RoadEvent ${roadEventId} was not found`);
+
       const attached = await client.query(
         `INSERT INTO road_event_signals (road_event_id, signal_id, match_score, merge_reason)
          VALUES ($1::uuid, $2::uuid, $3, $4::text[])
@@ -230,16 +246,21 @@ export class PostgresSignalAttachmentAdapter implements SignalAttachmentPort {
 export class PostgresAuditTimelineAdapter implements AuditTimelinePort {
   constructor(private readonly pool: PostgresPool) {}
 
-  async listForRoadEvent(roadEventId: string): Promise<readonly AuditTimelineEntry[]> {
+  async listForRoadEvent(roadEventId: string, rawScope: RoadEventAccessScope): Promise<readonly AuditTimelineEntry[]> {
     const id = requireUuid(roadEventId, 'roadEventId');
+    const scope = requireAccessScope(rawScope);
     const client = await this.pool.connect();
     try {
       const result = await client.query<AuditRow>(
-        `SELECT action, actor_type, actor_id, before_state, after_state, reason, trace_id, occurred_at
-           FROM audit_logs
-          WHERE resource_type = 'RoadEvent' AND resource_id = $1::uuid
-          ORDER BY occurred_at ASC, id ASC`,
-        [id]
+        `SELECT a.action, a.actor_type, a.actor_id, a.before_state, a.after_state, a.reason, a.trace_id, a.occurred_at
+           FROM audit_logs a
+           JOIN road_events r ON r.id = a.resource_id
+          WHERE a.resource_type = 'RoadEvent'
+            AND a.resource_id = $1::uuid
+            AND r.tenant_id = $2
+            AND r.purpose = $3
+          ORDER BY a.occurred_at ASC, a.id ASC`,
+        [id, scope.tenantId, scope.purpose]
       );
       return result.rows.map((row) => ({
         action: row.action,
