@@ -27,5 +27,36 @@ BEFORE UPDATE ON idempotency_records
 FOR EACH ROW
 EXECUTE FUNCTION reject_idempotency_record_update();
 
+CREATE TABLE idempotency_reservations (
+  scope TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  fence_token UUID NOT NULL,
+  acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (scope, idempotency_key),
+  UNIQUE (fence_token),
+  CONSTRAINT idempotency_reservations_scope_length CHECK (length(scope) BETWEEN 1 AND 128),
+  CONSTRAINT idempotency_reservations_key_length CHECK (length(idempotency_key) BETWEEN 8 AND 128)
+);
+
+CREATE INDEX idempotency_reservations_acquired_at_idx
+  ON idempotency_reservations (acquired_at);
+
+CREATE FUNCTION reject_idempotency_reservation_update()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'idempotency_reservations cannot be updated';
+END;
+$$;
+
+CREATE TRIGGER idempotency_reservations_no_update
+BEFORE UPDATE ON idempotency_reservations
+FOR EACH ROW
+EXECUTE FUNCTION reject_idempotency_reservation_update();
+
 COMMENT ON TABLE idempotency_records IS
-  'Durable completed-command replay records. Runtime advisory fencing blocks concurrent equal keys; crash-after-domain-commit-before-replay-record remains a release-blocking residual until atomic command/replay persistence is implemented.';
+  'Immutable completed-command replay records.';
+
+COMMENT ON TABLE idempotency_reservations IS
+  'Durable pre-execution fences. A reservation is deleted only after the protected operation, including replay persistence, succeeds. Errors or process crashes intentionally leave a fail-closed reservation for explicit reconciliation; request-path code must never auto-expire it.';
