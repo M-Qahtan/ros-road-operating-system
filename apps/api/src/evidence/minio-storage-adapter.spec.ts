@@ -4,7 +4,10 @@ import { MinioEvidenceStorageAdapter } from './minio-storage-adapter.js';
 
 const NOW = new Date('2026-07-25T04:00:00.000Z');
 
-function adapter(fetchImpl: typeof fetch = async () => new Response(null, { status: 200 })) {
+function adapter(
+  fetchImpl: typeof fetch = async () => new Response(null, { status: 200 }),
+  overrides: Partial<ConstructorParameters<typeof MinioEvidenceStorageAdapter>[0]> = {}
+) {
   return new MinioEvidenceStorageAdapter({
     endpoint: 'http://127.0.0.1:9000',
     region: 'us-east-1',
@@ -12,7 +15,8 @@ function adapter(fetchImpl: typeof fetch = async () => new Response(null, { stat
     accessKeyId: 'ros-local',
     secretAccessKey: 'local-secret-password',
     now: () => new Date(NOW),
-    fetchImpl
+    fetchImpl,
+    ...overrides
   });
 }
 
@@ -32,6 +36,18 @@ test('upload request signs required content metadata with a short expiry', async
   assert.equal(request.requiredHeaders['content-length'], '1024');
   assert.equal(request.requiredHeaders['content-type'], 'image/jpeg');
   assert.equal(request.requiredHeaders['x-amz-checksum-sha256'], Buffer.from('a'.repeat(64), 'hex').toString('base64'));
+});
+
+test('temporary credentials include the session token in the canonical presigned query', async () => {
+  const request = await adapter(undefined, {
+    sessionToken: 'temporary-session-token-material'
+  }).createDownloadRequest(
+    'road-events/event/evidence/id/frame.jpg',
+    new Date('2026-07-25T04:01:00.000Z')
+  );
+  const url = new URL(request.url);
+  assert.equal(url.searchParams.get('X-Amz-Security-Token'), 'temporary-session-token-material');
+  assert.match(url.searchParams.get('X-Amz-Signature') ?? '', /^[0-9a-f]{64}$/);
 });
 
 test('signed request rejects expiry outside the safety bound', async () => {
@@ -64,4 +80,26 @@ test('quarantine copies before deleting the original object', async () => {
   assert.deepEqual(requests.map((request) => request.method), ['PUT', 'DELETE']);
   assert.match(requests[0]!.url, /quarantine\/id/);
   assert.match(requests[1]!.url, /road-events\/event\/evidence\/id\/file/);
+});
+
+test('rejects unsafe object-key path segments and endpoint decorations', async () => {
+  await assert.rejects(
+    adapter().createDownloadRequest('road-events/../secret', new Date('2026-07-25T04:01:00.000Z')),
+    /unsafe path segment/
+  );
+  assert.throws(
+    () => adapter(undefined, { endpoint: 'http://user:pass@127.0.0.1:9000' }),
+    /must not contain credentials/
+  );
+  assert.throws(
+    () => adapter(undefined, { endpoint: 'http://127.0.0.1:9000?debug=true' }),
+    /must not contain credentials, query parameters or a fragment/
+  );
+});
+
+test('rejects malformed temporary session credentials', () => {
+  assert.throws(
+    () => adapter(undefined, { sessionToken: 'short' }),
+    /session token is invalid/
+  );
 });
