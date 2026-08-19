@@ -107,6 +107,7 @@ jobs:
           node scripts/validate-ci-evidence.mjs runtime-driver-integration-evidence.json runtime-driver-integration
       - name: Upload runtime driver evidence
         if: always()
+        id: upload-evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-driver-integration-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
