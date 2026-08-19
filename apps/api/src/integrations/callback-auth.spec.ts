@@ -112,3 +112,20 @@ test('rejects a nonce outside the durable replay-store bounds', async () => {
     /between 1 and 256 characters/
   );
 });
+
+test('fails closed when the replay store is unavailable', async () => {
+  const unavailableStore: CallbackReplayStore = {
+    claim: async () => { throw new Error('database unavailable'); }
+  };
+  await assert.rejects(
+    verifyCallbackHmac(
+      signedInput('{}', 'nonce-outage'),
+      TEST_HMAC_KEY_MATERIAL,
+      unavailableStore,
+      { nowEpochSeconds: NOW }
+    ),
+    (error: unknown) =>
+      error instanceof CallbackAuthenticationError &&
+      /replay protection is unavailable/.test(error.message)
+  );
+});
