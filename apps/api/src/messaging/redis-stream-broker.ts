@@ -13,7 +13,11 @@ function requireStreamName(value: string): string {
 export class RedisStreamEventBroker implements EventBroker {
   private readonly stream: string;
 
-  constructor(private readonly client: RedisStreamClient, stream = 'ros:integration-events') {
+  constructor(
+    private readonly client: RedisStreamClient,
+    stream = 'ros:integration-events',
+    private readonly simulationMode = true
+  ) {
     this.stream = requireStreamName(stream);
   }
 
@@ -27,7 +31,8 @@ export class RedisStreamEventBroker implements EventBroker {
       correlationId: message.correlationId,
       occurredAt: message.occurredAt.toISOString(),
       retryCount: String(message.retryCount),
-      simulationMode: 'true'
+      simulationMode: String(this.simulationMode),
+      deliveryMode: this.simulationMode ? 'simulation' : 'runtime'
     };
     if (message.causationId !== undefined) fields.causationId = message.causationId;
     if (message.traceId !== undefined) fields.traceId = message.traceId;
