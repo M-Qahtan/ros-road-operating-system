@@ -11,6 +11,8 @@ import {
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
+const TENANT_ID = 'riyadh-ops';
+const PURPOSE = 'ROAD_SAFETY_OPERATIONS';
 
 class BlockingCreateRepository extends MemoryRoadEventRepository {
   private releaseCreate!: () => void;
@@ -27,7 +29,7 @@ class BlockingCreateRepository extends MemoryRoadEventRepository {
   }
 }
 
-test('concurrent requests with the same idempotency key cannot execute the command twice', async () => {
+test('concurrent requests with the same scoped idempotency key cannot execute the command twice', async () => {
   const repository = new BlockingCreateRepository();
   const service = new RoadEventApplicationService(
     repository,
@@ -42,8 +44,14 @@ test('concurrent requests with the same idempotency key cannot execute the comma
     latitude: 24.7136,
     longitude: 46.6753
   };
+  const actor = {
+    actorId: ACTOR_ID,
+    roles: ['OPERATOR'] as const,
+    tenantId: TENANT_ID,
+    purpose: PURPOSE
+  };
   const context = {
-    actor: { actorId: ACTOR_ID, roles: ['OPERATOR'] as const },
+    actor,
     traceId: 'trace-concurrency-001',
     idempotencyKey: 'same-request-0001'
   };
@@ -61,5 +69,5 @@ test('concurrent requests with the same idempotency key cannot execute the comma
   const replayResult = await service.create(command, context);
 
   assert.deepEqual(replayResult, firstResult);
-  assert.equal((await repository.list({ limit: 20, offset: 0 })).total, 1);
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, actor)).total, 1);
 });
