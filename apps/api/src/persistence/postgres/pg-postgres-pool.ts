@@ -5,9 +5,23 @@ const DEFAULT_POOL_MAX = 10;
 const MAX_POOL_MAX = 100;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 2_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10_000;
+const REQUIRED_RUNTIME_RELATIONS = Object.freeze([
+  'road_events',
+  'road_event_access_scopes',
+  'idempotency_records',
+  'idempotency_reservations',
+  'audit_logs',
+  'outbox_events',
+  'road_event_signals'
+]);
+
+interface RuntimeSchemaProbeRow {
+  readonly relation_name: string;
+}
 
 export interface PgRuntimePool extends PostgresPool {
   verifyConnection(): Promise<void>;
+  verifyReadiness(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -144,6 +158,25 @@ export class NodePostgresPool implements PgRuntimePool {
     const client = await this.connect();
     try {
       await client.query('SELECT 1 AS ros_runtime_probe');
+    } finally {
+      client.release();
+    }
+  }
+
+  async verifyReadiness(): Promise<void> {
+    const client = await this.connect();
+    try {
+      await client.query('SELECT 1 AS ros_runtime_probe');
+      const result = await client.query<RuntimeSchemaProbeRow>(
+        `SELECT required.relation_name
+         FROM unnest($1::text[]) AS required(relation_name)
+         WHERE to_regclass('public.' || required.relation_name) IS NULL`,
+        [REQUIRED_RUNTIME_RELATIONS]
+      );
+      if (result.rows.length > 0) {
+        const missing = result.rows.map((row) => row.relation_name).sort().join(', ');
+        throw new Error(`PostgreSQL runtime schema is incomplete: ${missing}`);
+      }
     } finally {
       client.release();
     }
