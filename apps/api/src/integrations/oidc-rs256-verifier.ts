@@ -2,6 +2,8 @@ import { KeyObject, verify } from 'node:crypto';
 import { OidcTokenVerifierPort, VerifiedOidcClaims } from './integration-principal.js';
 
 const MAX_TOKEN_BYTES = 16 * 1024;
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+const MIN_RSA_MODULUS_BITS = 2048;
 
 interface JwtHeader {
   readonly alg?: unknown;
@@ -31,7 +33,15 @@ export class OidcTokenVerificationError extends Error {
   override readonly name = 'OidcTokenVerificationError';
 }
 
+function requireBase64Url(segment: string, field: string): string {
+  if (!BASE64URL_PATTERN.test(segment)) {
+    throw new OidcTokenVerificationError(`JWT ${field} is not canonical base64url`);
+  }
+  return segment;
+}
+
 function decodeJson<T>(segment: string, field: string): T {
+  requireBase64Url(segment, field);
   try {
     const decoded = Buffer.from(segment, 'base64url').toString('utf8');
     const value = JSON.parse(decoded) as unknown;
@@ -39,7 +49,8 @@ function decodeJson<T>(segment: string, field: string): T {
       throw new Error('not an object');
     }
     return value as T;
-  } catch {
+  } catch (error) {
+    if (error instanceof OidcTokenVerificationError) throw error;
     throw new OidcTokenVerificationError(`JWT ${field} is not valid base64url JSON`);
   }
 }
@@ -77,6 +88,17 @@ function parseAuthenticationMethods(value: unknown): readonly string[] {
   return value.map((item) => (item as string).trim());
 }
 
+function assertStrongRs256Key(publicKey: KeyObject): void {
+  if (publicKey.type !== 'public') throw new OidcTokenVerificationError('JWT verification key must be public');
+  if (publicKey.asymmetricKeyType !== 'rsa') {
+    throw new OidcTokenVerificationError('JWT verification key must be RSA');
+  }
+  const modulusLength = publicKey.asymmetricKeyDetails?.modulusLength;
+  if (typeof modulusLength !== 'number' || modulusLength < MIN_RSA_MODULUS_BITS) {
+    throw new OidcTokenVerificationError(`JWT RSA verification key must be at least ${MIN_RSA_MODULUS_BITS} bits`);
+  }
+}
+
 export class Rs256OidcTokenVerifier implements OidcTokenVerifierPort {
   constructor(private readonly keys: OidcVerificationKeyProviderPort) {}
 
@@ -103,14 +125,10 @@ export class Rs256OidcTokenVerifier implements OidcTokenVerifierPort {
     const kid = requiredString(header.kid, 'kid');
     const publicKey = await this.keys.resolveRs256PublicKey(kid);
     if (publicKey === undefined) throw new OidcTokenVerificationError('JWT signing key is not trusted');
-    if (publicKey.type !== 'public') throw new OidcTokenVerificationError('JWT verification key must be public');
+    assertStrongRs256Key(publicKey);
 
-    let signature: Buffer;
-    try {
-      signature = Buffer.from(encodedSignature, 'base64url');
-    } catch {
-      throw new OidcTokenVerificationError('JWT signature is not valid base64url');
-    }
+    requireBase64Url(encodedSignature, 'signature');
+    const signature = Buffer.from(encodedSignature, 'base64url');
     if (signature.length === 0) throw new OidcTokenVerificationError('JWT signature is empty');
 
     const signingInput = Buffer.from(`${encodedHeader}.${encodedPayload}`, 'ascii');
