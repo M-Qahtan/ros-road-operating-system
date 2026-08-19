@@ -1,4 +1,4 @@
-import { RoadEvent } from '@ros/domain';
+import { RoadEvent, RoadEventAccessScope } from '@ros/domain';
 
 export type RosRole = 'OPERATOR' | 'SUPERVISOR' | 'AUDITOR' | 'INTEGRATION_SERVICE';
 
@@ -68,7 +68,10 @@ export interface AuditTimelineEntry {
 }
 
 export interface AuditTimelinePort {
-  listForRoadEvent(roadEventId: string): Promise<readonly AuditTimelineEntry[]>;
+  listForRoadEvent(
+    roadEventId: string,
+    scope: RoadEventAccessScope
+  ): Promise<readonly AuditTimelineEntry[]>;
 }
 
 export interface RoadEventReadModel {
