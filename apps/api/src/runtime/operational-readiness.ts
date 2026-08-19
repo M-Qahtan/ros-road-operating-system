@@ -1,117 +1,105 @@
-import { connect } from 'node:net';
-
-const REQUIRED_NON_DEVELOPMENT_VARIABLES = [
-  'DATABASE_URL',
-  'REDIS_URL',
-  'OBJECT_STORAGE_ENDPOINT',
-  'OBJECT_STORAGE_ACCESS_KEY',
-  'OBJECT_STORAGE_SECRET_KEY',
-  'OBJECT_STORAGE_BUCKET',
-  'JWT_SECRET'
-] as const;
-
-const UNSAFE_SECRET_FRAGMENTS = ['change-me', 'replace-with', 'password', 'secret'];
-const DEFAULT_PROBE_TIMEOUT_MS = 1_500;
-
-export type ReadinessCheck = 'missing' | 'reachable' | 'unreachable';
+export type ReadinessCheck = 'not_required' | 'reachable' | 'unreachable' | 'external_gate';
 
 export interface ReadinessResult {
   readonly status: 'ready' | 'not_ready';
-  readonly checks: Readonly<Record<'database' | 'redis' | 'objectStorage', ReadinessCheck>>;
+  readonly checks: {
+    readonly database: ReadinessCheck;
+    readonly redis: ReadinessCheck;
+    readonly objectStorage: ReadinessCheck;
+  };
 }
 
-export interface ReadinessProbes {
-  readonly database: (databaseUrl: string) => Promise<boolean>;
-  readonly redis: (redisUrl: string) => Promise<boolean>;
-  readonly objectStorage: (endpoint: string) => Promise<boolean>;
+export interface RuntimeReadinessProbes {
+  readonly database?: () => Promise<void>;
+  readonly redis?: () => Promise<void>;
 }
 
+const DEFAULT_PROBE_TIMEOUT_MS = 3_000;
+
+function nodeEnvironment(environment: NodeJS.ProcessEnv): string {
+  return (environment.NODE_ENV ?? 'development').trim().toLowerCase();
+}
+
+function runtimeProfile(environment: NodeJS.ProcessEnv): string {
+  return (environment.ROS_RUNTIME_PROFILE ?? '').trim().toLowerCase();
+}
+
+function simulationMode(environment: NodeJS.ProcessEnv): boolean {
+  const nodeEnv = nodeEnvironment(environment);
+  if (nodeEnv === 'development' || nodeEnv === 'test') return true;
+  return nodeEnv !== 'production' && runtimeProfile(environment) === 'simulation';
+}
+
+/**
+ * Validate only dependencies opened by the core RoadEvent process.
+ *
+ * OIDC trust inputs are validated by the actor-resolver factory. Evidence/Object
+ * Storage inputs are validated by the Evidence runtime factory. Keeping those
+ * contracts separate prevents the core API from requiring legacy static object
+ * storage/JWT secrets for dependencies that are not active in this process.
+ */
 export function validateRuntimeEnvironment(environment: NodeJS.ProcessEnv): void {
-  if ((environment.NODE_ENV ?? 'development') === 'development') return;
+  if (simulationMode(environment)) return;
 
-  const missing = REQUIRED_NON_DEVELOPMENT_VARIABLES.filter((name) => !environment[name]?.trim());
-  if (missing.length > 0) throw new Error(`Missing required runtime variables: ${missing.join(', ')}`);
+  const nodeEnv = nodeEnvironment(environment);
+  const profile = runtimeProfile(environment);
+  if (nodeEnv !== 'production' && profile !== 'persistent') return;
 
-  for (const name of ['OBJECT_STORAGE_SECRET_KEY', 'JWT_SECRET'] as const) {
-    const value = environment[name] ?? '';
-    if (value.length < 32 || UNSAFE_SECRET_FRAGMENTS.some((fragment) => value.toLowerCase().includes(fragment))) {
-      throw new Error(`${name} must be a strong externally supplied secret`);
-    }
+  for (const name of ['DATABASE_URL', 'REDIS_URL'] as const) {
+    if (!environment[name]?.trim()) throw new Error(`Missing required runtime variable: ${name}`);
   }
 }
 
-function probeTcp(urlValue: string, defaultPort: number, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (reachable: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(reachable);
-    };
-
-    try {
-      const url = new URL(urlValue);
-      const port = url.port ? Number(url.port) : defaultPort;
-      if (!url.hostname || !Number.isInteger(port) || port <= 0 || port > 65_535) return finish(false);
-
-      const socket = connect({ host: url.hostname, port });
-      socket.setTimeout(timeoutMs);
-      socket.once('connect', () => {
-        socket.destroy();
-        finish(true);
-      });
-      socket.once('timeout', () => {
-        socket.destroy();
-        finish(false);
-      });
-      socket.once('error', () => finish(false));
-    } catch {
-      finish(false);
-    }
+function timeout<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Readiness probe timed out')), milliseconds);
+    timer.unref?.();
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
   });
 }
 
-async function probeObjectStorage(endpoint: string, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS): Promise<boolean> {
+async function probe(operation: (() => Promise<void>) | undefined): Promise<ReadinessCheck> {
+  if (operation === undefined) return 'not_required';
   try {
-    const base = endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint;
-    const response = await fetch(`${base}/minio/health/ready`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-    return response.ok;
+    await timeout(operation(), DEFAULT_PROBE_TIMEOUT_MS);
+    return 'reachable';
   } catch {
-    return false;
+    return 'unreachable';
   }
 }
 
-const defaultProbes: ReadinessProbes = {
-  database: (url) => probeTcp(url, 5432),
-  redis: (url) => probeTcp(url, 6379),
-  objectStorage: (endpoint) => probeObjectStorage(endpoint)
-};
-
-async function evaluateDependency(
-  configuredValue: string | undefined,
-  probe: (value: string) => Promise<boolean>
-): Promise<ReadinessCheck> {
-  const value = configuredValue?.trim();
-  if (!value) return 'missing';
-  return await probe(value) ? 'reachable' : 'unreachable';
-}
-
-export async function evaluateReadiness(
-  environment: NodeJS.ProcessEnv,
-  probes: ReadinessProbes = defaultProbes
-): Promise<ReadinessResult> {
-  const [database, redis, objectStorage] = await Promise.all([
-    evaluateDependency(environment.DATABASE_URL, probes.database),
-    evaluateDependency(environment.REDIS_URL, probes.redis),
-    evaluateDependency(environment.OBJECT_STORAGE_ENDPOINT, probes.objectStorage)
+/**
+ * Evaluate the dependencies held by the running process.
+ *
+ * Object Storage is an external release gate while no Evidence HTTP/API surface
+ * is active in `main.ts`. The dedicated Object Storage Integration workflow
+ * performs the PostgreSQL-backed EvidenceService -> MinIO/S3-compatible proof.
+ * When Evidence becomes an active process dependency, add an authenticated
+ * storage probe here rather than reintroducing a MinIO-specific health URL.
+ */
+export async function evaluateReadiness(probes: RuntimeReadinessProbes): Promise<ReadinessResult> {
+  const [database, redis] = await Promise.all([
+    probe(probes.database),
+    probe(probes.redis)
   ]);
+  const requiredChecks = [database, redis].filter((check) => check !== 'not_required');
+  const ready = requiredChecks.every((check) => check === 'reachable');
 
-  const checks = { database, redis, objectStorage } as const;
   return {
-    status: Object.values(checks).every((value) => value === 'reachable') ? 'ready' : 'not_ready',
-    checks
+    status: ready ? 'ready' : 'not_ready',
+    checks: {
+      database,
+      redis,
+      objectStorage: 'external_gate'
+    }
   };
 }
