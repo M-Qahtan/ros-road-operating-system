@@ -13,6 +13,7 @@ import {
   AuditTimelinePort,
   AuthenticatedActor,
   AuthorizationPort,
+  IdempotencyInFlightError,
   IdempotencyPort,
   RoadEventReadModel,
   SignalAttachmentPort,
@@ -277,19 +278,28 @@ export class RoadEventApplicationService {
   private async executeIdempotently<T>(scope: string, rawKey: string, input: unknown, operation: () => Promise<T>): Promise<T> {
     const key = requireIdempotencyKey(rawKey);
     const requestFingerprint = fingerprint(input);
-    const existing = await this.idempotency.get<T>(scope, key);
-    if (existing !== undefined) {
-      if (existing.fingerprint !== requestFingerprint) {
-        throw new IdempotencyConflictError('Idempotency key was reused with a different request');
-      }
-      return existing.value;
-    }
     try {
-      const value = await operation();
-      await this.idempotency.put(scope, key, { fingerprint: requestFingerprint, value });
-      return value;
+      return await this.idempotency.executeExclusively(scope, key, async () => {
+        const existing = await this.idempotency.get<T>(scope, key);
+        if (existing !== undefined) {
+          if (existing.fingerprint !== requestFingerprint) {
+            throw new IdempotencyConflictError('Idempotency key was reused with a different request');
+          }
+          return existing.value;
+        }
+        try {
+          const value = await operation();
+          await this.idempotency.put(scope, key, { fingerprint: requestFingerprint, value });
+          return value;
+        } catch (error) {
+          if (error instanceof RoadEventConcurrencyError) throw new ApplicationConflictError(error.message);
+          throw error;
+        }
+      });
     } catch (error) {
-      if (error instanceof RoadEventConcurrencyError) throw new ApplicationConflictError(error.message);
+      if (error instanceof IdempotencyInFlightError) {
+        throw new ApplicationConflictError(error.message);
+      }
       throw error;
     }
   }
