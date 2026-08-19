@@ -1,6 +1,7 @@
 import {
   AuditTimelineEntry,
   AuditTimelinePort,
+  IdempotencyInFlightError,
   IdempotencyPort,
   IdempotencyRecord,
   SignalAttachmentInput,
@@ -14,6 +15,10 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 interface IdempotencyRow {
   readonly fingerprint: string;
   readonly response: unknown;
+}
+
+interface AdvisoryLockRow {
+  readonly acquired: boolean;
 }
 
 interface AuditRow {
@@ -52,6 +57,39 @@ function asIso(value: Date | string): string {
 
 export class PostgresIdempotencyAdapter implements IdempotencyPort {
   constructor(private readonly pool: PostgresPool) {}
+
+  async executeExclusively<T>(scope: string, key: string, operation: () => Promise<T>): Promise<T> {
+    const normalizedScope = requireText(scope, 'scope', 1, 128);
+    const normalizedKey = requireText(key, 'idempotencyKey', 8, 128);
+    const lockMaterial = `${normalizedScope}\u0000${normalizedKey}`;
+    const client = await this.pool.connect();
+    let transactionOpen = false;
+    try {
+      await client.query('BEGIN');
+      transactionOpen = true;
+      const lock = await client.query<AdvisoryLockRow>(
+        `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS acquired`,
+        [lockMaterial]
+      );
+      if (lock.rows[0]?.acquired !== true) {
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        throw new IdempotencyInFlightError('Equivalent idempotent request is already in progress');
+      }
+
+      const value = await operation();
+      await client.query('COMMIT');
+      transactionOpen = false;
+      return value;
+    } catch (error) {
+      if (transactionOpen) {
+        try { await client.query('ROLLBACK'); } catch { /* Connection close/release drops transaction-scoped lock. */ }
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 
   async get<T>(scope: string, key: string): Promise<IdempotencyRecord<T> | undefined> {
     const normalizedScope = requireText(scope, 'scope', 1, 128);
