@@ -8,6 +8,7 @@ import {
 } from './application/local-adapters.js';
 import { parsePort } from './config.js';
 import { createRoadEventHttpHandler } from './http/road-event-http.js';
+import { createRuntimeActorResolver } from './http/runtime-actor-resolver.js';
 import { applySecurityHeaders, resolveTraceId } from './request-security.js';
 import { evaluateReadiness, validateRuntimeEnvironment } from './runtime/operational-readiness.js';
 import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
@@ -22,7 +23,10 @@ const application = new RoadEventApplicationService(
   new MemorySignalAttachmentAdapter(),
   repository
 );
-const handleRoadEvent = createRoadEventHttpHandler(application);
+const handleRoadEvent = createRoadEventHttpHandler(
+  application,
+  createRuntimeActorResolver(process.env)
+);
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
