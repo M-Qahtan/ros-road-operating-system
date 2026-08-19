@@ -1,20 +1,19 @@
+import { RosRole } from '../application/ports.js';
 import {
   ActorResolver,
   createActorResolverForEnvironment,
-  createOidcIntegrationActorResolver
+  createOidcRosActorResolver,
+  TrustedRosActorPolicy
 } from './actor-resolver.js';
-import { IntegrationPrincipalPolicy, IntegrationPurpose } from '../integrations/integration-principal.js';
 import { HttpsJwksDocumentFetcher, JwksHttpFetchPort } from '../integrations/jwks-https-fetcher.js';
 import { CachedJwksRs256KeyProvider } from '../integrations/jwks-key-provider.js';
 import { Rs256OidcTokenVerifier } from '../integrations/oidc-rs256-verifier.js';
 
-const PURPOSES = new Set<IntegrationPurpose>([
-  'INCIDENT_TRIAGE',
-  'EMERGENCY_COORDINATION',
-  'TRAFFIC_COORDINATION',
-  'INSURANCE_COORDINATION',
-  'TOWING_COORDINATION',
-  'ROUTE_COORDINATION'
+const ROS_ROLES = new Set<RosRole>([
+  'OPERATOR',
+  'SUPERVISOR',
+  'AUDITOR',
+  'INTEGRATION_SERVICE'
 ]);
 
 export interface RuntimeActorResolverDependencies {
@@ -38,12 +37,20 @@ function csv(environment: NodeJS.ProcessEnv, name: string): readonly string[] {
   return values;
 }
 
-function purposes(environment: NodeJS.ProcessEnv): readonly IntegrationPurpose[] {
-  const values = csv(environment, 'OIDC_ALLOWED_PURPOSES');
-  if (values.some((value) => !PURPOSES.has(value as IntegrationPurpose))) {
-    throw new Error('OIDC_ALLOWED_PURPOSES contains an unsupported purpose');
+function roles(environment: NodeJS.ProcessEnv): readonly RosRole[] {
+  const values = csv(environment, 'OIDC_ALLOWED_ROLES');
+  if (values.some((value) => !ROS_ROLES.has(value as RosRole))) {
+    throw new Error('OIDC_ALLOWED_ROLES contains an unsupported ROS role');
   }
-  return values as readonly IntegrationPurpose[];
+  return values as readonly RosRole[];
+}
+
+function purposes(environment: NodeJS.ProcessEnv): readonly string[] {
+  const values = csv(environment, 'OIDC_ALLOWED_PURPOSES');
+  if (values.some((value) => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value))) {
+    throw new Error('OIDC_ALLOWED_PURPOSES contains an unsafe purpose');
+  }
+  return values;
 }
 
 function integer(
@@ -105,12 +112,13 @@ export function createRuntimeActorResolver(
     );
   }
 
-  const policy: IntegrationPrincipalPolicy = {
+  const policy: TrustedRosActorPolicy = {
     issuer: httpsIssuer(required(environment, 'OIDC_ISSUER')),
     audience: required(environment, 'OIDC_AUDIENCE'),
     allowedClientIds: csv(environment, 'OIDC_ALLOWED_CLIENT_IDS'),
     allowedTenantIds: csv(environment, 'OIDC_ALLOWED_TENANT_IDS'),
     allowedPurposes: purposes(environment),
+    allowedRoles: roles(environment),
     requireMfa: true,
     maxTokenAgeSeconds: integer(environment, 'OIDC_MAX_TOKEN_AGE_SECONDS', 600, 1),
     maxClockSkewSeconds: integer(environment, 'OIDC_MAX_CLOCK_SKEW_SECONDS', 30, 1)
@@ -128,6 +136,6 @@ export function createRuntimeActorResolver(
   const verifier = new Rs256OidcTokenVerifier(keys);
   return createActorResolverForEnvironment(
     environment,
-    createOidcIntegrationActorResolver(verifier, policy)
+    createOidcRosActorResolver(verifier, policy)
   );
 }
