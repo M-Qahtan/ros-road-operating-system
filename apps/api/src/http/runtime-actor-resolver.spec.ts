@@ -19,9 +19,10 @@ function token(payloadOverrides: Readonly<Record<string, unknown>> = {}): string
     sub: ACTOR_ID,
     iss: 'https://identity.example.test',
     aud: ['ros-api'],
-    azp: 'traffic-sandbox',
+    azp: 'ros-operations',
     tenant_id: 'riyadh-pilot',
-    purpose: 'TRAFFIC_COORDINATION',
+    purpose: 'ROAD_SAFETY_OPERATIONS',
+    ros_roles: ['OPERATOR'],
     amr: ['mfa'],
     iat: now - 10,
     exp: now + 300,
@@ -64,9 +65,10 @@ function productionEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Proces
     OIDC_ISSUER: 'https://identity.example.test',
     OIDC_JWKS_URL: 'https://identity.example.test/.well-known/jwks.json',
     OIDC_AUDIENCE: 'ros-api',
-    OIDC_ALLOWED_CLIENT_IDS: 'traffic-sandbox',
+    OIDC_ALLOWED_CLIENT_IDS: 'ros-operations',
     OIDC_ALLOWED_TENANT_IDS: 'riyadh-pilot',
-    OIDC_ALLOWED_PURPOSES: 'TRAFFIC_COORDINATION',
+    OIDC_ALLOWED_PURPOSES: 'ROAD_SAFETY_OPERATIONS',
+    OIDC_ALLOWED_ROLES: 'OPERATOR,SUPERVISOR,AUDITOR',
     OIDC_MAX_TOKEN_AGE_SECONDS: '600',
     OIDC_MAX_CLOCK_SKEW_SECONDS: '30',
     OIDC_JWKS_CACHE_TTL_SECONDS: '300',
@@ -77,7 +79,7 @@ function productionEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Proces
 
 const simulationScope = {
   'x-tenant-id': 'riyadh-pilot',
-  'x-purpose': 'TRAFFIC_COORDINATION'
+  'x-purpose': 'ROAD_SAFETY_OPERATIONS'
 } as const;
 
 test('development keeps deterministic scoped simulation auth without OIDC configuration', async () => {
@@ -88,7 +90,7 @@ test('development keeps deterministic scoped simulation auth without OIDC config
       actorId: 'operator-1',
       roles: ['OPERATOR'],
       tenantId: 'riyadh-pilot',
-      purpose: 'TRAFFIC_COORDINATION'
+      purpose: 'ROAD_SAFETY_OPERATIONS'
     }
   );
 });
@@ -106,9 +108,13 @@ test('production fails closed unless OIDC profile and required trust inputs are 
     () => createRuntimeActorResolver(productionEnvironment({ OIDC_JWKS_URL: 'http://identity.example.test/jwks' })),
     /must use HTTPS/
   );
+  assert.throws(
+    () => createRuntimeActorResolver(productionEnvironment({ OIDC_ALLOWED_ROLES: 'ROOT' })),
+    /unsupported ROS role/
+  );
 });
 
-test('production runtime verifies signed bearer identity and propagates trusted resource scope', async () => {
+test('production runtime verifies signed bearer identity, RBAC and resource scope', async () => {
   const resolver = createRuntimeActorResolver(productionEnvironment(), { jwksFetch: fakeFetch });
   assert.deepEqual(
     await resolver.resolve({
@@ -120,9 +126,9 @@ test('production runtime verifies signed bearer identity and propagates trusted 
     }),
     {
       actorId: ACTOR_ID,
-      roles: ['INTEGRATION_SERVICE'],
+      roles: ['OPERATOR'],
       tenantId: 'riyadh-pilot',
-      purpose: 'TRAFFIC_COORDINATION'
+      purpose: 'ROAD_SAFETY_OPERATIONS'
     }
   );
 });
@@ -137,14 +143,14 @@ test('production preserves an exact trailing-slash issuer trust value', async ()
     await resolver.resolve({ authorization: `Bearer ${token({ iss: issuer })}` }),
     {
       actorId: ACTOR_ID,
-      roles: ['INTEGRATION_SERVICE'],
+      roles: ['OPERATOR'],
       tenantId: 'riyadh-pilot',
-      purpose: 'TRAFFIC_COORDINATION'
+      purpose: 'ROAD_SAFETY_OPERATIONS'
     }
   );
 });
 
-test('production runtime rejects a correctly signed token for an unauthorized tenant or purpose', async () => {
+test('production runtime rejects signed tokens outside tenant, purpose or role policy', async () => {
   const resolver = createRuntimeActorResolver(productionEnvironment(), { jwksFetch: fakeFetch });
   await assert.rejects(
     resolver.resolve({ authorization: `Bearer ${token({ tenant_id: 'other-tenant' })}` }),
@@ -152,6 +158,14 @@ test('production runtime rejects a correctly signed token for an unauthorized te
   );
   await assert.rejects(
     resolver.resolve({ authorization: `Bearer ${token({ purpose: 'INSURANCE_COORDINATION' })}` }),
+    /Trusted OIDC\/JWT identity could not be verified/
+  );
+  await assert.rejects(
+    resolver.resolve({ authorization: `Bearer ${token({ ros_roles: ['SUPERVISOR', 'ROOT'] })}` }),
+    /Trusted OIDC\/JWT identity could not be verified/
+  );
+  await assert.rejects(
+    resolver.resolve({ authorization: `Bearer ${token({ ros_roles: ['INTEGRATION_SERVICE'] })}` }),
     /Trusted OIDC\/JWT identity could not be verified/
   );
 });
@@ -168,7 +182,7 @@ test('non-production staging still requires explicit simulation or OIDC profile'
       actorId: 'operator-1',
       roles: ['OPERATOR'],
       tenantId: 'riyadh-pilot',
-      purpose: 'TRAFFIC_COORDINATION'
+      purpose: 'ROAD_SAFETY_OPERATIONS'
     }
   );
 });
