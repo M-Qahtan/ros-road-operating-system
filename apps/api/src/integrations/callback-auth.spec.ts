@@ -77,3 +77,38 @@ test('rejects malformed signatures and weak secrets', async () => {
     /at least 32 bytes/
   );
 });
+
+test('rejects invalid freshness configuration before claiming a nonce', async () => {
+  const store = new MemoryReplayStore();
+  const input = signedInput('{}', 'nonce-config');
+  await assert.rejects(
+    verifyCallbackHmac(input, TEST_HMAC_KEY_MATERIAL, store, { nowEpochSeconds: NOW, maxAgeSeconds: 0 }),
+    /Callback max age is invalid/
+  );
+  await assert.rejects(
+    verifyCallbackHmac(input, TEST_HMAC_KEY_MATERIAL, store, { nowEpochSeconds: NOW, maxFutureSkewSeconds: -1 }),
+    /Callback future skew is invalid/
+  );
+});
+
+test('rejects a nonce outside the durable replay-store bounds', async () => {
+  const store = new MemoryReplayStore();
+  assert.throws(
+    () => computeCallbackSignatureHex(TEST_HMAC_KEY_MATERIAL, '{}', NOW, 'x'.repeat(257)),
+    /between 1 and 256 characters/
+  );
+  await assert.rejects(
+    verifyCallbackHmac(
+      {
+        body: '{}',
+        nonce: 'x'.repeat(257),
+        timestampEpochSeconds: NOW,
+        signatureHex: 'a'.repeat(64)
+      },
+      TEST_HMAC_KEY_MATERIAL,
+      store,
+      { nowEpochSeconds: NOW }
+    ),
+    /between 1 and 256 characters/
+  );
+});
