@@ -1,27 +1,14 @@
 import { createServer, IncomingMessage } from 'node:http';
-import { RoadEventApplicationService } from './application/road-event-application.js';
-import {
-  MemoryIdempotencyAdapter,
-  MemoryRoadEventRepository,
-  MemorySignalAttachmentAdapter,
-  RoleMatrixAuthorizationAdapter
-} from './application/local-adapters.js';
 import { parsePort } from './config.js';
 import { createRoadEventHttpHandler } from './http/road-event-http.js';
 import { applySecurityHeaders, resolveTraceId } from './request-security.js';
 import { evaluateReadiness, validateRuntimeEnvironment } from './runtime/operational-readiness.js';
+import { createRoadEventApplicationForRuntime } from './runtime/runtime-composition.js';
 import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
 
 validateRuntimeEnvironment(process.env);
 const port = parsePort(process.env.PORT);
-const repository = new MemoryRoadEventRepository();
-const application = new RoadEventApplicationService(
-  repository,
-  new RoleMatrixAuthorizationAdapter(),
-  new MemoryIdempotencyAdapter(),
-  new MemorySignalAttachmentAdapter(),
-  repository
-);
+const application = createRoadEventApplicationForRuntime(process.env);
 const handleRoadEvent = createRoadEventHttpHandler(application);
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
