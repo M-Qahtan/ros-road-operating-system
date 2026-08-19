@@ -55,10 +55,14 @@ function stringArray(record: Record<string, unknown>, field: string): string[] {
   return value as string[];
 }
 
-function commandContext(request: HttpRequest, actorResolver: ActorResolver) {
+async function commandContext(request: HttpRequest, actorResolver: ActorResolver) {
   const idempotencyKey = request.headers['idempotency-key'];
   if (idempotencyKey === undefined) throw new HttpInputError('Idempotency-Key header is required');
-  return { actor: actorResolver.resolve(request.headers), traceId: request.traceId, idempotencyKey };
+  return {
+    actor: await actorResolver.resolve(request.headers),
+    traceId: request.traceId,
+    idempotencyKey
+  };
 }
 
 function parseSeverity(value: unknown) {
@@ -125,7 +129,7 @@ export function createRoadEventHttpHandler(
           latitude: requiredNumber(body, 'latitude'),
           longitude: requiredNumber(body, 'longitude'),
           ...(severity === undefined ? {} : { severity })
-        }, commandContext(request, actorResolver));
+        }, await commandContext(request, actorResolver));
         return { status: 201, body: envelope(true, data, null, request.traceId) };
       }
 
@@ -144,12 +148,12 @@ export function createRoadEventHttpHandler(
           ...(request.query.occurredTo === undefined ? {} : { occurredTo: new Date(request.query.occurredTo) }),
           limit: numberQuery(request.query.limit, 20),
           offset: numberQuery(request.query.offset, 0)
-        }, actorResolver.resolve(request.headers));
+        }, await actorResolver.resolve(request.headers));
         return { status: 200, body: envelope(true, data, null, request.traceId) };
       }
 
       if (eventMatch !== null && request.method === 'GET') {
-        const data = await application.getById(eventMatch[1]!, actorResolver.resolve(request.headers));
+        const data = await application.getById(eventMatch[1]!, await actorResolver.resolve(request.headers));
         return { status: 200, body: envelope(true, data, null, request.traceId) };
       }
 
@@ -157,12 +161,12 @@ export function createRoadEventHttpHandler(
         const roadEventId = actionMatch[1]!;
         const action = actionMatch[2]!;
         if (request.method === 'GET' && action === 'timeline') {
-          const data = await application.timeline(roadEventId, actorResolver.resolve(request.headers));
+          const data = await application.timeline(roadEventId, await actorResolver.resolve(request.headers));
           return { status: 200, body: envelope(true, data, null, request.traceId) };
         }
         if (request.method !== 'POST') return { status: 405, body: envelope(false, null, { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' }, request.traceId) };
         const body = asRecord(request.body);
-        const context = commandContext(request, actorResolver);
+        const context = await commandContext(request, actorResolver);
         if (action === 'severity') {
           const data = await application.reassessSeverity({
             roadEventId,
