@@ -15,6 +15,7 @@ const CLAIMS: VerifiedOidcClaims = {
   clientId: 'traffic-sandbox',
   tenantId: 'riyadh-pilot',
   purpose: 'TRAFFIC_COORDINATION',
+  roles: ['INTEGRATION_SERVICE'],
   authenticationMethods: ['pwd', 'mfa'],
   issuedAtEpochSeconds: NOW - 60,
   expiresAtEpochSeconds: NOW + 300
