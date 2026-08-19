@@ -110,6 +110,18 @@ test('production runtime verifies signed bearer identity through configured JWKS
   );
 });
 
+test('production preserves an exact trailing-slash issuer trust value', async () => {
+  const issuer = 'https://identity.example.test/';
+  const resolver = createRuntimeActorResolver(
+    productionEnvironment({ OIDC_ISSUER: issuer }),
+    { jwksFetch: fakeFetch }
+  );
+  assert.deepEqual(
+    await resolver.resolve({ authorization: `Bearer ${token({ iss: issuer })}` }),
+    { actorId: ACTOR_ID, roles: ['INTEGRATION_SERVICE'] }
+  );
+});
+
 test('production runtime rejects a correctly signed token for an unauthorized tenant', async () => {
   const resolver = createRuntimeActorResolver(productionEnvironment(), { jwksFetch: fakeFetch });
   await assert.rejects(
