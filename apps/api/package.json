@@ -15,9 +15,12 @@
   },
   "dependencies": {
     "@ros/contracts": "workspace:*",
-    "@ros/domain": "workspace:*"
+    "@ros/domain": "workspace:*",
+    "pg": "^8.23.0",
+    "redis": "^6.2.1"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "typescript": "^5.7.2"
   }
 }
