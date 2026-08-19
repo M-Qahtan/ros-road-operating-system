@@ -33,45 +33,63 @@ jobs:
         run: |
           from pathlib import Path
 
-          old = """      - name: Install PostgreSQL client
-                run: sudo apt-get update && sudo apt-get install -y postgresql-client
-          """
-          new = """      - name: Provide PostgreSQL client from pinned service image
-                shell: bash
-                run: |
-                  set -euo pipefail
-                  mkdir -p .runtime-ci-bin
-                  cat > .runtime-ci-bin/psql <<'EOF'
-                  #!/usr/bin/env bash
-                  set -euo pipefail
-                  exec docker run --rm --network host \\
-                    -v \"$PWD:/workspace:ro\" \\
-                    -w /workspace \\
-                    -e PGPASSWORD=\"${PGPASSWORD:-}\" \\
-                    postgis/postgis:16-3.4 \\
-                    psql \"$@\"
-                  EOF
-                  chmod +x .runtime-ci-bin/psql
-                  echo \"$PWD/.runtime-ci-bin\" >> \"$GITHUB_PATH\"
-          """
+          def replacement(indent: str) -> list[str]:
+              field = indent + '  '
+              body = indent + '    '
+              nested = indent + '      '
+              return [
+                  f'{indent}- name: Provide PostgreSQL client from pinned service image\n',
+                  f'{field}shell: bash\n',
+                  f'{field}run: |\n',
+                  f'{body}set -euo pipefail\n',
+                  f'{body}mkdir -p .runtime-ci-bin\n',
+                  f"{body}cat > .runtime-ci-bin/pg-client <<'EOF'\n",
+                  f'{nested}#!/usr/bin/env bash\n',
+                  f'{nested}set -euo pipefail\n',
+                  f'{nested}tool="$(basename "$0")"\n',
+                  f'{nested}exec docker run --rm --network host \\\n',
+                  f'{nested}  -v "$PWD:$PWD" \\\n',
+                  f'{nested}  -w "$PWD" \\\n',
+                  f'{nested}  -v "$RUNNER_TEMP:$RUNNER_TEMP" \\\n',
+                  f'{nested}  -e PGPASSWORD="${{PGPASSWORD:-}}" \\\n',
+                  f'{nested}  postgis/postgis:16-3.4 \\\n',
+                  f'{nested}  "$tool" "$@"\n',
+                  f'{body}EOF\n',
+                  f'{body}chmod +x .runtime-ci-bin/pg-client\n',
+                  f'{body}for tool in psql createdb pg_dump pg_restore; do\n',
+                  f'{body}  ln -sf pg-client ".runtime-ci-bin/$tool"\n',
+                  f'{body}done\n',
+                  f'{body}echo "$PWD/.runtime-ci-bin" >> "$GITHUB_PATH"\n',
+              ]
 
-          # GitHub preserves six spaces before the step marker and eight before
-          # the `run:` key. The block above is emitted by YAML with those exact
-          # relative indents; verify one-and-only-one replacement per workflow.
-          for raw in ('.github/workflows/ci.yml', '.github/workflows/operational-readiness.yml'):
+          def migrate(raw: str) -> None:
               path = Path(raw)
-              text = path.read_text(encoding='utf-8')
-              count = text.count(old)
-              if count != 1:
-                  marker = '- name: Install PostgreSQL client'
+              lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
+              matches: list[int] = []
+              for index in range(len(lines) - 1):
+                  if (
+                      lines[index].strip() == '- name: Install PostgreSQL client'
+                      and lines[index + 1].strip()
+                      == 'run: sudo apt-get update && sudo apt-get install -y postgresql-client'
+                  ):
+                      matches.append(index)
+              if len(matches) != 1:
                   observed = [
-                      line for line in text.splitlines()
-                      if marker in line or 'apt-get install -y postgresql-client' in line
+                      line.rstrip('\n') for line in lines
+                      if 'Install PostgreSQL client' in line or 'apt-get install -y postgresql-client' in line
                   ]
                   raise SystemExit(
-                      f'{raw}: expected exactly one PostgreSQL client block, found {count}; observed={observed!r}'
+                      f'{raw}: expected one structural PostgreSQL client step; '
+                      f'found {len(matches)}; observed={observed!r}'
                   )
-              path.write_text(text.replace(old, new), encoding='utf-8')
+              index = matches[0]
+              line = lines[index]
+              indent = line[:len(line) - len(line.lstrip())]
+              lines[index:index + 2] = replacement(indent)
+              path.write_text(''.join(lines), encoding='utf-8')
+
+          migrate('.github/workflows/ci.yml')
+          migrate('.github/workflows/operational-readiness.yml')
       - name: Restrict migration change surface
         shell: bash
         run: |
