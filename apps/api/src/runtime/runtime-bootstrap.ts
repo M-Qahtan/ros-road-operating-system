@@ -1,6 +1,7 @@
 import { RoadEventApplicationService } from '../application/road-event-application.js';
 import { RedisRuntimeClient, createNodeRedisStreamClient } from '../messaging/node-redis-stream-client.js';
 import { PgRuntimePool, createNodePostgresPool } from '../persistence/postgres/pg-postgres-pool.js';
+import { evaluateReadiness, ReadinessResult } from './operational-readiness.js';
 import {
   createPersistentRoadEventApplication,
   createRoadEventApplicationForRuntime
@@ -10,6 +11,7 @@ export interface RuntimeBootstrapResult {
   readonly application: RoadEventApplicationService;
   readonly mode: 'simulation' | 'persistent';
   readonly redis: RedisRuntimeClient | null;
+  readonly readiness: () => Promise<ReadinessResult>;
   close(): Promise<void>;
 }
 
@@ -54,8 +56,10 @@ async function closeQuietly(resource: { close(): Promise<void> } | undefined): P
  *
  * Development/test and an explicit non-production simulation profile retain the
  * deterministic in-memory composition. Production (and any explicit persistent
- * profile) must successfully initialize PostgreSQL and Redis before the API is
- * allowed to listen. Object-storage remains a separate readiness/release gate.
+ * profile) must successfully initialize the authenticated PostgreSQL schema and
+ * Redis client before the API is allowed to listen. Evidence/Object Storage
+ * remains a separately activated dependency and release gate until its HTTP/API
+ * surface and production malware scanner are approved.
  */
 export async function bootstrapRoadEventRuntime(
   environment: NodeJS.ProcessEnv,
@@ -66,6 +70,7 @@ export async function bootstrapRoadEventRuntime(
       application: createRoadEventApplicationForRuntime(environment),
       mode: 'simulation',
       redis: null,
+      readiness: () => evaluateReadiness({}),
       close: async () => {}
     };
   }
@@ -83,13 +88,14 @@ export async function bootstrapRoadEventRuntime(
 
   try {
     redis = redisFactory(environment);
-    await postgres.verifyConnection();
+    await postgres.verifyReadiness();
     await redis.connect();
+    await redis.verifyConnection();
   } catch {
     await closeQuietly(redis);
     await closeQuietly(postgres);
     throw new RuntimeBootstrapError(
-      'Persistent runtime dependencies could not be initialized; refusing API startup'
+      'Persistent runtime dependencies or schema could not be initialized; refusing API startup'
     );
   }
 
@@ -98,6 +104,10 @@ export async function bootstrapRoadEventRuntime(
     application: createPersistentRoadEventApplication(postgres),
     mode: 'persistent',
     redis,
+    readiness: () => evaluateReadiness({
+      database: () => postgres.verifyReadiness(),
+      redis: () => redis!.verifyConnection()
+    }),
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
