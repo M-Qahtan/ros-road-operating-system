@@ -17,11 +17,17 @@ interface PublishedRow {
   readonly dead_lettered_at: Date | string | null;
 }
 
+function requiredRedisUrl(): string {
+  const value = process.env.REDIS_URL?.trim();
+  if (!value) throw new Error('REDIS_URL is required for runtime driver integration');
+  return value;
+}
+
 async function run(): Promise<void> {
   const postgres = createNodePostgresPool(process.env);
   const redis = createNodeRedisStreamClient(process.env);
   const redisVerifier = createClient({
-    url: process.env.REDIS_URL,
+    url: requiredRedisUrl(),
     disableOfflineQueue: true
   });
   redisVerifier.on('error', () => {});
