@@ -35,19 +35,32 @@ function verifier(claims: VerifiedOidcClaims = CLAIMS): OidcTokenVerifierPort {
 }
 
 const trustedClock = () => NOW;
+const simulationScope = {
+  'x-tenant-id': 'riyadh-pilot',
+  'x-purpose': 'TRAFFIC_COORDINATION'
+} as const;
 
-test('development may resolve deterministic simulation headers', async () => {
+test('development may resolve deterministic simulation headers with explicit scope', async () => {
   const resolver = createActorResolverForEnvironment({ NODE_ENV: 'development' });
   assert.deepEqual(
-    await resolver.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR,SUPERVISOR' }),
-    { actorId: 'operator-1', roles: ['OPERATOR', 'SUPERVISOR'] }
+    await resolver.resolve({
+      'x-actor-id': 'operator-1',
+      'x-ros-roles': 'OPERATOR,SUPERVISOR',
+      ...simulationScope
+    }),
+    {
+      actorId: 'operator-1',
+      roles: ['OPERATOR', 'SUPERVISOR'],
+      tenantId: 'riyadh-pilot',
+      purpose: 'TRAFFIC_COORDINATION'
+    }
   );
 });
 
-test('staging requires explicit simulation auth profile for header identity', async () => {
+test('staging requires explicit simulation auth profile for header identity and scope', async () => {
   const denied = createActorResolverForEnvironment({ NODE_ENV: 'staging' });
   await assert.rejects(
-    denied.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR' }),
+    denied.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR', ...simulationScope }),
     /Trusted OIDC\/JWT actor resolver is required/
   );
 
@@ -55,33 +68,50 @@ test('staging requires explicit simulation auth profile for header identity', as
     NODE_ENV: 'staging',
     ROS_AUTH_PROFILE: 'simulation'
   });
-  assert.equal(
-    (await simulation.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR' })).actorId,
-    'operator-1'
+  assert.deepEqual(
+    await simulation.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR', ...simulationScope }),
+    {
+      actorId: 'operator-1',
+      roles: ['OPERATOR'],
+      tenantId: 'riyadh-pilot',
+      purpose: 'TRAFFIC_COORDINATION'
+    }
   );
 });
 
-test('production rejects self-attested actor headers even when simulation is requested', async () => {
+test('production rejects self-attested actor and scope headers even when simulation is requested', async () => {
   const resolver = createActorResolverForEnvironment({
     NODE_ENV: 'production',
     ROS_AUTH_PROFILE: 'simulation'
   });
   await assert.rejects(
-    resolver.resolve({ 'x-actor-id': 'attacker', 'x-ros-roles': 'SUPERVISOR' }),
+    resolver.resolve({
+      'x-actor-id': 'attacker',
+      'x-ros-roles': 'SUPERVISOR',
+      'x-tenant-id': 'attacker-tenant',
+      'x-purpose': 'TRAFFIC_COORDINATION'
+    }),
     /self-attested actor headers are disabled/
   );
 });
 
-test('simulation header resolver rejects missing or unknown roles', async () => {
+test('simulation header resolver rejects missing role or access scope', async () => {
   const resolver = createActorResolverForEnvironment({ NODE_ENV: 'test' });
-  await assert.rejects(resolver.resolve({ 'x-actor-id': 'operator-1' }), /Missing actor identity headers/);
   await assert.rejects(
-    resolver.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'ROOT' }),
+    resolver.resolve({ 'x-actor-id': 'operator-1', ...simulationScope }),
+    /Missing actor identity headers/
+  );
+  await assert.rejects(
+    resolver.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'ROOT', ...simulationScope }),
     /No recognized ROS role/
+  );
+  await assert.rejects(
+    resolver.resolve({ 'x-actor-id': 'operator-1', 'x-ros-roles': 'OPERATOR', 'x-purpose': 'TRAFFIC_COORDINATION' }),
+    /simulation tenant/
   );
 });
 
-test('trusted OIDC resolver maps only a verified UUID subject to INTEGRATION_SERVICE', async () => {
+test('trusted OIDC resolver maps verified subject, tenant and purpose and ignores self-attested headers', async () => {
   const oidc = createOidcIntegrationActorResolver(verifier(), POLICY, trustedClock);
   const resolver = createActorResolverForEnvironment({ NODE_ENV: 'production' }, oidc);
 
@@ -89,9 +119,16 @@ test('trusted OIDC resolver maps only a verified UUID subject to INTEGRATION_SER
     await resolver.resolve({
       authorization: 'Bearer signed-token',
       'x-actor-id': 'attacker-controlled',
-      'x-ros-roles': 'SUPERVISOR'
+      'x-ros-roles': 'SUPERVISOR',
+      'x-tenant-id': 'attacker-tenant',
+      'x-purpose': 'INSURANCE_COORDINATION'
     }),
-    { actorId: INTEGRATION_ACTOR_ID, roles: ['INTEGRATION_SERVICE'] }
+    {
+      actorId: INTEGRATION_ACTOR_ID,
+      roles: ['INTEGRATION_SERVICE'],
+      tenantId: 'riyadh-pilot',
+      purpose: 'TRAFFIC_COORDINATION'
+    }
   );
 });
 
