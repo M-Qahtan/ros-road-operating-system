@@ -33,6 +33,8 @@ const UUIDS = {
   actor: '33333333-3333-4333-8333-333333333333',
   trace: '44444444-4444-4444-8444-444444444444'
 };
+const TENANT_ID = 'riyadh-ops';
+const PURPOSE = 'ROAD_SAFETY_OPERATIONS';
 const FINGERPRINT = 'a'.repeat(64);
 
 test('durable idempotency adapter replays a completed result', async () => {
@@ -78,7 +80,7 @@ test('signal attachment is transactional and audits only a new logical attachmen
     signalId: UUIDS.signal,
     matchScore: 0.95,
     mergeReasons: ['spatial_temporal_match'],
-    actor: { actorId: UUIDS.actor, roles: ['OPERATOR'] },
+    actor: { actorId: UUIDS.actor, roles: ['OPERATOR'], tenantId: TENANT_ID, purpose: PURPOSE },
     traceId: UUIDS.trace
   });
 
@@ -103,7 +105,7 @@ test('duplicate signal attachment does not duplicate audit/timeline entries', as
     signalId: UUIDS.signal,
     matchScore: 0.9,
     mergeReasons: ['duplicate_replay'],
-    actor: { actorId: UUIDS.actor, roles: ['INTEGRATION_SERVICE'] },
+    actor: { actorId: UUIDS.actor, roles: ['INTEGRATION_SERVICE'], tenantId: TENANT_ID, purpose: PURPOSE },
     traceId: UUIDS.trace
   });
 
