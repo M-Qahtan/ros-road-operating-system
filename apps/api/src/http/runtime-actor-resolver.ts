@@ -63,16 +63,19 @@ function integer(
 }
 
 function httpsIssuer(raw: string): string {
+  const configured = raw.trim();
   let url: URL;
   try {
-    url = new URL(raw);
+    url = new URL(configured);
   } catch {
     throw new Error('OIDC_ISSUER must be a valid URL');
   }
   if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.hash) {
     throw new Error('OIDC_ISSUER must be a credential-free HTTPS URL without a fragment');
   }
-  return url.toString().replace(/\/$/, '');
+  // OIDC `iss` comparison is exact. Validate the configured URL but do not
+  // add/remove a trailing slash or otherwise rewrite the trust value.
+  return configured;
 }
 
 function simulationAuthAllowed(environment: NodeJS.ProcessEnv): boolean {
