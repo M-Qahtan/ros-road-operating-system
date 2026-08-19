@@ -26,6 +26,7 @@ jobs:
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://ros:runtime-integration-only@localhost:5432/ros
+      POSTGRES_PASSWORD: runtime-integration-only
       REDIS_URL: redis://localhost:6379/0
       ROS_OUTBOX_WORKER_ID: runtime-integration-worker
       ROS_OUTBOX_STREAM: ros:integration-events
@@ -65,8 +66,23 @@ jobs:
         run: corepack enable
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Provide PostgreSQL client from pinned service image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime-ci-bin
+          cat > .runtime-ci-bin/psql <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm --network host \
+            -v "$PWD:/workspace:ro" \
+            -w /workspace \
+            -e PGPASSWORD="${PGPASSWORD:-}" \
+            postgis/postgis:16-3.4 \
+            psql "$@"
+          EOF
+          chmod +x .runtime-ci-bin/psql
+          echo "$PWD/.runtime-ci-bin" >> "$GITHUB_PATH"
       - name: Apply migrations and database invariants
         run: bash scripts/run-postgres-integration.sh
       - name: Build API and dependencies
