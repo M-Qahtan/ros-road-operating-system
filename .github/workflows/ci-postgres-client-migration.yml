@@ -33,35 +33,6 @@ jobs:
         run: |
           from pathlib import Path
 
-          def replacement(indent: str) -> list[str]:
-              field = indent + '  '
-              body = indent + '    '
-              nested = indent + '      '
-              return [
-                  f'{indent}- name: Provide PostgreSQL client from pinned service image\n',
-                  f'{field}shell: bash\n',
-                  f'{field}run: |\n',
-                  f'{body}set -euo pipefail\n',
-                  f'{body}mkdir -p .runtime-ci-bin\n',
-                  f"{body}cat > .runtime-ci-bin/pg-client <<'EOF'\n",
-                  f'{nested}#!/usr/bin/env bash\n',
-                  f'{nested}set -euo pipefail\n',
-                  f'{nested}tool="$(basename "$0")"\n',
-                  f'{nested}exec docker run --rm --network host \\\n',
-                  f'{nested}  -v "$PWD:$PWD" \\\n',
-                  f'{nested}  -w "$PWD" \\\n',
-                  f'{nested}  -v "$RUNNER_TEMP:$RUNNER_TEMP" \\\n',
-                  f'{nested}  -e PGPASSWORD="${{PGPASSWORD:-}}" \\\n',
-                  f'{nested}  postgis/postgis:16-3.4 \\\n',
-                  f'{nested}  "$tool" "$@"\n',
-                  f'{body}EOF\n',
-                  f'{body}chmod +x .runtime-ci-bin/pg-client\n',
-                  f'{body}for tool in psql createdb pg_dump pg_restore; do\n',
-                  f'{body}  ln -sf pg-client ".runtime-ci-bin/$tool"\n',
-                  f'{body}done\n',
-                  f'{body}echo "$PWD/.runtime-ci-bin" >> "$GITHUB_PATH"\n',
-              ]
-
           def migrate(raw: str) -> None:
               path = Path(raw)
               lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
@@ -82,10 +53,15 @@ jobs:
                       f'{raw}: expected one structural PostgreSQL client step; '
                       f'found {len(matches)}; observed={observed!r}'
                   )
+
               index = matches[0]
-              line = lines[index]
-              indent = line[:len(line) - len(line.lstrip())]
-              lines[index:index + 2] = replacement(indent)
+              original = lines[index]
+              indent = original[:len(original) - len(original.lstrip())]
+              replacement = [
+                  f'{indent}- name: Provide PostgreSQL client from pinned service image\n',
+                  f'{indent}  run: bash scripts/setup-postgres-client-from-container.sh\n',
+              ]
+              lines[index:index + 2] = replacement
               path.write_text(''.join(lines), encoding='utf-8')
 
           migrate('.github/workflows/ci.yml')
