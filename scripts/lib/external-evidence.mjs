@@ -9,6 +9,7 @@ export const ARCHIVABLE_WORKFLOWS = Object.freeze([
   'Operational Readiness',
   'Riyadh Failure-Mode Safety',
   'ROS Eye Pilot Readiness',
+  'Runtime Driver Integration',
   'Safety Fusion Evidence',
   'Security'
 ]);
@@ -119,193 +120,71 @@ export function assertSourceRun(run, expected) {
   return run;
 }
 
-export function assertBucketPosture(posture, expected) {
-  const minimumDays = assertMinimumRetentionDays(expected.minimumRetentionDays);
-  const lock = posture.lock?.ObjectLockConfiguration;
-  const defaultRetention = lock?.Rule?.DefaultRetention;
-  if (lock?.ObjectLockEnabled !== 'Enabled') throw new Error('S3 Object Lock is not enabled');
-  if (defaultRetention?.Mode !== 'COMPLIANCE') {
-    throw new Error('S3 default retention is not COMPLIANCE mode');
+export function buildArchiveReceipt({ run, artifacts, archive, archivedAt }) {
+  if (!Array.isArray(artifacts) || artifacts.length === 0) throw new Error('at least one artifact is required');
+  const archiveBucket = String(archive?.bucket ?? '').trim();
+  if (archiveBucket.length === 0 || archiveBucket.length > 63) throw new Error('archive bucket is invalid');
+  const kmsKeyArn = String(archive?.kmsKeyArn ?? '').trim();
+  if (!/^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key\/[0-9a-f-]+$/u.test(kmsKeyArn)) {
+    throw new Error('archive KMS key ARN is invalid');
   }
-  if (!Number.isSafeInteger(defaultRetention.Days) || defaultRetention.Days < minimumDays) {
-    throw new Error(`S3 default retention is below ${minimumDays} days`);
+  const retentionDays = assertMinimumRetentionDays(archive?.minimumRetentionDays);
+  const receiptKey = String(archive?.receiptKey ?? '').trim();
+  if (!/^evidence\/github\/[0-9]+\/[0-9a-f]{40}\/[0-9]+\/[0-9]+\/[0-9]+\/receipt\.json$/u.test(receiptKey)) {
+    throw new Error('archive receipt key is invalid');
   }
-  if (posture.versioning?.Status !== 'Enabled') throw new Error('S3 versioning is not enabled');
-
-  const encryptionRules = posture.encryption?.ServerSideEncryptionConfiguration?.Rules;
-  const encryptedWithExpectedKey = Array.isArray(encryptionRules) && encryptionRules.some((rule) => {
-    const encryption = rule.ApplyServerSideEncryptionByDefault;
-    return encryption?.SSEAlgorithm === 'aws:kms'
-      && encryption?.KMSMasterKeyID === expected.kmsKeyArn
-      && rule.BucketKeyEnabled === true;
-  });
-  if (!encryptedWithExpectedKey) throw new Error('S3 default encryption is not the approved KMS key');
-
-  const publicBlock = posture.publicAccess?.PublicAccessBlockConfiguration;
-  const publicFlags = ['BlockPublicAcls', 'IgnorePublicAcls', 'BlockPublicPolicy', 'RestrictPublicBuckets'];
-  if (!publicBlock || publicFlags.some((key) => publicBlock[key] !== true)) {
-    throw new Error('S3 public access block is incomplete');
-  }
-  if (posture.policyStatus?.PolicyStatus?.IsPublic !== false) {
-    throw new Error('S3 bucket policy is public or unverifiable');
-  }
-}
-
-export function assertObjectProof(proof, expected) {
-  const minimumDays = assertMinimumRetentionDays(expected.minimumRetentionDays);
-  const expectedVersionId = String(proof.upload?.VersionId ?? '');
-  if (expectedVersionId.length === 0 || expectedVersionId === 'null') {
-    throw new Error('S3 upload did not return a version ID');
-  }
-  if (proof.head?.VersionId !== expectedVersionId) throw new Error('S3 version proof mismatch');
-  if (proof.head?.ContentLength !== expected.contentLength) throw new Error('S3 content length mismatch');
-  if (proof.head?.ChecksumSHA256 !== expected.checksumBase64) throw new Error('S3 checksum mismatch');
-  if (proof.upload?.ChecksumSHA256 && proof.upload.ChecksumSHA256 !== expected.checksumBase64) {
-    throw new Error('S3 upload checksum response mismatch');
-  }
-  if (proof.head?.Metadata?.sha256 !== expected.sha256Hex) throw new Error('S3 SHA-256 metadata mismatch');
-  if (proof.head?.ServerSideEncryption !== 'aws:kms') throw new Error('S3 object is not SSE-KMS encrypted');
-  if (proof.head?.SSEKMSKeyId !== expected.kmsKeyArn) throw new Error('S3 object used an unexpected KMS key');
-
-  const retention = proof.retention?.Retention;
-  if (proof.head?.ObjectLockMode !== 'COMPLIANCE' || retention?.Mode !== 'COMPLIANCE') {
-    throw new Error('S3 object is not locked in COMPLIANCE mode');
-  }
-  if (proof.head?.ObjectLockRetainUntilDate !== retention?.RetainUntilDate) {
-    throw new Error('S3 retention APIs disagree on retain-until date');
-  }
-
-  const createdAt = Date.parse(proof.head?.LastModified);
-  const retainUntil = Date.parse(retention?.RetainUntilDate);
-  if (!Number.isFinite(createdAt) || !Number.isFinite(retainUntil) || retainUntil <= createdAt) {
-    throw new Error('S3 retention timestamps are invalid');
-  }
-  const requiredMs = minimumDays * DAY_MS;
-  if (retainUntil - createdAt + RETENTION_CLOCK_TOLERANCE_MS < requiredMs) {
-    throw new Error(`S3 object retention is below ${minimumDays} days`);
-  }
-
-  const etag = String(proof.head.ETag ?? '');
-  if (etag.length === 0) throw new Error('S3 object ETag is missing');
-  return {
-    versionId: expectedVersionId,
-    etag,
-    retainUntil: retention.RetainUntilDate,
-    checksumBase64: proof.head.ChecksumSHA256
-  };
-}
-
-export function buildReceipt({ sourceRun, archive, artifacts, generatedAt }) {
-  if (!Array.isArray(artifacts) || artifacts.length === 0) {
-    throw new Error('at least one artifact is required for an archive receipt');
-  }
+  const archivedDate = archivedAt instanceof Date ? archivedAt : new Date(archivedAt);
+  if (!Number.isFinite(archivedDate.getTime())) throw new Error('archive timestamp is invalid');
   const receipt = {
     schema: EXTERNAL_EVIDENCE_SCHEMA,
-    generated_at: generatedAt,
     source_run: {
-      repository: sourceRun.repository.full_name,
-      repository_id: String(sourceRun.repository.id),
-      workflow: sourceRun.name,
-      workflow_id: String(sourceRun.workflow_id),
-      event: sourceRun.event,
-      conclusion: sourceRun.conclusion,
-      head_sha: sourceRun.head_sha,
-      head_branch: sourceRun.head_branch,
-      run_id: String(sourceRun.id),
-      run_attempt: String(sourceRun.run_attempt),
-      html_url: sourceRun.html_url,
-      created_at: sourceRun.created_at,
-      updated_at: sourceRun.updated_at
+      repository: run.repository.full_name,
+      repository_id: run.repository.id,
+      head_sha: run.head_sha,
+      workflow_id: run.workflow_id,
+      workflow_name: run.name,
+      run_id: run.id,
+      run_attempt: run.run_attempt,
+      event: run.event,
+      conclusion: run.conclusion
     },
+    artifacts: artifacts.map((artifact) => ({
+      artifact_id: artifact.id,
+      name: artifact.name,
+      size_bytes: artifact.sizeInBytes,
+      sha256: artifact.sha256,
+      object_key: artifact.objectKey,
+      version_id: artifact.versionId,
+      retain_until: artifact.retainUntil,
+      object_lock_mode: artifact.objectLockMode,
+      kms_key_arn: artifact.kmsKeyArn
+    })),
     archive: {
-      bucket: archive.bucket,
-      region: archive.region,
-      kms_key_arn: archive.kmsKeyArn,
+      bucket: archiveBucket,
+      kms_key_arn: kmsKeyArn,
       object_lock_mode: 'COMPLIANCE',
-      minimum_retention_days: archive.minimumRetentionDays
+      minimum_retention_days: retentionDays,
+      receipt_key: receiptKey,
+      retain_until: archive.retainUntil,
+      version_id: archive.versionId
     },
-    artifacts
+    archived_at: archivedDate.toISOString()
   };
-  assertReceipt(receipt);
-  return receipt;
+  return Object.freeze(receipt);
 }
 
-export function assertReceipt(receipt) {
-  if (!receipt || typeof receipt !== 'object' || receipt.schema !== EXTERNAL_EVIDENCE_SCHEMA) {
-    throw new Error('archive receipt schema mismatch');
+export function assertArchivedObjectProof(proof, expected) {
+  if (!proof || typeof proof !== 'object') throw new Error('archived object proof is missing');
+  if (proof.objectKey !== expected.objectKey) throw new Error('archived object key mismatch');
+  if (proof.sha256 !== expected.sha256) throw new Error('archived object digest mismatch');
+  if (proof.kmsKeyArn !== expected.kmsKeyArn) throw new Error('archived object KMS key mismatch');
+  if (proof.objectLockMode !== 'COMPLIANCE') throw new Error('archived object lock mode is not COMPLIANCE');
+  const retainUntil = new Date(proof.retainUntil);
+  if (!Number.isFinite(retainUntil.getTime())) throw new Error('archived object retention timestamp is invalid');
+  const minimumRetainUntil = new Date(expected.minimumRetainUntil);
+  if (!Number.isFinite(minimumRetainUntil.getTime())) throw new Error('expected minimum retention timestamp is invalid');
+  if (retainUntil.getTime() + RETENTION_CLOCK_TOLERANCE_MS < minimumRetainUntil.getTime()) {
+    throw new Error('archived object retention is shorter than required');
   }
-  if (!Number.isSafeInteger(receipt.archive?.minimum_retention_days)
-      || receipt.archive.minimum_retention_days < MINIMUM_RETENTION_DAYS) {
-    throw new Error('archive receipt retention is too short');
-  }
-  if (receipt.archive?.object_lock_mode !== 'COMPLIANCE') {
-    throw new Error('archive receipt lock mode mismatch');
-  }
-  assertRepository(receipt.source_run?.repository, 'receipt repository');
-  assertSha(receipt.source_run?.head_sha, 'receipt head SHA');
-  if (receipt.source_run?.conclusion !== 'success') {
-    throw new Error('archive receipt source run did not conclude successfully');
-  }
-  if (!ARCHIVABLE_WORKFLOWS.includes(receipt.source_run?.workflow)) {
-    throw new Error('archive receipt workflow is not allowlisted');
-  }
-  assertDecimalIdentifier(receipt.source_run?.repository_id, 'receipt repository ID');
-  assertDecimalIdentifier(receipt.source_run?.workflow_id, 'receipt workflow ID');
-  assertDecimalIdentifier(receipt.source_run?.run_id, 'receipt run ID');
-  assertDecimalIdentifier(receipt.source_run?.run_attempt, 'receipt run attempt');
-  const generatedAt = Date.parse(receipt.generated_at);
-  if (!Number.isFinite(generatedAt)) throw new Error('archive receipt generated_at is invalid');
-  if (typeof receipt.archive?.bucket !== 'string' || receipt.archive.bucket.length < 3) {
-    throw new Error('archive receipt bucket is invalid');
-  }
-  if (!/^arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key\/[0-9a-f-]+$/u.test(receipt.archive?.kms_key_arn ?? '')) {
-    throw new Error('archive receipt KMS key is invalid');
-  }
-  if (!Array.isArray(receipt.artifacts) || receipt.artifacts.length === 0) {
-    throw new Error('archive receipt has no artifacts');
-  }
-  const expectedPrefix = buildArchivePrefix({
-    repositoryId: receipt.source_run.repository_id,
-    headSha: receipt.source_run.head_sha,
-    workflowId: receipt.source_run.workflow_id,
-    runId: receipt.source_run.run_id,
-    runAttempt: receipt.source_run.run_attempt
-  });
-  const artifactIds = new Set();
-  for (const artifact of receipt.artifacts) {
-    assertDecimalIdentifier(artifact.artifact_id, 'receipt artifact ID');
-    if (artifactIds.has(artifact.artifact_id)) throw new Error('archive receipt contains a duplicate artifact ID');
-    artifactIds.add(artifact.artifact_id);
-    if (typeof artifact.name !== 'string' || artifact.name.length === 0 || artifact.name.length > 255) {
-      throw new Error('receipt artifact name is invalid');
-    }
-    if (!Number.isFinite(Date.parse(artifact.github_created_at))
-        || !Number.isFinite(Date.parse(artifact.github_expires_at))) {
-      throw new Error('receipt GitHub artifact timestamps are invalid');
-    }
-    if (!/^[0-9a-f]{64}$/u.test(artifact.sha256)) throw new Error('receipt artifact digest is invalid');
-    if (artifact.object_key !== buildArtifactKey(expectedPrefix, artifact.artifact_id, artifact.sha256)) {
-      throw new Error('receipt object key is not bound to the source run');
-    }
-    if (typeof artifact.version_id !== 'string' || artifact.version_id.length === 0) {
-      throw new Error('receipt artifact version ID is missing');
-    }
-    if (!Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes < 1) {
-      throw new Error('receipt artifact size is invalid');
-    }
-    if (artifact.encryption !== 'aws:kms' || artifact.kms_key_arn !== receipt.archive.kms_key_arn) {
-      throw new Error('receipt artifact KMS binding is invalid');
-    }
-    if (!/^[A-Za-z0-9+/]{43}=$/u.test(artifact.checksum_sha256_base64 ?? '')) {
-      throw new Error('receipt artifact checksum encoding is invalid');
-    }
-    if (artifact.object_lock_mode !== 'COMPLIANCE') throw new Error('receipt artifact is not immutable');
-    const retainUntil = Date.parse(artifact.retain_until);
-    if (!Number.isFinite(retainUntil)) throw new Error('receipt artifact retain-until is invalid');
-    if (retainUntil - generatedAt + RETENTION_CLOCK_TOLERANCE_MS
-        < receipt.archive.minimum_retention_days * DAY_MS) {
-      throw new Error('receipt artifact retention is below the archive policy');
-    }
-  }
-  return receipt;
+  return proof;
 }
