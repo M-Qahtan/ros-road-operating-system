@@ -7,6 +7,7 @@ on:
       - Operational Readiness
       - Riyadh Failure-Mode Safety
       - ROS Eye Pilot Readiness
+      - Runtime Driver Integration
       - Safety Fusion Evidence
       - Security
     types: [completed]
