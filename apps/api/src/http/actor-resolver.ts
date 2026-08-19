@@ -64,18 +64,26 @@ function bearerToken(headers: Readonly<Record<string, string | undefined>>): str
  *
  * RoadEvent application writes currently require UUID actor identifiers, so the
  * trusted OIDC subject must be the provisioned UUID of the integration service.
+ * A clock seam is injectable solely to make time-bound verification deterministic
+ * under tests and controlled simulations; production defaults to the system clock.
  */
 export function createOidcIntegrationActorResolver(
   verifier: OidcTokenVerifierPort,
-  policy: IntegrationPrincipalPolicy
+  policy: IntegrationPrincipalPolicy,
+  nowEpochSeconds: () => number = () => Math.floor(Date.now() / 1000)
 ): ActorResolver {
   return {
     async resolve(headers): Promise<AuthenticatedActor> {
       try {
+        const now = nowEpochSeconds();
+        if (!Number.isSafeInteger(now) || now <= 0) {
+          throw new Error('OIDC resolver clock is invalid');
+        }
         const principal = await resolveTrustedIntegrationPrincipal(
           bearerToken(headers),
           verifier,
-          policy
+          policy,
+          now
         );
         if (!UUID_PATTERN.test(principal.subject)) {
           throw new Error('Trusted integration subject is not a provisioned ROS UUID');
