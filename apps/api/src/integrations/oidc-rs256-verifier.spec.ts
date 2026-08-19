@@ -25,6 +25,7 @@ function createToken(
     azp: 'traffic-sandbox',
     tenant_id: 'riyadh-pilot',
     purpose: 'TRAFFIC_COORDINATION',
+    ros_roles: ['INTEGRATION_SERVICE'],
     amr: ['pwd', 'mfa'],
     iat: 1_800_000_000,
     exp: 1_800_000_600,
@@ -41,7 +42,7 @@ function provider(key = publicKey): OidcVerificationKeyProviderPort {
   };
 }
 
-test('verifies RS256 signature before returning authoritative integration claims', async () => {
+test('verifies RS256 signature before returning authoritative identity, RBAC and ABAC claims', async () => {
   const verifier = new Rs256OidcTokenVerifier(provider());
   assert.deepEqual(await verifier.verifyBearerToken(createToken()), {
     subject: 'integration-service-1',
@@ -50,6 +51,7 @@ test('verifies RS256 signature before returning authoritative integration claims
     clientId: 'traffic-sandbox',
     tenantId: 'riyadh-pilot',
     purpose: 'TRAFFIC_COORDINATION',
+    roles: ['INTEGRATION_SERVICE'],
     authenticationMethods: ['pwd', 'mfa'],
     issuedAtEpochSeconds: 1_800_000_000,
     expiresAtEpochSeconds: 1_800_000_600
@@ -67,6 +69,7 @@ test('rejects a payload changed after signing', async () => {
     azp: 'traffic-sandbox',
     tenant_id: 'riyadh-pilot',
     purpose: 'TRAFFIC_COORDINATION',
+    ros_roles: ['SUPERVISOR'],
     amr: ['mfa'],
     iat: 1_800_000_000,
     exp: 1_800_000_600
@@ -105,6 +108,8 @@ test('rejects malformed tokens, non-canonical encoding and missing authoritative
   const [header, payload, signature] = valid.split('.') as [string, string, string];
   await assert.rejects(verifier.verifyBearerToken(`${header}=.${payload}.${signature}`), /canonical base64url/);
   await assert.rejects(verifier.verifyBearerToken(createToken({ tenant_id: '' })), /tenant_id claim is required/);
+  await assert.rejects(verifier.verifyBearerToken(createToken({ ros_roles: [] })), /ros_roles claim must be a non-empty string array/);
+  await assert.rejects(verifier.verifyBearerToken(createToken({ ros_roles: ['OPERATOR', 'OPERATOR'] })), /must not contain duplicate values/);
   await assert.rejects(verifier.verifyBearerToken(createToken({ amr: 'mfa' })), /amr claim must be a string array/);
 });
 
