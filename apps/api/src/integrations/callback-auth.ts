@@ -105,7 +105,14 @@ export async function verifyCallbackHmac(
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) {
     throw new CallbackAuthenticationError('Callback replay retention window is invalid');
   }
-  if (!(await replayStore.claim(normalizedNonce, expiresAt))) {
+
+  let claimed: boolean;
+  try {
+    claimed = await replayStore.claim(normalizedNonce, expiresAt);
+  } catch {
+    throw new CallbackAuthenticationError('Callback replay protection is unavailable');
+  }
+  if (!claimed) {
     throw new CallbackAuthenticationError('Callback nonce has already been used');
   }
 }
