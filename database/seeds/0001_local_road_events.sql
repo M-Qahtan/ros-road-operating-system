@@ -1,8 +1,10 @@
 INSERT INTO road_events (
-  id, status, severity, severity_score, confidence, reason_codes,
+  id, tenant_id, purpose, status, severity, severity_score, confidence, reason_codes,
   severity_requires_human_review, location, occurred_at, version
 ) VALUES (
   '10000000-0000-4000-8000-000000000001',
+  'riyadh-pilot',
+  'road-safety-response',
   'DETECTED',
   'S1',
   20,
