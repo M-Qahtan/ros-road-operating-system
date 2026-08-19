@@ -1,0 +1,82 @@
+name: CI PostgreSQL Client Migration
+
+on:
+  push:
+    branches:
+      - agent/runtime-production-readiness
+    paths:
+      - .github/workflows/ci-postgres-client-migration.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-postgres-client-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    if: github.repository == 'M-Qahtan/ros-road-operating-system' && github.ref == 'refs/heads/agent/runtime-production-readiness'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact runtime branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/runtime-production-readiness
+          persist-credentials: true
+      - name: Replace apt-based PostgreSQL client installation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          old = """      - name: Install PostgreSQL client
+                run: sudo apt-get update && sudo apt-get install -y postgresql-client
+          """
+          new = """      - name: Provide PostgreSQL client from pinned service image
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  mkdir -p .runtime-ci-bin
+                  cat > .runtime-ci-bin/psql <<'EOF'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+                  exec docker run --rm --network host \\
+                    -v \"$PWD:/workspace:ro\" \\
+                    -w /workspace \\
+                    -e PGPASSWORD=\"${PGPASSWORD:-}\" \\
+                    postgis/postgis:16-3.4 \\
+                    psql \"$@\"
+                  EOF
+                  chmod +x .runtime-ci-bin/psql
+                  echo \"$PWD/.runtime-ci-bin\" >> \"$GITHUB_PATH\"
+          """
+
+          for raw in ('.github/workflows/ci.yml', '.github/workflows/operational-readiness.yml'):
+              path = Path(raw)
+              text = path.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{raw}: expected exactly one apt PostgreSQL client block, found {count}')
+              path.write_text(text.replace(old, new), encoding='utf-8')
+      - name: Restrict migration change surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check -- .github/workflows/ci.yml .github/workflows/operational-readiness.yml
+          unexpected="$(git status --porcelain | awk '{print $2}' | grep -Ev '^\.github/workflows/(ci|operational-readiness)\.yml$' || true)"
+          if [[ -n "$unexpected" ]]; then
+            echo "Unexpected changed paths:" >&2
+            echo "$unexpected" >&2
+            exit 1
+          fi
+          test -n "$(git status --porcelain -- .github/workflows/ci.yml .github/workflows/operational-readiness.yml)"
+      - name: Commit workflow migration to draft branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "ros-workflow-migration-bot"
+          git config user.email "ros-workflow-migration-bot@users.noreply.github.com"
+          git add .github/workflows/ci.yml .github/workflows/operational-readiness.yml
+          git commit -m "ci: remove apt dependency from PostgreSQL readiness jobs"
+          git push origin HEAD:agent/runtime-production-readiness
