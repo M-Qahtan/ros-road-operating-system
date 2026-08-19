@@ -55,12 +55,22 @@ jobs:
                   echo \"$PWD/.runtime-ci-bin\" >> \"$GITHUB_PATH\"
           """
 
+          # GitHub preserves six spaces before the step marker and eight before
+          # the `run:` key. The block above is emitted by YAML with those exact
+          # relative indents; verify one-and-only-one replacement per workflow.
           for raw in ('.github/workflows/ci.yml', '.github/workflows/operational-readiness.yml'):
               path = Path(raw)
               text = path.read_text(encoding='utf-8')
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f'{raw}: expected exactly one apt PostgreSQL client block, found {count}')
+                  marker = '- name: Install PostgreSQL client'
+                  observed = [
+                      line for line in text.splitlines()
+                      if marker in line or 'apt-get install -y postgresql-client' in line
+                  ]
+                  raise SystemExit(
+                      f'{raw}: expected exactly one PostgreSQL client block, found {count}; observed={observed!r}'
+                  )
               path.write_text(text.replace(old, new), encoding='utf-8')
       - name: Restrict migration change surface
         shell: bash
