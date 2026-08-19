@@ -1,8 +1,13 @@
 import { AuthorizationDeniedError } from '../application/local-adapters.js';
 import { AuthenticatedActor, RosRole } from '../application/ports.js';
+import {
+  IntegrationPrincipalPolicy,
+  OidcTokenVerifierPort,
+  resolveTrustedIntegrationPrincipal
+} from '../integrations/integration-principal.js';
 
 export interface ActorResolver {
-  resolve(headers: Readonly<Record<string, string | undefined>>): AuthenticatedActor;
+  resolve(headers: Readonly<Record<string, string | undefined>>): Promise<AuthenticatedActor>;
 }
 
 const ALLOWED_ROLES = new Set<RosRole>([
@@ -11,10 +16,11 @@ const ALLOWED_ROLES = new Set<RosRole>([
   'AUDITOR',
   'INTEGRATION_SERVICE'
 ]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function resolveSimulationHeaders(
+async function resolveSimulationHeaders(
   headers: Readonly<Record<string, string | undefined>>
-): AuthenticatedActor {
+): Promise<AuthenticatedActor> {
   const actorId = headers['x-actor-id'];
   const rawRoles = headers['x-ros-roles'];
   if (actorId === undefined || rawRoles === undefined) {
@@ -41,20 +47,68 @@ function simulationHeadersAllowed(environment: NodeJS.ProcessEnv): boolean {
   return nodeEnvironment !== 'production' && authProfile === 'simulation';
 }
 
+function bearerToken(headers: Readonly<Record<string, string | undefined>>): string {
+  const authorization = headers.authorization;
+  if (authorization === undefined) {
+    throw new AuthorizationDeniedError('Bearer authorization is required');
+  }
+  const match = /^Bearer\s+([^\s]+)$/i.exec(authorization.trim());
+  if (match === null) throw new AuthorizationDeniedError('Bearer authorization is malformed');
+  return match[1]!;
+}
+
+/**
+ * Adapts a cryptographically verified integration principal to the existing ROS
+ * application actor seam. Only the dedicated INTEGRATION_SERVICE role is ever
+ * granted here; caller-supplied role headers are ignored.
+ *
+ * RoadEvent application writes currently require UUID actor identifiers, so the
+ * trusted OIDC subject must be the provisioned UUID of the integration service.
+ */
+export function createOidcIntegrationActorResolver(
+  verifier: OidcTokenVerifierPort,
+  policy: IntegrationPrincipalPolicy
+): ActorResolver {
+  return {
+    async resolve(headers): Promise<AuthenticatedActor> {
+      try {
+        const principal = await resolveTrustedIntegrationPrincipal(
+          bearerToken(headers),
+          verifier,
+          policy
+        );
+        if (!UUID_PATTERN.test(principal.subject)) {
+          throw new Error('Trusted integration subject is not a provisioned ROS UUID');
+        }
+        return {
+          actorId: principal.subject,
+          roles: ['INTEGRATION_SERVICE']
+        };
+      } catch (error) {
+        if (error instanceof AuthorizationDeniedError) throw error;
+        throw new AuthorizationDeniedError('Trusted OIDC/JWT identity could not be verified');
+      }
+    }
+  };
+}
+
 /**
  * Self-attested actor headers exist only as a deterministic development/test
- * boundary. Production must inject a trusted OIDC/JWT-backed resolver before
- * RoadEvent routes can authorize a caller.
+ * boundary. Non-simulation environments must inject a trusted async resolver;
+ * otherwise access fails closed.
  */
 export function createActorResolverForEnvironment(
-  environment: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv,
+  trustedResolver?: ActorResolver
 ): ActorResolver {
   if (simulationHeadersAllowed(environment)) {
     return { resolve: resolveSimulationHeaders };
   }
 
+  if (trustedResolver !== undefined) return trustedResolver;
+
   return {
-    resolve(): AuthenticatedActor {
+    async resolve(): Promise<AuthenticatedActor> {
       throw new AuthorizationDeniedError(
         'Trusted OIDC/JWT actor resolver is required; self-attested actor headers are disabled'
       );
