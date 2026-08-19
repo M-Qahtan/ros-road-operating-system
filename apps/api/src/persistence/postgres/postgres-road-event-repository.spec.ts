@@ -13,6 +13,9 @@ const EVENT_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
 const TRACE_ID = '33333333-3333-4333-8333-333333333333';
 const CORRELATION_ID = '44444444-4444-4444-8444-444444444444';
+const TENANT_ID = 'riyadh-ops';
+const PURPOSE = 'ROAD_SAFETY_OPERATIONS';
+const scope = { tenantId: TENANT_ID, purpose: PURPOSE } as const;
 
 interface CapturedQuery { readonly text: string; readonly values: readonly unknown[]; }
 type QueryHandler = (text: string, values: readonly unknown[]) => PostgresQueryResult<unknown>;
@@ -34,6 +37,7 @@ class FakePool implements PostgresPool {
 }
 
 const context = {
+  ...scope,
   actorType: 'OPERATOR',
   actorId: ACTOR_ID,
   action: 'road_event.created',
@@ -79,20 +83,22 @@ function row(version = 1) {
   };
 }
 
-test('create writes RoadEvent, audit and outbox in one transaction using parameters', async () => {
+test('create writes RoadEvent, immutable scope, audit and outbox in one transaction using parameters', async () => {
   const client = new FakeClient(() => ({ rows: [], rowCount: 1 }));
   const repository = new PostgresRoadEventRepository(new FakePool(client));
   await repository.create(event(), context);
 
-  assert.deepEqual(client.queries.map((query) => query.text.trim().split(/\s+/)[0]), ['BEGIN', 'INSERT', 'INSERT', 'INSERT', 'COMMIT']);
+  assert.deepEqual(client.queries.map((query) => query.text.trim().split(/\s+/)[0]), ['BEGIN', 'INSERT', 'INSERT', 'INSERT', 'INSERT', 'COMMIT']);
   assert.match(client.queries[1]!.text, /ST_SetSRID\(ST_MakePoint\(\$8, \$9\)/);
   assert.equal(client.queries[1]!.values[0], EVENT_ID);
-  assert.equal(client.queries[2]!.values[7], TRACE_ID);
-  assert.equal(client.queries[3]!.values[3], CORRELATION_ID);
+  assert.match(client.queries[2]!.text, /road_event_access_scopes/);
+  assert.deepEqual(client.queries[2]!.values, [EVENT_ID, TENANT_ID, PURPOSE]);
+  assert.equal(client.queries[3]!.values[7], TRACE_ID);
+  assert.equal(client.queries[4]!.values[3], CORRELATION_ID);
   assert.equal(client.released, true);
 });
 
-test('update rejects a stale expected version before writing audit or outbox', async () => {
+test('update scopes the row lock and rejects a stale expected version before writing audit or outbox', async () => {
   const client = new FakeClient((text) => {
     if (text.includes('FOR UPDATE')) return { rows: [row(2)], rowCount: 1 };
     return { rows: [], rowCount: null };
@@ -102,27 +108,32 @@ test('update rejects a stale expected version before writing audit or outbox', a
   updated.transitionTo(RoadEventStatus.Validating);
 
   await assert.rejects(() => repository.update(updated, 1, context), RoadEventConcurrencyError);
+  const lockQuery = client.queries.find((query) => query.text.includes('FOR UPDATE'))!;
+  assert.match(lockQuery.text, /scope\.tenant_id = \$2 AND scope\.purpose = \$3/);
+  assert.deepEqual(lockQuery.values, [EVENT_ID, TENANT_ID, PURPOSE]);
   assert.equal(client.queries.some((query) => query.text.includes('UPDATE road_events')), false);
   assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO audit_logs')), false);
   assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
 });
 
-test('findById restores geography, severity and version into the aggregate', async () => {
+test('findById restores only a RoadEvent in the requested tenant and purpose', async () => {
   const client = new FakeClient((text) => text.includes('SELECT')
     ? { rows: [row(3)], rowCount: 1 }
     : { rows: [], rowCount: null });
   const repository = new PostgresRoadEventRepository(new FakePool(client));
-  const restored = await repository.findById(EVENT_ID);
+  const restored = await repository.findById(EVENT_ID, scope);
 
   assert.equal(restored?.id, EVENT_ID);
   assert.equal(restored?.latitude, 24.7136);
   assert.equal(restored?.longitude, 46.6753);
   assert.equal(restored?.severity.level, SeverityLevel.Moderate);
   assert.equal(restored?.version, 3);
-  assert.match(client.queries[0]!.text, /ST_X\(location::geometry\)/);
+  assert.match(client.queries[0]!.text, /ST_X\(re\.location::geometry\)/);
+  assert.match(client.queries[0]!.text, /scope\.tenant_id = \$2 AND scope\.purpose = \$3/);
+  assert.deepEqual(client.queries[0]!.values, [EVENT_ID, TENANT_ID, PURPOSE]);
 });
 
-test('list parameterizes filters and returns total pagination metadata', async () => {
+test('list parameterizes tenant/purpose before filters and returns scoped pagination metadata', async () => {
   const client = new FakeClient(() => ({ rows: [{ ...row(), total_count: '7' }], rowCount: 1 }));
   const repository = new PostgresRoadEventRepository(new FakePool(client));
   const page = await repository.list({
@@ -132,12 +143,15 @@ test('list parameterizes filters and returns total pagination metadata', async (
     occurredTo: new Date('2026-07-26T00:00:00.000Z'),
     limit: 20,
     offset: 40
-  });
+  }, scope);
 
   assert.equal(page.total, 7);
   assert.equal(page.items.length, 1);
+  assert.deepEqual(client.queries[0]!.values.slice(0, 2), [TENANT_ID, PURPOSE]);
   assert.deepEqual(client.queries[0]!.values.slice(-2), [20, 40]);
-  assert.match(client.queries[0]!.text, /status = ANY\(\$1::road_event_status\[\]\)/);
-  assert.match(client.queries[0]!.text, /severity = ANY\(\$2::severity_level\[\]\)/);
+  assert.match(client.queries[0]!.text, /scope\.tenant_id = \$1/);
+  assert.match(client.queries[0]!.text, /scope\.purpose = \$2/);
+  assert.match(client.queries[0]!.text, /re\.status = ANY\(\$3::road_event_status\[\]\)/);
+  assert.match(client.queries[0]!.text, /re\.severity = ANY\(\$4::severity_level\[\]\)/);
   assert.match(client.queries[0]!.text, /COUNT\(\*\) OVER\(\) AS total_count/);
 });
