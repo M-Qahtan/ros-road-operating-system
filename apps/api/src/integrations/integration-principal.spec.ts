@@ -23,6 +23,7 @@ const POLICY: IntegrationPrincipalPolicy = {
   issuer: 'https://identity.example.test',
   audience: 'ros-api',
   allowedClientIds: ['traffic-sandbox'],
+  allowedTenantIds: ['riyadh-pilot'],
   allowedPurposes: ['TRAFFIC_COORDINATION'],
   requireMfa: true,
   maxTokenAgeSeconds: 600,
@@ -46,7 +47,7 @@ test('accepts only claims returned by the trusted verifier port', async () => {
   );
 });
 
-test('rejects an untrusted issuer, audience or client', async () => {
+test('rejects an untrusted issuer, audience, client or tenant', async () => {
   await assert.rejects(
     resolveTrustedIntegrationPrincipal('token', verifier({ ...CLAIMS, issuer: 'https://evil.example' }), POLICY, NOW),
     /issuer is not trusted/
@@ -58,6 +59,10 @@ test('rejects an untrusted issuer, audience or client', async () => {
   await assert.rejects(
     resolveTrustedIntegrationPrincipal('token', verifier({ ...CLAIMS, clientId: 'unknown-client' }), POLICY, NOW),
     /client is not authorized/
+  );
+  await assert.rejects(
+    resolveTrustedIntegrationPrincipal('token', verifier({ ...CLAIMS, tenantId: 'other-tenant' }), POLICY, NOW),
+    /tenant is not authorized/
   );
 });
 
