@@ -1,5 +1,6 @@
 import {
   RoadEvent,
+  RoadEventAccessScope,
   RoadEventAlreadyExistsError,
   RoadEventConcurrencyError,
   RoadEventListQuery,
@@ -13,6 +14,7 @@ import {
 import { PostgresClient, PostgresPool } from './postgres-types.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ACCESS_ATTRIBUTE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MAX_PAGE_SIZE = 100;
 
 interface RoadEventRow {
@@ -55,6 +57,18 @@ function requireText(value: string, field: string, maximumLength: number): strin
     throw new TypeError(`${field} must contain between 1 and ${maximumLength} characters`);
   }
   return normalized;
+}
+
+function requireAccessAttribute(value: string, field: string): string {
+  if (!ACCESS_ATTRIBUTE_PATTERN.test(value)) throw new TypeError(`${field} is not a safe access-scope attribute`);
+  return value;
+}
+
+function validateScope(scope: RoadEventAccessScope): RoadEventAccessScope {
+  return {
+    tenantId: requireAccessAttribute(scope.tenantId, 'tenantId'),
+    purpose: requireAccessAttribute(scope.purpose, 'purpose')
+  };
 }
 
 function asDate(value: Date | string, field: string): Date {
@@ -116,6 +130,7 @@ function snapshot(event: RoadEvent): Readonly<Record<string, unknown>> {
 }
 
 function validateContext(context: RoadEventWriteContext): Date {
+  validateScope(context);
   requireText(context.actorType, 'actorType', 64);
   requireText(context.action, 'action', 128);
   requireText(context.eventType, 'eventType', 128);
@@ -127,23 +142,26 @@ function validateContext(context: RoadEventWriteContext): Date {
   return context.occurredAt === undefined ? new Date() : asDate(context.occurredAt, 'context.occurredAt');
 }
 
-const ROAD_EVENT_SELECT = `
+function roadEventSelect(includeTotal = false): string {
+  return `
   SELECT
-    id,
-    status,
-    severity,
-    severity_score,
-    confidence,
-    reason_codes,
-    severity_requires_human_review,
-    ST_X(location::geometry)::double precision AS longitude,
-    ST_Y(location::geometry)::double precision AS latitude,
-    occurred_at,
-    version,
-    closure_authorized_by,
-    closure_authorized_at,
-    closure_authorization_reason
-  FROM road_events`;
+    re.id,
+    re.status,
+    re.severity,
+    re.severity_score,
+    re.confidence,
+    re.reason_codes,
+    re.severity_requires_human_review,
+    ST_X(re.location::geometry)::double precision AS longitude,
+    ST_Y(re.location::geometry)::double precision AS latitude,
+    re.occurred_at,
+    re.version,
+    re.closure_authorized_by,
+    re.closure_authorized_at,
+    re.closure_authorization_reason${includeTotal ? ',\n    COUNT(*) OVER() AS total_count' : ''}
+  FROM road_events re
+  INNER JOIN road_event_access_scopes scope ON scope.road_event_id = re.id`;
+}
 
 export class PostgresRoadEventRepository implements RoadEventRepository {
   constructor(private readonly pool: PostgresPool) {}
@@ -151,6 +169,7 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
   async create(event: RoadEvent, context: RoadEventWriteContext): Promise<void> {
     requireUuid(event.id, 'RoadEvent id');
     const occurredAt = validateContext(context);
+    const scope = validateScope(context);
     const afterState = snapshot(event);
 
     try {
@@ -183,6 +202,11 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
             authorization?.reason ?? null
           ]
         );
+        await client.query(
+          `INSERT INTO road_event_access_scopes (road_event_id, tenant_id, purpose)
+           VALUES ($1::uuid, $2, $3)`,
+          [event.id, scope.tenantId, scope.purpose]
+        );
         await this.appendAuditAndOutbox(client, event, null, afterState, context, occurredAt);
       });
     } catch (error) {
@@ -198,9 +222,13 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new RangeError('expectedVersion must be a positive safe integer');
     if (event.version <= expectedVersion) throw new RangeError('RoadEvent version must advance beyond expectedVersion');
     const occurredAt = validateContext(context);
+    const scope = validateScope(context);
 
     await this.withTransaction(async (client) => {
-      const current = await client.query<RoadEventRow>(`${ROAD_EVENT_SELECT} WHERE id = $1::uuid FOR UPDATE`, [event.id]);
+      const current = await client.query<RoadEventRow>(
+        `${roadEventSelect()} WHERE re.id = $1::uuid AND scope.tenant_id = $2 AND scope.purpose = $3 FOR UPDATE OF re`,
+        [event.id, scope.tenantId, scope.purpose]
+      );
       const row = current.rows[0];
       if (row === undefined) throw new RoadEventNotFoundError(`RoadEvent ${event.id} was not found`);
       if (row.version !== expectedVersion) {
@@ -224,7 +252,14 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
           closure_authorized_by = $13::uuid,
           closure_authorized_at = $14,
           closure_authorization_reason = $15
-        WHERE id = $1::uuid AND version = $2
+        WHERE id = $1::uuid
+          AND version = $2
+          AND EXISTS (
+            SELECT 1 FROM road_event_access_scopes scope
+            WHERE scope.road_event_id = road_events.id
+              AND scope.tenant_id = $16
+              AND scope.purpose = $17
+          )
         RETURNING version`,
         [
           event.id,
@@ -241,7 +276,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
           event.version,
           authorization?.actorId ?? null,
           authorization?.authorizedAt ?? null,
-          authorization?.reason ?? null
+          authorization?.reason ?? null,
+          scope.tenantId,
+          scope.purpose
         ]
       );
       if (updated.rowCount !== 1) throw new RoadEventConcurrencyError(`RoadEvent ${event.id} changed during update`);
@@ -249,11 +286,15 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     });
   }
 
-  async findById(id: string): Promise<RoadEvent | undefined> {
+  async findById(id: string, rawScope: RoadEventAccessScope): Promise<RoadEvent | undefined> {
     requireUuid(id, 'RoadEvent id');
+    const scope = validateScope(rawScope);
     const client = await this.pool.connect();
     try {
-      const result = await client.query<RoadEventRow>(`${ROAD_EVENT_SELECT} WHERE id = $1::uuid`, [id]);
+      const result = await client.query<RoadEventRow>(
+        `${roadEventSelect()} WHERE re.id = $1::uuid AND scope.tenant_id = $2 AND scope.purpose = $3`,
+        [id, scope.tenantId, scope.purpose]
+      );
       const row = result.rows[0];
       return row === undefined ? undefined : mapRoadEvent(row);
     } finally {
@@ -261,31 +302,31 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     }
   }
 
-  async list(query: RoadEventListQuery): Promise<RoadEventPage> {
+  async list(query: RoadEventListQuery, rawScope: RoadEventAccessScope): Promise<RoadEventPage> {
     if (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > MAX_PAGE_SIZE) throw new RangeError(`limit must be between 1 and ${MAX_PAGE_SIZE}`);
     if (!Number.isSafeInteger(query.offset) || query.offset < 0) throw new RangeError('offset must be a non-negative safe integer');
+    const scope = validateScope(rawScope);
 
-    const conditions: string[] = [];
-    const values: unknown[] = [];
+    const conditions: string[] = ['scope.tenant_id = $1', 'scope.purpose = $2'];
+    const values: unknown[] = [scope.tenantId, scope.purpose];
     const addValue = (value: unknown): number => { values.push(value); return values.length; };
 
     if (query.statuses !== undefined && query.statuses.length > 0) {
-      conditions.push(`status = ANY($${addValue([...query.statuses])}::road_event_status[])`);
+      conditions.push(`re.status = ANY($${addValue([...query.statuses])}::road_event_status[])`);
     }
     if (query.severities !== undefined && query.severities.length > 0) {
-      conditions.push(`severity = ANY($${addValue([...query.severities])}::severity_level[])`);
+      conditions.push(`re.severity = ANY($${addValue([...query.severities])}::severity_level[])`);
     }
-    if (query.occurredFrom !== undefined) conditions.push(`occurred_at >= $${addValue(query.occurredFrom)}`);
-    if (query.occurredTo !== undefined) conditions.push(`occurred_at < $${addValue(query.occurredTo)}`);
+    if (query.occurredFrom !== undefined) conditions.push(`re.occurred_at >= $${addValue(query.occurredFrom)}`);
+    if (query.occurredTo !== undefined) conditions.push(`re.occurred_at < $${addValue(query.occurredTo)}`);
     const limitParameter = addValue(query.limit);
     const offsetParameter = addValue(query.offset);
-    const where = conditions.length === 0 ? '' : ` WHERE ${conditions.join(' AND ')}`;
 
     const client = await this.pool.connect();
     try {
       const result = await client.query<RoadEventRow>(
-        `${ROAD_EVENT_SELECT.replace('  FROM road_events', ',\n    COUNT(*) OVER() AS total_count\n  FROM road_events')}${where}
-         ORDER BY occurred_at DESC, id DESC
+        `${roadEventSelect(true)} WHERE ${conditions.join(' AND ')}
+         ORDER BY re.occurred_at DESC, re.id DESC
          LIMIT $${limitParameter} OFFSET $${offsetParameter}`,
         values
       );
