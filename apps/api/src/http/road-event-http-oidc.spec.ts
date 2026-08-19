@@ -51,7 +51,7 @@ function fixture() {
   );
   return createRoadEventHttpHandler(
     application,
-    createOidcIntegrationActorResolver(verifier(), POLICY)
+    createOidcIntegrationActorResolver(verifier(), POLICY, () => NOW)
   );
 }
 
