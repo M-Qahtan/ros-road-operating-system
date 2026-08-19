@@ -34,6 +34,8 @@ function verifier(claims: VerifiedOidcClaims = CLAIMS): OidcTokenVerifierPort {
   return { verifyBearerToken: async () => claims };
 }
 
+const trustedClock = () => NOW;
+
 test('development may resolve deterministic simulation headers', async () => {
   const resolver = createActorResolverForEnvironment({ NODE_ENV: 'development' });
   assert.deepEqual(
@@ -80,7 +82,7 @@ test('simulation header resolver rejects missing or unknown roles', async () => 
 });
 
 test('trusted OIDC resolver maps only a verified UUID subject to INTEGRATION_SERVICE', async () => {
-  const oidc = createOidcIntegrationActorResolver(verifier(), POLICY);
+  const oidc = createOidcIntegrationActorResolver(verifier(), POLICY, trustedClock);
   const resolver = createActorResolverForEnvironment({ NODE_ENV: 'production' }, oidc);
 
   assert.deepEqual(
@@ -94,12 +96,13 @@ test('trusted OIDC resolver maps only a verified UUID subject to INTEGRATION_SER
 });
 
 test('trusted OIDC resolver rejects missing bearer token, invalid claims and non-UUID subjects', async () => {
-  const resolver = createOidcIntegrationActorResolver(verifier(), POLICY);
+  const resolver = createOidcIntegrationActorResolver(verifier(), POLICY, trustedClock);
   await assert.rejects(resolver.resolve({}), /Bearer authorization is required/);
 
   const wrongTenant = createOidcIntegrationActorResolver(
     verifier({ ...CLAIMS, tenantId: 'other-tenant' }),
-    POLICY
+    POLICY,
+    trustedClock
   );
   await assert.rejects(
     wrongTenant.resolve({ authorization: 'Bearer signed-token' }),
@@ -108,10 +111,19 @@ test('trusted OIDC resolver rejects missing bearer token, invalid claims and non
 
   const nonUuid = createOidcIntegrationActorResolver(
     verifier({ ...CLAIMS, subject: 'integration-service-1' }),
-    POLICY
+    POLICY,
+    trustedClock
   );
   await assert.rejects(
     nonUuid.resolve({ authorization: 'Bearer signed-token' }),
+    /Trusted OIDC\/JWT identity could not be verified/
+  );
+});
+
+test('trusted OIDC resolver fails closed when the injected verifier clock is invalid', async () => {
+  const resolver = createOidcIntegrationActorResolver(verifier(), POLICY, () => 0);
+  await assert.rejects(
+    resolver.resolve({ authorization: 'Bearer signed-token' }),
     /Trusted OIDC\/JWT identity could not be verified/
   );
 });
