@@ -5,6 +5,8 @@ export type RosRole = 'OPERATOR' | 'SUPERVISOR' | 'AUDITOR' | 'INTEGRATION_SERVI
 export interface AuthenticatedActor {
   readonly actorId: string;
   readonly roles: readonly RosRole[];
+  readonly tenantId: string;
+  readonly purpose: string;
 }
 
 export type RoadEventPermission =
