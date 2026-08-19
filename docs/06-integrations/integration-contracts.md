@@ -10,20 +10,34 @@ Every integration must implement idempotency, timeout, retry, circuit breaker, s
 
 Production callers may not self-attest identity, role, tenant, purpose or MFA state through request headers or payload fields.
 
-The canonical integration identity contract is:
+The canonical cryptographically verified OIDC claim contract is:
 
-- `subject`: cryptographically verified service/user subject;
+- `subject`: provisioned ROS UUID for the human or service principal;
 - `issuer`: exact trusted OIDC issuer;
 - `audience`: must contain the ROS API audience;
-- `clientId`: exact approved integration client;
+- `clientId`: exact approved application/integration client;
 - `tenantId`: authoritative tenant scope;
-- `purpose`: one approved operational purpose;
+- `purpose`: authoritative operational purpose;
+- `ros_roles`: non-empty signed ROS RBAC role array; values are validated against the runtime allowlist;
 - `authenticationMethods`: authoritative authentication context; MFA is required where policy says so;
 - `issuedAt` / `expiresAt`: freshness and session-age enforcement.
 
-Code must obtain these claims only from an `OidcTokenVerifierPort` implementation that has verified the bearer token. Development/test simulation headers are explicitly isolated and production rejects them.
+Code must obtain these claims only from an `OidcTokenVerifierPort` implementation that has cryptographically verified the bearer token and signing key. Development/test simulation headers are explicitly isolated and production rejects them.
 
-The current engineering contract supports these bounded purposes:
+The RoadEvent runtime additionally applies explicit configuration allowlists for issuer, audience, client IDs, tenants, purposes and ROS roles. A signed token is rejected rather than partially trusted if any role, tenant or purpose lies outside those allowlists.
+
+### 1.1 Core ROS actor versus integration-service principal
+
+These identities are deliberately separate concepts:
+
+- **Core ROS actor OIDC** is the trust source for RoadEvent API RBAC/ABAC. Signed `ros_roles` may authorize `OPERATOR`, `SUPERVISOR`, `AUDITOR` and, only when explicitly allowlisted, `INTEGRATION_SERVICE`. The verified `tenantId` and `purpose` are propagated directly into server-side RoadEvent scope enforcement.
+- **Integration-service principal** is the provider-adapter identity for an external integration profile. Its resolver grants only `INTEGRATION_SERVICE` and applies the bounded integration-purpose policy below.
+
+An integration-service token must not be treated as a human operator merely because request headers claim a human role. Conversely, core RoadEvent authorization must not derive role, tenant or purpose from caller-controlled headers when OIDC is active.
+
+For the core RoadEvent runtime, the purpose allowlist is deployment/profile-specific. A human operations profile may use an internal purpose such as `ROAD_SAFETY_OPERATIONS`. Provider-specific coordination purposes belong to the integration boundary and do not automatically grant access to a RoadEvent stored under a different purpose.
+
+The current provider-integration engineering contract supports these bounded purposes:
 
 - `INCIDENT_TRIAGE`
 - `EMERGENCY_COORDINATION`
@@ -118,8 +132,9 @@ Rotation tests must prove that the intended overlap works while expired/revoked/
 
 `INTEGRATION_SANDBOX_READY` may be declared only when all of the following are true on the exact candidate head:
 
-- caller identity, tenant, purpose and MFA cannot be self-attested;
+- caller identity, ROS role, tenant, purpose and MFA cannot be self-attested;
 - OIDC/JWT cryptographic verification is wired through an approved verifier implementation;
+- signed `ros_roles` are checked against explicit runtime allowlists rather than inferred from request headers;
 - callbacks are authenticated, fresh and replay-safe using a durable nonce store;
 - cross-tenant and cross-purpose access tests fail closed;
 - retries cannot create a duplicate logical external action;
