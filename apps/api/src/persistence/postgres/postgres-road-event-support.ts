@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   AuditTimelineEntry,
   AuditTimelinePort,
@@ -17,8 +18,8 @@ interface IdempotencyRow {
   readonly response: unknown;
 }
 
-interface AdvisoryLockRow {
-  readonly acquired: boolean;
+interface ReservationRow {
+  readonly fence_token: string;
 }
 
 interface AuditRow {
@@ -34,6 +35,10 @@ interface AuditRow {
 
 export class IdempotencyPersistenceConflictError extends Error {
   override readonly name = 'IdempotencyPersistenceConflictError';
+}
+
+export class IdempotencyReservationReleaseError extends Error {
+  override readonly name = 'IdempotencyReservationReleaseError';
 }
 
 function requireText(value: string, field: string, min: number, max: number): string {
@@ -61,33 +66,53 @@ export class PostgresIdempotencyAdapter implements IdempotencyPort {
   async executeExclusively<T>(scope: string, key: string, operation: () => Promise<T>): Promise<T> {
     const normalizedScope = requireText(scope, 'scope', 1, 128);
     const normalizedKey = requireText(key, 'idempotencyKey', 8, 128);
-    const lockMaterial = `${normalizedScope}\u0000${normalizedKey}`;
-    const client = await this.pool.connect();
-    let transactionOpen = false;
-    try {
-      await client.query('BEGIN');
-      transactionOpen = true;
-      const lock = await client.query<AdvisoryLockRow>(
-        `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS acquired`,
-        [lockMaterial]
-      );
-      if (lock.rows[0]?.acquired !== true) {
-        await client.query('ROLLBACK');
-        transactionOpen = false;
-        throw new IdempotencyInFlightError('Equivalent idempotent request is already in progress');
-      }
+    const fenceToken = randomUUID();
 
-      const value = await operation();
-      await client.query('COMMIT');
-      transactionOpen = false;
-      return value;
-    } catch (error) {
-      if (transactionOpen) {
-        try { await client.query('ROLLBACK'); } catch { /* Connection close/release drops transaction-scoped lock. */ }
+    const reservationClient = await this.pool.connect();
+    try {
+      const reserved = await reservationClient.query<ReservationRow>(
+        `INSERT INTO idempotency_reservations (scope, idempotency_key, fence_token)
+         VALUES ($1, $2, $3::uuid)
+         ON CONFLICT (scope, idempotency_key) DO NOTHING
+         RETURNING fence_token`,
+        [normalizedScope, normalizedKey, fenceToken]
+      );
+      if (reserved.rowCount !== 1) {
+        throw new IdempotencyInFlightError(
+          'Equivalent idempotent request is already in progress or requires reconciliation'
+        );
       }
-      throw error;
     } finally {
-      client.release();
+      reservationClient.release();
+    }
+
+    let completed = false;
+    try {
+      const value = await operation();
+      completed = true;
+      return value;
+    } finally {
+      // On any operation error or process crash, intentionally retain the durable
+      // reservation. Automatic expiry could re-execute a command whose domain
+      // commit outcome is unknown, so recovery requires explicit reconciliation.
+      if (completed) {
+        const releaseClient = await this.pool.connect();
+        try {
+          const released = await releaseClient.query<ReservationRow>(
+            `DELETE FROM idempotency_reservations
+              WHERE scope = $1 AND idempotency_key = $2 AND fence_token = $3::uuid
+              RETURNING fence_token`,
+            [normalizedScope, normalizedKey, fenceToken]
+          );
+          if (released.rowCount !== 1) {
+            throw new IdempotencyReservationReleaseError(
+              'Completed idempotency reservation could not be released safely'
+            );
+          }
+        } finally {
+          releaseClient.release();
+        }
+      }
     }
   }
 
