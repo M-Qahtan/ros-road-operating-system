@@ -276,8 +276,9 @@ export class RoadEventApplicationService {
 
   async timeline(id: string, actor: AuthenticatedActor) {
     this.authorization.assertAllowed(actor, 'road_event:audit_read');
-    await this.requireEvent(requireUuid(id, 'roadEventId'), this.accessScope(actor));
-    return this.auditTimeline.listForRoadEvent(id);
+    const accessScope = this.accessScope(actor);
+    await this.requireEvent(requireUuid(id, 'roadEventId'), accessScope);
+    return this.auditTimeline.listForRoadEvent(id, accessScope);
   }
 
   private async requireEvent(id: string, scope: RoadEventAccessScope): Promise<RoadEvent> {
