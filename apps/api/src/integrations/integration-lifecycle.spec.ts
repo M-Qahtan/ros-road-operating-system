@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { IntegrationPurpose } from './integration-principal.js';
 import {
   DeterministicIntegrationSimulator,
   IntegrationPartner,
-  IntegrationPurpose,
   IntegrationSourceSnapshot,
   projectMinimumNecessary
 } from './integration-lifecycle.js';
