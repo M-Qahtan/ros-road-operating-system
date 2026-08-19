@@ -84,9 +84,26 @@ test('rejects algorithm substitution and unknown signing keys', async () => {
   await assert.rejects(verifier.verifyBearerToken(createToken({}, { kid: 'unknown-key' })), /signing key is not trusted/);
 });
 
-test('rejects malformed tokens and missing authoritative claims', async () => {
+test('rejects non-RSA and weak RSA verification keys', async () => {
+  const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  await assert.rejects(
+    new Rs256OidcTokenVerifier(provider(ec.publicKey)).verifyBearerToken(createToken()),
+    /verification key must be RSA/
+  );
+
+  const weakRsa = generateKeyPairSync('rsa', { modulusLength: 1024 });
+  await assert.rejects(
+    new Rs256OidcTokenVerifier(provider(weakRsa.publicKey)).verifyBearerToken(createToken()),
+    /at least 2048 bits/
+  );
+});
+
+test('rejects malformed tokens, non-canonical encoding and missing authoritative claims', async () => {
   const verifier = new Rs256OidcTokenVerifier(provider());
   await assert.rejects(verifier.verifyBearerToken('not-a-jwt'), OidcTokenVerificationError);
+  const valid = createToken();
+  const [header, payload, signature] = valid.split('.') as [string, string, string];
+  await assert.rejects(verifier.verifyBearerToken(`${header}=.${payload}.${signature}`), /canonical base64url/);
   await assert.rejects(verifier.verifyBearerToken(createToken({ tenant_id: '' })), /tenant_id claim is required/);
   await assert.rejects(verifier.verifyBearerToken(createToken({ amr: 'mfa' })), /amr claim must be a string array/);
 });
