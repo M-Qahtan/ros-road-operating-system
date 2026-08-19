@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { RoadEvent, RoadEventClosureRequiresHumanAuthorizationError, RoadEventStatus, SeverityLevel } from '@ros/domain';
+import { RoadEvent, RoadEventClosureRequiresHumanAuthorizationError, RoadEventNotFoundError, RoadEventStatus, SeverityLevel } from '@ros/domain';
 import { RoadEventApplicationService } from './road-event-application.js';
 import {
   AuthorizationDeniedError,
@@ -14,6 +14,8 @@ import { AuthenticatedActor } from './ports.js';
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
 const TRACE_ID = 'trace-api-001';
+const TENANT_ID = 'riyadh-ops';
+const PURPOSE = 'ROAD_SAFETY_OPERATIONS';
 
 function createFixture() {
   const repository = new MemoryRoadEventRepository();
@@ -28,11 +30,23 @@ function createFixture() {
   return { repository, signals, service };
 }
 
-const operator: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'] };
-const supervisor: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['SUPERVISOR'] };
+const operator: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'], tenantId: TENANT_ID, purpose: PURPOSE };
+const supervisor: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['SUPERVISOR'], tenantId: TENANT_ID, purpose: PURPOSE };
 
 function context(key: string, actor: AuthenticatedActor = operator) {
   return { actor, traceId: TRACE_ID, idempotencyKey: key };
+}
+
+function fixtureWriteContext() {
+  return {
+    tenantId: TENANT_ID,
+    purpose: PURPOSE,
+    actorType: 'SYSTEM',
+    action: 'fixture.created',
+    traceId: '33333333-3333-4333-8333-333333333333',
+    eventType: 'FixtureCreated',
+    correlationId: '44444444-4444-4444-8444-444444444444'
+  };
 }
 
 test('idempotent create retries return the same result without duplicate repository writes', async () => {
@@ -46,7 +60,7 @@ test('idempotent create retries return the same result without duplicate reposit
   const first = await service.create(command, context('create-event-0001'));
   const second = await service.create(command, context('create-event-0001'));
   assert.deepEqual(second, first);
-  assert.equal((await repository.list({ limit: 20, offset: 0 })).total, 1);
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, operator)).total, 1);
   assert.equal((await repository.listForRoadEvent(EVENT_ID)).length, 1);
 });
 
@@ -58,13 +72,7 @@ test('operator cannot grant supervisor-only closure authorization', async () => 
     latitude: 24.7136,
     longitude: 46.6753,
     status: RoadEventStatus.Recovery
-  }), {
-    actorType: 'SYSTEM',
-    action: 'fixture.created',
-    traceId: '33333333-3333-4333-8333-333333333333',
-    eventType: 'FixtureCreated',
-    correlationId: '44444444-4444-4444-8444-444444444444'
-  });
+  }), fixtureWriteContext());
   await assert.rejects(() => service.authorizeClosure({
     roadEventId: EVENT_ID,
     expectedVersion: 1,
@@ -89,10 +97,7 @@ test('S3 closure remains blocked until supervisor authorization is persisted', a
       requiresHumanReview: true
     }
   });
-  await repository.create(event, {
-    actorType: 'SYSTEM', action: 'fixture.created', traceId: '33333333-3333-4333-8333-333333333333',
-    eventType: 'FixtureCreated', correlationId: '44444444-4444-4444-8444-444444444444'
-  });
+  await repository.create(event, fixtureWriteContext());
 
   await assert.rejects(() => service.transition({
     roadEventId: EVENT_ID, expectedVersion: 1, nextStatus: RoadEventStatus.Closed, reason: 'attempt close'
@@ -124,4 +129,18 @@ test('signal attachment is idempotent and checks event existence', async () => {
   await service.attachSignal(command, context('attach-signal-0001'));
   await service.attachSignal(command, context('attach-signal-0001'));
   assert.equal(signals.attachments.length, 1);
+});
+
+test('application hides RoadEvents outside the actor tenant or purpose', async () => {
+  const { service } = createFixture();
+  await service.create({ id: EVENT_ID, occurredAt: '2026-07-25T03:00:00.000Z', latitude: 24.7136, longitude: 46.6753 }, context('create-event-0003'));
+
+  await assert.rejects(
+    () => service.getById(EVENT_ID, { ...operator, tenantId: 'other-tenant' }),
+    RoadEventNotFoundError
+  );
+  await assert.rejects(
+    () => service.getById(EVENT_ID, { ...operator, purpose: 'AUDIT_REVIEW' }),
+    RoadEventNotFoundError
+  );
 });
