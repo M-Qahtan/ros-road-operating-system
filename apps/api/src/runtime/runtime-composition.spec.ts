@@ -10,16 +10,26 @@ test('allows the in-memory composition in test', () => {
   assert.doesNotThrow(() => createRoadEventApplicationForRuntime({ NODE_ENV: 'test' }));
 });
 
-test('fails closed in production instead of silently using memory adapters', () => {
-  assert.throws(
-    () => createRoadEventApplicationForRuntime({ NODE_ENV: 'production' }),
-    /Persistent runtime adapters are required/
+test('allows explicit simulation profile in non-production staging', () => {
+  assert.doesNotThrow(() =>
+    createRoadEventApplicationForRuntime({ NODE_ENV: 'staging', ROS_RUNTIME_PROFILE: 'simulation' })
   );
 });
 
-test('fails closed for any non-development environment', () => {
+test('fails closed for staging without explicit simulation profile', () => {
   assert.throws(
     () => createRoadEventApplicationForRuntime({ NODE_ENV: 'staging' }),
-    /refusing in-memory fallback/
+    /refusing implicit in-memory fallback/
+  );
+});
+
+test('fails closed in production even if simulation profile is requested', () => {
+  assert.throws(
+    () =>
+      createRoadEventApplicationForRuntime({
+        NODE_ENV: 'production',
+        ROS_RUNTIME_PROFILE: 'simulation'
+      }),
+    /Persistent runtime adapters are required/
   );
 });
