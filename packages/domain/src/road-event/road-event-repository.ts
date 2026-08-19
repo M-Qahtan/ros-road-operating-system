@@ -2,7 +2,12 @@ import { RoadEvent } from './road-event.js';
 import { RoadEventStatus } from './road-event-status.js';
 import { SeverityLevel } from './severity.js';
 
-export interface RoadEventWriteContext {
+export interface RoadEventAccessScope {
+  readonly tenantId: string;
+  readonly purpose: string;
+}
+
+export interface RoadEventWriteContext extends RoadEventAccessScope {
   readonly actorType: string;
   readonly actorId?: string;
   readonly action: string;
@@ -33,8 +38,8 @@ export interface RoadEventPage {
 export interface RoadEventRepository {
   create(event: RoadEvent, context: RoadEventWriteContext): Promise<void>;
   update(event: RoadEvent, expectedVersion: number, context: RoadEventWriteContext): Promise<void>;
-  findById(id: string): Promise<RoadEvent | undefined>;
-  list(query: RoadEventListQuery): Promise<RoadEventPage>;
+  findById(id: string, scope: RoadEventAccessScope): Promise<RoadEvent | undefined>;
+  list(query: RoadEventListQuery, scope: RoadEventAccessScope): Promise<RoadEventPage>;
 }
 
 export class RoadEventAlreadyExistsError extends Error { override readonly name = 'RoadEventAlreadyExistsError'; }
