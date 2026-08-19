@@ -2,14 +2,14 @@ import { createServer, IncomingMessage } from 'node:http';
 import { parsePort } from './config.js';
 import { createRoadEventHttpHandler } from './http/road-event-http.js';
 import { applySecurityHeaders, resolveTraceId } from './request-security.js';
+import { bootstrapRoadEventRuntime } from './runtime/runtime-bootstrap.js';
 import { evaluateReadiness, validateRuntimeEnvironment } from './runtime/operational-readiness.js';
-import { createRoadEventApplicationForRuntime } from './runtime/runtime-composition.js';
 import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
 
 validateRuntimeEnvironment(process.env);
 const port = parsePort(process.env.PORT);
-const application = createRoadEventApplicationForRuntime(process.env);
-const handleRoadEvent = createRoadEventHttpHandler(application);
+const runtime = await bootstrapRoadEventRuntime(process.env);
+const handleRoadEvent = createRoadEventHttpHandler(runtime.application);
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -74,8 +74,31 @@ server.headersTimeout = 5_000;
 server.keepAliveTimeout = 5_000;
 server.maxRequestsPerSocket = 100;
 
+let shuttingDown = false;
+async function shutdown(signal: 'SIGTERM' | 'SIGINT'): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(structuredLog('info', 'ROS API shutdown requested', { operation: signal }));
+
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  });
+  try {
+    await runtime.close();
+  } catch {
+    process.exitCode = 1;
+    console.error(structuredLog('error', 'ROS runtime resource shutdown failed', {
+      operation: 'runtime.close'
+    }));
+  }
+}
+
+process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.once('SIGINT', () => { void shutdown('SIGINT'); });
+
 server.listen(port, () => {
   console.log(structuredLog('info', 'ROS API listening', {
-    operation: `listen:${port}`
+    operation: `listen:${port}`,
+    runtimeMode: runtime.mode
   }));
 });
