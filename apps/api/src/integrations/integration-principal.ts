@@ -13,6 +13,7 @@ export interface VerifiedOidcClaims {
   readonly clientId: string;
   readonly tenantId: string;
   readonly purpose: string;
+  readonly roles: readonly string[];
   readonly authenticationMethods: readonly string[];
   readonly issuedAtEpochSeconds: number;
   readonly expiresAtEpochSeconds: number;
@@ -22,7 +23,7 @@ export interface VerifiedOidcClaims {
  * The implementation behind this port must cryptographically verify the token
  * before returning claims. Callers never pass claims directly into the policy
  * evaluator, which prevents a request body/header from self-attesting identity,
- * tenant, purpose or MFA state.
+ * role, tenant, purpose or MFA state.
  */
 export interface OidcTokenVerifierPort {
   verifyBearerToken(token: string): Promise<VerifiedOidcClaims>;
