@@ -7,8 +7,8 @@ import {
   MemorySignalAttachmentAdapter,
   RoleMatrixAuthorizationAdapter
 } from '../application/local-adapters.js';
-import { IntegrationPrincipalPolicy, OidcTokenVerifierPort, VerifiedOidcClaims } from '../integrations/integration-principal.js';
-import { createOidcIntegrationActorResolver } from './actor-resolver.js';
+import { OidcTokenVerifierPort, VerifiedOidcClaims } from '../integrations/integration-principal.js';
+import { createOidcRosActorResolver, TrustedRosActorPolicy } from './actor-resolver.js';
 import { createRoadEventHttpHandler, HttpRequest } from './road-event-http.js';
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
@@ -18,19 +18,21 @@ const CLAIMS: VerifiedOidcClaims = {
   subject: ACTOR_ID,
   issuer: 'https://identity.example.test',
   audience: 'ros-api',
-  clientId: 'traffic-sandbox',
+  clientId: 'ros-operations',
   tenantId: 'riyadh-pilot',
-  purpose: 'TRAFFIC_COORDINATION',
+  purpose: 'ROAD_SAFETY_OPERATIONS',
+  roles: ['OPERATOR'],
   authenticationMethods: ['mfa'],
   issuedAtEpochSeconds: NOW - 30,
   expiresAtEpochSeconds: NOW + 300
 };
-const POLICY: IntegrationPrincipalPolicy = {
+const POLICY: TrustedRosActorPolicy = {
   issuer: 'https://identity.example.test',
   audience: 'ros-api',
-  allowedClientIds: ['traffic-sandbox'],
+  allowedClientIds: ['ros-operations'],
   allowedTenantIds: ['riyadh-pilot'],
-  allowedPurposes: ['TRAFFIC_COORDINATION'],
+  allowedPurposes: ['ROAD_SAFETY_OPERATIONS'],
+  allowedRoles: ['OPERATOR', 'SUPERVISOR', 'AUDITOR'],
   requireMfa: true,
   maxTokenAgeSeconds: 600,
   maxClockSkewSeconds: 30
@@ -52,7 +54,7 @@ function fixture(claims: VerifiedOidcClaims = CLAIMS) {
   return {
     handle: createRoadEventHttpHandler(
       application,
-      createOidcIntegrationActorResolver(verifier(claims), POLICY, () => NOW)
+      createOidcRosActorResolver(verifier(claims), POLICY, () => NOW)
     ),
     repository
   };
@@ -74,7 +76,7 @@ function request(headers: Readonly<Record<string, string | undefined>>): HttpReq
   };
 }
 
-test('HTTP command path awaits trusted OIDC actor and ignores self-attested role and scope headers', async () => {
+test('HTTP command path awaits trusted OIDC actor and ignores self-attested RBAC/ABAC headers', async () => {
   const { handle, repository } = fixture();
   const response = await handle(request({
     authorization: 'Bearer signed-token',
@@ -89,7 +91,7 @@ test('HTTP command path awaits trusted OIDC actor and ignores self-attested role
   assert.equal((response.body as { success: boolean }).success, true);
   assert.equal((await repository.list({ limit: 20, offset: 0 }, {
     tenantId: 'riyadh-pilot',
-    purpose: 'TRAFFIC_COORDINATION'
+    purpose: 'ROAD_SAFETY_OPERATIONS'
   })).total, 1);
   assert.equal((await repository.list({ limit: 20, offset: 0 }, {
     tenantId: 'attacker-tenant',
@@ -103,7 +105,7 @@ test('HTTP command path fails closed when trusted bearer identity is absent', as
     'x-actor-id': ACTOR_ID,
     'x-ros-roles': 'SUPERVISOR',
     'x-tenant-id': 'riyadh-pilot',
-    'x-purpose': 'TRAFFIC_COORDINATION',
+    'x-purpose': 'ROAD_SAFETY_OPERATIONS',
     'idempotency-key': 'oidc-create-0002'
   }));
 
@@ -111,13 +113,18 @@ test('HTTP command path fails closed when trusted bearer identity is absent', as
   assert.equal((response.body as { error: { code: string } }).error.code, 'FORBIDDEN');
 });
 
-test('HTTP command path rejects cryptographically verified claims outside policy scope', async () => {
-  const { handle } = fixture({ ...CLAIMS, purpose: 'INSURANCE_COORDINATION' });
-  const response = await handle(request({
+test('HTTP command path rejects cryptographically verified claims outside RBAC or purpose policy', async () => {
+  const wrongPurpose = fixture({ ...CLAIMS, purpose: 'INSURANCE_COORDINATION' });
+  const wrongPurposeResponse = await wrongPurpose.handle(request({
     authorization: 'Bearer signed-token',
     'idempotency-key': 'oidc-create-0003'
   }));
+  assert.equal(wrongPurposeResponse.status, 403);
 
-  assert.equal(response.status, 403);
-  assert.equal((response.body as { error: { code: string } }).error.code, 'FORBIDDEN');
+  const wrongRole = fixture({ ...CLAIMS, roles: ['INTEGRATION_SERVICE'] });
+  const wrongRoleResponse = await wrongRole.handle(request({
+    authorization: 'Bearer signed-token',
+    'idempotency-key': 'oidc-create-0004'
+  }));
+  assert.equal(wrongRoleResponse.status, 403);
 });
