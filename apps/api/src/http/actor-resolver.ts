@@ -17,6 +17,14 @@ const ALLOWED_ROLES = new Set<RosRole>([
   'INTEGRATION_SERVICE'
 ]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ACCESS_ATTRIBUTE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function requireSimulationScope(value: string | undefined, field: string): string {
+  if (value === undefined || !ACCESS_ATTRIBUTE_PATTERN.test(value)) {
+    throw new AuthorizationDeniedError(`Missing or invalid simulation ${field}`);
+  }
+  return value;
+}
 
 async function resolveSimulationHeaders(
   headers: Readonly<Record<string, string | undefined>>
@@ -36,7 +44,12 @@ async function resolveSimulationHeaders(
     throw new AuthorizationDeniedError('No recognized ROS role was supplied');
   }
 
-  return { actorId, roles };
+  return {
+    actorId,
+    roles,
+    tenantId: requireSimulationScope(headers['x-tenant-id'], 'tenant'),
+    purpose: requireSimulationScope(headers['x-purpose'], 'purpose')
+  };
 }
 
 function simulationHeadersAllowed(environment: NodeJS.ProcessEnv): boolean {
@@ -58,14 +71,14 @@ function bearerToken(headers: Readonly<Record<string, string | undefined>>): str
 }
 
 /**
- * Adapts a cryptographically verified integration principal to the existing ROS
+ * Adapts a cryptographically verified integration principal to the ROS
  * application actor seam. Only the dedicated INTEGRATION_SERVICE role is ever
- * granted here; caller-supplied role headers are ignored.
+ * granted here; caller-supplied role, tenant and purpose headers are ignored.
  *
  * RoadEvent application writes currently require UUID actor identifiers, so the
  * trusted OIDC subject must be the provisioned UUID of the integration service.
- * A clock seam is injectable solely to make time-bound verification deterministic
- * under tests and controlled simulations; production defaults to the system clock.
+ * Tenant and purpose come only from cryptographically verified OIDC claims and
+ * are propagated into server-side resource ABAC.
  */
 export function createOidcIntegrationActorResolver(
   verifier: OidcTokenVerifierPort,
@@ -90,7 +103,9 @@ export function createOidcIntegrationActorResolver(
         }
         return {
           actorId: principal.subject,
-          roles: ['INTEGRATION_SERVICE']
+          roles: ['INTEGRATION_SERVICE'],
+          tenantId: principal.tenantId,
+          purpose: principal.purpose
         };
       } catch (error) {
         if (error instanceof AuthorizationDeniedError) throw error;
