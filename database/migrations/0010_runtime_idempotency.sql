@@ -28,4 +28,4 @@ FOR EACH ROW
 EXECUTE FUNCTION reject_idempotency_record_update();
 
 COMMENT ON TABLE idempotency_records IS
-  'Durable completed-command replay records. Atomic pre-execution reservation/fencing remains a separate runtime gate.';
+  'Durable completed-command replay records. Runtime advisory fencing blocks concurrent equal keys; crash-after-domain-commit-before-replay-record remains a release-blocking residual until atomic command/replay persistence is implemented.';
