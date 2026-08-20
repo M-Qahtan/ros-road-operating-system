@@ -5,7 +5,8 @@ BEGIN;
 TRUNCATE TABLE processed_integration_events, outbox_events CASCADE;
 
 INSERT INTO outbox_events (
-  id, aggregate_type, aggregate_id, event_type, payload, correlation_id, trace_id, occurred_at
+  id, aggregate_type, aggregate_id, event_type, payload, correlation_id, trace_id,
+  tenant_id, purpose, occurred_at
 ) VALUES (
   '11111111-1111-4111-8111-111111111111',
   'RoadEvent',
@@ -14,6 +15,8 @@ INSERT INTO outbox_events (
   '{"severity":"S4"}'::jsonb,
   '33333333-3333-4333-8333-333333333333',
   '44444444-4444-4444-8444-444444444444',
+  'riyadh-pilot',
+  'road-safety-response',
   '2026-07-25T03:00:00.000Z'
 );
 
@@ -22,6 +25,7 @@ WITH candidates AS (
   WHERE published_at IS NULL AND dead_lettered_at IS NULL
     AND next_attempt_at <= now()
     AND (locked_until IS NULL OR locked_until < now())
+    AND (aggregate_type <> 'RoadEvent' OR (tenant_id IS NOT NULL AND purpose IS NOT NULL))
   ORDER BY occurred_at, id
   FOR UPDATE SKIP LOCKED
   LIMIT 1
@@ -35,6 +39,14 @@ DO $$
 BEGIN
   IF (SELECT locked_by FROM outbox_events WHERE id = '11111111-1111-4111-8111-111111111111') <> 'worker-a' THEN
     RAISE EXCEPTION 'worker lease was not acquired';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM outbox_events
+    WHERE id = '11111111-1111-4111-8111-111111111111'
+      AND tenant_id = 'riyadh-pilot'
+      AND purpose = 'road-safety-response'
+  ) THEN
+    RAISE EXCEPTION 'trusted RoadEvent outbox scope was not preserved';
   END IF;
   IF EXISTS (
     SELECT 1 FROM outbox_events
