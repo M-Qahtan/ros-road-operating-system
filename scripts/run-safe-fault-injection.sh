@@ -14,8 +14,11 @@ result="failed"
 redis_outage=false
 redis_readiness_failed_closed=false
 redis_recovery=false
+postgres_outage=false
+postgres_readiness_failed_closed=false
+postgres_recovery=false
 object_storage_outage=false
-object_storage_readiness_failed_closed=false
+object_storage_core_readiness_preserved=false
 object_storage_recovery=false
 api_liveness_preserved=false
 
@@ -30,9 +33,13 @@ write_evidence() {
     "redisOutageExposed": $redis_outage,
     "redisReadinessFailedClosed": $redis_readiness_failed_closed,
     "redisRecoveryVerified": $redis_recovery,
+    "postgresOutageExposed": $postgres_outage,
+    "postgresReadinessFailedClosed": $postgres_readiness_failed_closed,
+    "postgresRecoveryVerified": $postgres_recovery,
     "objectStorageOutageExposed": $object_storage_outage,
-    "objectStorageReadinessFailedClosed": $object_storage_readiness_failed_closed,
+    "inactiveEvidenceStorageDoesNotPoisonCoreReadiness": $object_storage_core_readiness_preserved,
     "objectStorageRecoveryVerified": $object_storage_recovery,
+    "objectStorageGate": "Object Storage Integration",
     "apiLivenessPreserved": $api_liveness_preserved
   }
 }
@@ -40,7 +47,7 @@ JSON
 }
 
 cleanup() {
-  docker compose -f "$COMPOSE_FILE" start redis minio >/dev/null 2>&1 || true
+  docker compose -f "$COMPOSE_FILE" start postgres redis minio >/dev/null 2>&1 || true
   write_evidence
 }
 trap cleanup EXIT
@@ -86,13 +93,14 @@ wait_service_healthy() {
   return 1
 }
 
-# Baseline: all dependencies are healthy before injecting faults.
+# Baseline: active runtime dependencies and the isolated storage service are healthy.
 wait_http_status health 200
 wait_http_status ready 200
+wait_service_healthy postgres
 wait_service_healthy redis
 wait_service_healthy minio
 
-# Redis outage: liveness remains available, readiness fails closed, then recovers.
+# Redis outage: liveness remains available, runtime readiness fails closed, then recovers.
 docker compose -f "$COMPOSE_FILE" stop redis >/dev/null
 wait_service_running redis false
 redis_outage=true
@@ -105,13 +113,27 @@ wait_service_healthy redis
 wait_http_status ready 200
 redis_recovery=true
 
-# Object storage outage: liveness remains available, readiness fails closed, then recovers.
+# PostgreSQL outage: the persistent API must become not-ready without losing liveness.
+docker compose -f "$COMPOSE_FILE" stop postgres >/dev/null
+wait_service_running postgres false
+postgres_outage=true
+wait_http_status health 200
+wait_http_status ready 503
+postgres_readiness_failed_closed=true
+
+docker compose -f "$COMPOSE_FILE" start postgres >/dev/null
+wait_service_healthy postgres
+wait_http_status ready 200
+postgres_recovery=true
+
+# Object Storage is not an active dependency of main.ts yet. Its full
+# PostgreSQL-backed EvidenceService path is enforced by Object Storage Integration.
 docker compose -f "$COMPOSE_FILE" stop minio >/dev/null
 wait_service_running minio false
 object_storage_outage=true
 wait_http_status health 200
-wait_http_status ready 503
-object_storage_readiness_failed_closed=true
+wait_http_status ready 200
+object_storage_core_readiness_preserved=true
 
 docker compose -f "$COMPOSE_FILE" start minio >/dev/null
 wait_service_healthy minio

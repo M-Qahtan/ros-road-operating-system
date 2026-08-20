@@ -4,7 +4,7 @@ import { createRoadEventHttpHandler } from './http/road-event-http.js';
 import { createRuntimeActorResolver } from './http/runtime-actor-resolver.js';
 import { applySecurityHeaders, resolveTraceId } from './request-security.js';
 import { bootstrapRoadEventRuntime } from './runtime/runtime-bootstrap.js';
-import { evaluateReadiness, validateRuntimeEnvironment } from './runtime/operational-readiness.js';
+import { validateRuntimeEnvironment } from './runtime/operational-readiness.js';
 import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
 
 validateRuntimeEnvironment(process.env);
@@ -38,7 +38,7 @@ const server = createServer({ maxHeaderSize: 16 * 1024 }, async (request, respon
   }
 
   if (request.url === '/ready' && request.method === 'GET') {
-    const readiness = await evaluateReadiness(process.env);
+    const readiness = await runtime.readiness();
     response.writeHead(readiness.status === 'ready' ? 200 : 503);
     response.end(JSON.stringify({ ...readiness, service: 'ros-api', traceId }));
     return;

@@ -1,61 +1,78 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { evaluateReadiness, ReadinessProbes, validateRuntimeEnvironment } from './operational-readiness.js';
+import { evaluateReadiness, RuntimeReadinessProbes, validateRuntimeEnvironment } from './operational-readiness.js';
 
-const secureEnvironment = {
+const persistentEnvironment = {
   NODE_ENV: 'staging',
+  ROS_RUNTIME_PROFILE: 'persistent',
   DATABASE_URL: 'postgresql://ros:strong@postgres:5432/ros',
-  REDIS_URL: 'redis://:strong@redis:6379',
-  OBJECT_STORAGE_ENDPOINT: 'http://minio:9000',
-  OBJECT_STORAGE_ACCESS_KEY: 'ros-staging',
-  OBJECT_STORAGE_SECRET_KEY: 'a'.repeat(40),
-  OBJECT_STORAGE_BUCKET: 'ros-evidence',
-  JWT_SECRET: 'b'.repeat(40)
+  REDIS_URL: 'redis://:strong@redis:6379'
 } as NodeJS.ProcessEnv;
 
-const probes = (availability: { database?: boolean; redis?: boolean; objectStorage?: boolean } = {}): ReadinessProbes => ({
-  database: async () => availability.database ?? true,
-  redis: async () => availability.redis ?? true,
-  objectStorage: async () => availability.objectStorage ?? true
+function probes(availability: { database?: boolean; redis?: boolean } = {}): RuntimeReadinessProbes {
+  return {
+    database: async () => {
+      if (availability.database === false) throw new Error('database unavailable');
+    },
+    redis: async () => {
+      if (availability.redis === false) throw new Error('redis unavailable');
+    }
+  };
+}
+
+test('persistent runtime validates only active core dependencies', () => {
+  assert.throws(
+    () => validateRuntimeEnvironment({ NODE_ENV: 'production', REDIS_URL: 'rediss://redis:6379' }),
+    /DATABASE_URL/
+  );
+  assert.throws(
+    () => validateRuntimeEnvironment({ NODE_ENV: 'staging', ROS_RUNTIME_PROFILE: 'persistent', DATABASE_URL: persistentEnvironment.DATABASE_URL }),
+    /REDIS_URL/
+  );
+  assert.doesNotThrow(() => validateRuntimeEnvironment(persistentEnvironment));
+  assert.doesNotThrow(() => validateRuntimeEnvironment({ NODE_ENV: 'staging', ROS_RUNTIME_PROFILE: 'simulation' }));
 });
 
-test('non-development runtime fails closed for missing or unsafe secrets', () => {
-  assert.throws(() => validateRuntimeEnvironment({ NODE_ENV: 'staging' }), /Missing required/);
-  assert.throws(() => validateRuntimeEnvironment({ ...secureEnvironment, JWT_SECRET: 'change-me' }), /strong externally supplied/);
-  assert.doesNotThrow(() => validateRuntimeEnvironment(secureEnvironment));
-});
-
-test('readiness reports missing dependencies without probing them', async () => {
-  assert.deepEqual(await evaluateReadiness({}, probes()), {
-    status: 'not_ready',
-    checks: { database: 'missing', redis: 'missing', objectStorage: 'missing' }
-  });
-});
-
-test('readiness succeeds only when every configured dependency is reachable', async () => {
-  assert.deepEqual(await evaluateReadiness(secureEnvironment, probes()), {
+test('simulation readiness has no live core dependency probes and keeps storage as an external gate', async () => {
+  assert.deepEqual(await evaluateReadiness({}), {
     status: 'ready',
-    checks: { database: 'reachable', redis: 'reachable', objectStorage: 'reachable' }
+    checks: {
+      database: 'not_required',
+      redis: 'not_required',
+      objectStorage: 'external_gate'
+    }
   });
 });
 
-test('Redis outage fails readiness closed while preserving dependency-specific evidence', async () => {
-  assert.deepEqual(await evaluateReadiness(secureEnvironment, probes({ redis: false })), {
-    status: 'not_ready',
-    checks: { database: 'reachable', redis: 'unreachable', objectStorage: 'reachable' }
+test('persistent readiness succeeds only when both live runtime probes succeed', async () => {
+  assert.deepEqual(await evaluateReadiness(probes()), {
+    status: 'ready',
+    checks: {
+      database: 'reachable',
+      redis: 'reachable',
+      objectStorage: 'external_gate'
+    }
   });
 });
 
-test('object-storage outage fails readiness closed', async () => {
-  assert.deepEqual(await evaluateReadiness(secureEnvironment, probes({ objectStorage: false })), {
+test('Redis protocol failure fails readiness closed', async () => {
+  assert.deepEqual(await evaluateReadiness(probes({ redis: false })), {
     status: 'not_ready',
-    checks: { database: 'reachable', redis: 'reachable', objectStorage: 'unreachable' }
+    checks: {
+      database: 'reachable',
+      redis: 'unreachable',
+      objectStorage: 'external_gate'
+    }
   });
 });
 
-test('database outage fails readiness closed', async () => {
-  assert.deepEqual(await evaluateReadiness(secureEnvironment, probes({ database: false })), {
+test('PostgreSQL protocol/schema failure fails readiness closed', async () => {
+  assert.deepEqual(await evaluateReadiness(probes({ database: false })), {
     status: 'not_ready',
-    checks: { database: 'unreachable', redis: 'reachable', objectStorage: 'reachable' }
+    checks: {
+      database: 'unreachable',
+      redis: 'reachable',
+      objectStorage: 'external_gate'
+    }
   });
 });
