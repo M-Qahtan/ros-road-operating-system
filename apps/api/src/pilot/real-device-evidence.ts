@@ -93,6 +93,7 @@ function stringField(value: unknown, field: string, maxLength = 256): string {
   if (trimmed.length === 0 || trimmed.length > maxLength) {
     throw new TypeError(`${field} length is invalid`);
   }
+  if (trimmed !== value) throw new TypeError(`${field} must not contain surrounding whitespace`);
   return trimmed;
 }
 
@@ -246,7 +247,12 @@ export function parseRealDeviceEvidenceBundle(value: unknown): RealDeviceEvidenc
 }
 
 function canonicalize(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (value === undefined) throw new TypeError('undefined is not canonicalizable');
+  if (value === null || typeof value !== 'object') {
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) throw new TypeError('value is not JSON-canonicalizable');
+    return encoded;
+  }
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
   const source = value as Record<string, unknown>;
   return `{${Object.keys(source)
