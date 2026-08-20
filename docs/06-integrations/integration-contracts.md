@@ -58,12 +58,16 @@ This layer does not establish the TLS session itself. It consumes the SHA-256 fi
 
 Required trust conditions:
 
+- the configured partner class and purpose must match the ROS partner-purpose contract;
+- the sandbox endpoint metadata must be a credential-free HTTPS base URL without query parameters or fragment;
 - one of 1–4 explicitly pinned peer-certificate SHA-256 fingerprints must match;
+- every pinned certificate has explicit `notBefore`, `notAfter` and optional revocation time;
 - detached compact JWS form: `<protected-header>..<signature>`;
 - JWS algorithm exactly `RS256`;
 - type exactly `ros-callback+jws`;
 - RSA public key >= 2048 bits;
 - exact trusted `kid`;
+- every JWS verification key has explicit `notBefore`, `notAfter` and optional revocation time;
 - protected headers must bind:
   - `ros_profile`;
   - `ros_tenant`;
@@ -71,9 +75,12 @@ Required trust conditions:
 - signature input is `<protected-header>.<base64url(exactRawBody)>`;
 - raw body is limited to 1 MiB;
 - detached JWS is bounded to 32 KiB;
-- unknown, expired, not-yet-valid and revoked keys fail closed.
+- unknown, expired, not-yet-valid and revoked certificate/key material fails closed;
+- certificate and JWS-key trust is authorized only through explicit `{certificateFingerprintSha256, kid}` pairs.
 
-Rotation is represented by a bounded set of active verification keys. Controlled overlap may admit the retiring and replacement key simultaneously; after the old key's `notAfter`, or after explicit revocation, it is rejected while the replacement key remains accepted.
+The certificate list and JWS-key list **do not form a Cartesian trust set**. During a rotation overlap, both old and replacement material may be individually active, but ROS accepts only explicitly approved certificate↔`kid` combinations. For example, an old certificate paired with a replacement `kid` is rejected unless that exact pair was deliberately approved.
+
+Rotation is therefore represented by bounded active certificate/key material plus explicit credential-pair bindings. After the old certificate or key reaches `notAfter`, or after explicit revocation, that material is rejected while approved replacement material may remain active.
 
 Only `environment: SANDBOX` is accepted by the current executable trust profile. Production activation is not implemented by this contract.
 
@@ -139,9 +146,10 @@ Every real partner onboarding package must define before activation:
 - OIDC issuer/audience/client binding where used;
 - callback authentication mode: HMAC and/or JWS+mTLS;
 - key/certificate owner and secure source;
-- issuance and expiry dates;
-- active/replacement overlap window;
-- emergency revocation procedure;
+- issuance and expiry dates for each approved certificate pin and JWS verification key;
+- exact approved certificate-fingerprint↔`kid` pair bindings;
+- active/replacement overlap window and which exact pairs are valid during that overlap;
+- emergency key and certificate revocation procedure;
 - certificate pin replacement procedure;
 - nonce retention/pruning policy;
 - approved clock source and tolerated skew;
@@ -156,18 +164,18 @@ Every real partner onboarding package must define before activation:
 - exact client/tenant/purpose binding is enforced;
 - resource-level tenant/purpose ABAC is fail-closed;
 - callback HMAC authenticity and durable profile-scoped replay protection pass;
-- applicable JWS+mTLS certificate pinning, scope binding, rotation and revocation tests pass;
+- applicable JWS+mTLS certificate pinning, protected-scope binding, **exact certificate↔`kid` pair binding**, rotation and revocation tests pass;
 - partner lifecycle is persistent and exactly-one at the logical-action level under retry/concurrency/restart;
 - minimum-necessary projection tests pass;
 - delayed/stale callback and terminal-state tests pass;
 - dependency outage behavior is fail-closed or visibly degraded;
 - automated engineering tests contact no real external endpoint;
 - no unresolved P0/P1 safety/security finding remains;
-- exact real sandbox endpoint/trust anchors/certificates are approved for the selected partner;
+- exact real sandbox endpoint/trust anchors/certificates/keys and credential-pair bindings are approved for the selected partner;
 - retry/outage/callback evidence is produced against that approved sandbox;
 - external legal/privacy/operational approvals are attached where required.
 
-The first nine items can be proven internally. The last three are external activation gates and cannot be inferred from simulation evidence.
+The first engineering gates can be proven internally. Real trust material, authorized sandbox execution and external approvals remain external activation gates and cannot be inferred from simulation evidence.
 
 ## 9. Current external approval matrix
 
@@ -186,6 +194,7 @@ The first nine items can be proven internally. The last three are external activ
 Fresh founder/external approval is required before any of the following:
 
 - accepting or installing a production credential, private key or certificate;
+- approving or changing a real partner certificate↔`kid` credential-pair binding;
 - contacting a real partner sandbox when that contact has not already been explicitly authorized;
 - signing/accepting an operational or data-sharing contract;
 - enabling any real emergency, traffic, road-operator, insurer, towing or routing endpoint;
