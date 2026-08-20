@@ -20,6 +20,8 @@ Every partner profile must have one immutable approved binding:
 - security owner;
 - privacy/data-sharing owner.
 
+For JWS+mTLS profiles, the approval package must also enumerate the exact allowed `{certificateFingerprintSha256, kid}` pairs. A list of active certificates and a list of active keys are not sufficient because they would otherwise create an unintended Cartesian trust set during rotation.
+
 A profile ID may not be silently reused with a different tenant, partner or purpose.
 
 ## 2. Internal engineering evidence available
@@ -37,6 +39,7 @@ The current stacked engineering implementation can prove, without contacting a r
 - JWS-RS256 detached-signature verification;
 - mTLS peer certificate SHA-256 pin enforcement after TLS validation;
 - partner/profile/tenant/purpose protected-header binding;
+- explicit certificate↔JWS-`kid` pair enforcement that rejects unapproved cross-pair combinations;
 - key and certificate overlap windows for controlled rotation;
 - expired/revoked/unknown key or certificate rejection;
 - SANDBOX-only trust-profile enforcement;
@@ -53,10 +56,11 @@ Before a real sandbox may be contacted, attach all applicable evidence below to 
 | Partner identity | legal/technical partner identity and named technical owner | External/PMO | PENDING |
 | Sandbox endpoint | exact approved HTTPS base URL and ownership confirmation | Partner + Security | PENDING |
 | OIDC trust | issuer, audience, client ID, tenant/purpose binding, JWKS URL if applicable | Partner + Security | PENDING |
-| mTLS | issuing CA/chain policy, peer certificate fingerprint(s), validity dates | Partner + Security | PENDING |
+| mTLS | issuing CA/chain policy, peer certificate fingerprint(s), validity/revocation dates | Partner + Security | PENDING |
 | JWS | approved algorithm, public key(s), `kid`, validity/revocation dates | Partner + Security | PENDING |
+| Credential pairing | exact approved certificate fingerprint↔`kid` combinations, including rotation overlap pairs | Partner + Security | PENDING |
 | HMAC | secure secret source/rotation process if HMAC is applicable | Partner + Security | PENDING |
-| Rotation | overlap duration, scheduled rotation test, emergency revocation procedure | Security + Partner | PENDING |
+| Rotation | overlap duration, scheduled rotation test, exact allowed credential pairs, emergency revocation procedure | Security + Partner | PENDING |
 | Data sharing | approved minimum-necessary field set and retention | Privacy/Legal + Partner | PENDING |
 | SLA | timeout, retry/backoff, callback SLA, maintenance windows | Operations + Partner | PENDING |
 | Failure mode | partner outage/degradation and escalation procedure | Operations + Safety | PENDING |
@@ -69,21 +73,23 @@ No `PENDING` item may be inferred as approved from local CI success.
 
 For any profile using JWS and/or mTLS, the approved sandbox test must prove:
 
-1. current key/certificate accepted during its validity window;
-2. replacement material accepted during the explicitly approved overlap window;
-3. previous material rejected immediately after expiry;
-4. explicitly revoked material rejected even if its nominal expiry is later;
-5. unknown `kid` or unpinned peer certificate rejected;
-6. cross-profile/tenant/purpose signature transplant rejected;
-7. callback body tampering rejected;
-8. partner outage or trust-service outage fails closed or enters a visible degraded state;
-9. no long-lived private secret appears in source, CI logs or evidence artifacts.
+1. current certificate+key pair accepted during its validity window;
+2. replacement certificate+key pair accepted during the explicitly approved overlap window;
+3. an unapproved cross-pair such as old certificate + replacement `kid` is rejected even while both materials are individually active;
+4. previous material rejected immediately after expiry;
+5. explicitly revoked key or certificate rejected even if its nominal expiry is later;
+6. unknown `kid` or unpinned peer certificate rejected;
+7. cross-profile/tenant/purpose signature transplant rejected;
+8. callback body tampering rejected;
+9. partner outage or trust-service outage fails closed or enters a visible degraded state;
+10. no long-lived private secret appears in source, CI logs or evidence artifacts.
 
 ## 5. Real sandbox execution gate
 
 A real partner sandbox call is **NO-GO** until all of the following are true:
 
 - exact endpoint and trust material are approved;
+- exact certificate↔`kid` pair bindings are approved where JWS+mTLS is used;
 - data-sharing scope is approved;
 - key/certificate handling procedure is approved;
 - founder explicitly authorizes the partner/profile sandbox contact;
