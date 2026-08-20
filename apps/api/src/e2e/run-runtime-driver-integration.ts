@@ -68,6 +68,31 @@ function proveCallbackReplay(): void {
   process.stdout.write(output);
 }
 
+function provePartnerLifecycle(): void {
+  const script = fileURLToPath(new URL('./run-partner-lifecycle-integration.js', import.meta.url));
+  const output = execFileSync(process.execPath, [script], {
+    env: process.env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit']
+  });
+  assert.match(output, /"status":"PASS"/);
+  assert.match(output, /"simulationOnly":true/);
+  assert.match(output, /"minimumNecessaryProjectionVerified":true/);
+  assert.match(output, /"persistentPrepareIdempotencyVerified":true/);
+  assert.match(output, /"concurrentSendExactlyOneLogicalActionVerified":true/);
+  assert.match(output, /"sendAttemptCount":1/);
+  assert.match(output, /"restartReceiptReplayVerified":true/);
+  assert.match(output, /"crossProfileStatusIsolationVerified":true/);
+  assert.match(output, /"callbackReplaySemanticsVerified":true/);
+  assert.match(output, /"terminalStateGuardVerified":true/);
+  assert.match(output, /"callbackAppendOnlyVerified":true/);
+  assert.match(output, /"providerIdentityImmutableVerified":true/);
+  assert.match(output, /"cancellationIdempotencyVerified":true/);
+  assert.match(output, /"networkCalls":0/);
+  assert.match(output, /"operationalAuthorityGranted":false/);
+  process.stdout.write(output);
+}
+
 async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgresPool>): Promise<void> {
   const application = createPersistentRoadEventApplication(postgres);
   const operator = { actorId: ABAC_ACTOR_ID, roles: ['OPERATOR'] as const, ...ABAC_SCOPE };
@@ -216,6 +241,7 @@ async function run(): Promise<void> {
 
     proveRuntimeResilience();
     proveCallbackReplay();
+    provePartnerLifecycle();
     await assertRoadEventAbac(postgres);
 
     process.stdout.write(JSON.stringify({
@@ -229,6 +255,7 @@ async function run(): Promise<void> {
       outboxScope: RUNTIME_OUTBOX_SCOPE,
       runtimeResilienceVerified: true,
       callbackReplayVerified: true,
+      partnerLifecycleVerified: true,
       abacIsolationVerified: true,
       abacDimensions: ['tenant', 'purpose'],
       abacNegativePaths: ['detail', 'list', 'update', 'timeline', 'signal']
