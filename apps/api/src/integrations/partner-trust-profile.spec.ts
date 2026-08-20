@@ -22,7 +22,19 @@ function profile(overrides: Partial<PartnerJwsMtlsTrustProfile> = {}): PartnerJw
     tenantId: 'riyadh-pilot',
     purpose: 'TRAFFIC_COORDINATION',
     environment: 'SANDBOX',
-    peerCertificateSha256Pins: [PIN_ONE, PIN_TWO],
+    sandboxEndpointBaseUrl: 'https://traffic-sandbox.example.test/api',
+    peerCertificates: [
+      {
+        fingerprintSha256: PIN_ONE,
+        notBeforeEpochSeconds: NOW - 300,
+        notAfterEpochSeconds: NOW + 120
+      },
+      {
+        fingerprintSha256: PIN_TWO,
+        notBeforeEpochSeconds: NOW - 30,
+        notAfterEpochSeconds: NOW + 3600
+      }
+    ],
     verificationKeys: [
       {
         kid: 'traffic-key-v1',
@@ -46,7 +58,6 @@ function detachedJws(
   options: {
     readonly kid?: string;
     readonly alg?: string;
-    readonly typ?: string;
     readonly profileId?: string;
     readonly tenantId?: string;
     readonly purpose?: string;
@@ -56,134 +67,95 @@ function detachedJws(
   const body = options.body ?? BODY;
   const protectedHeader = Buffer.from(JSON.stringify({
     alg: options.alg ?? 'RS256',
-    typ: options.typ ?? 'ros-callback+jws',
+    typ: 'ros-callback+jws',
     kid: options.kid ?? 'traffic-key-v1',
     ros_profile: options.profileId ?? 'traffic-sandbox.riyadh',
     ros_tenant: options.tenantId ?? 'riyadh-pilot',
     ros_purpose: options.purpose ?? 'TRAFFIC_COORDINATION'
   }), 'utf8').toString('base64url');
   const payload = Buffer.from(body, 'utf8').toString('base64url');
-  const signature = sign(
-    'RSA-SHA256',
-    Buffer.from(`${protectedHeader}.${payload}`, 'ascii'),
-    privateKey
-  ).toString('base64url');
+  const signature = sign('RSA-SHA256', Buffer.from(`${protectedHeader}.${payload}`, 'ascii'), privateKey).toString('base64url');
   return `${protectedHeader}..${signature}`;
 }
 
-test('accepts pinned mTLS peer plus valid detached JWS bound to exact ROS scope', () => {
-  assert.doesNotThrow(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile()));
+function verifyWith(
+  trustProfile: PartnerJwsMtlsTrustProfile,
+  detached = detachedJws(key1.privateKey),
+  peer = PIN_ONE,
+  now = NOW,
+  rawBody = BODY
+): void {
+  verifyDetachedPartnerJwsMtls({
+    rawBody,
+    detachedJws: detached,
+    peerCertificateSha256: peer,
+    nowEpochSeconds: now
+  }, trustProfile);
+}
+
+test('accepts active pinned mTLS certificate and valid detached JWS bound to exact scope', () => {
+  assert.doesNotThrow(() => verifyWith(profile()));
 });
 
-test('rejects an unpinned mTLS peer before trusting JWS contents', () => {
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey),
-    peerCertificateSha256: UNTRUSTED_PIN,
-    nowEpochSeconds: NOW
-  }, profile()), /mTLS peer certificate is not pinned/);
+test('enforces trusted partner-purpose binding and sandbox-only HTTPS endpoint metadata', () => {
+  assert.throws(() => verifyWith(profile({ purpose: 'INSURANCE_COORDINATION' })), /requires purpose TRAFFIC_COORDINATION/);
+  assert.throws(() => verifyWith(profile({ sandboxEndpointBaseUrl: 'http://traffic.example.test' })), /must use HTTPS/);
+  assert.throws(() => verifyWith(profile({ sandboxEndpointBaseUrl: 'https://user:pass@traffic.example.test/api' })), /must not contain credentials/);
+  const unsafe = { ...profile(), environment: 'PRODUCTION' } as unknown as PartnerJwsMtlsTrustProfile;
+  assert.throws(() => verifyWith(unsafe), /Only SANDBOX partner trust profiles are enabled/);
 });
 
-test('rejects cross-profile tenant or purpose transplant even with a valid signature', () => {
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey, { tenantId: 'other-tenant' }),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile()), /protected ROS scope does not match/);
+test('rejects unpinned, expired and revoked mTLS certificate pins fail closed', () => {
+  assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey), UNTRUSTED_PIN), /not pinned/);
+  assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey), PIN_ONE, NOW + 121), /Pinned mTLS peer certificate is outside/);
 
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey, { purpose: 'INSURANCE_COORDINATION' }),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile()), /protected ROS scope does not match/);
+  const revoked = profile({
+    peerCertificates: [{
+      fingerprintSha256: PIN_ONE,
+      notBeforeEpochSeconds: NOW - 100,
+      notAfterEpochSeconds: NOW + 100,
+      revokedAtEpochSeconds: NOW
+    }]
+  });
+  assert.throws(() => verifyWith(revoked), /Pinned mTLS peer certificate is revoked/);
+});
+
+test('rejects cross-tenant or cross-purpose protected-header transplant', () => {
+  assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey, { tenantId: 'other-tenant' })), /protected ROS scope does not match/);
+  assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey, { purpose: 'INSURANCE_COORDINATION' })), /protected ROS scope does not match/);
 });
 
 test('rejects raw-body tampering and algorithm substitution', () => {
-  const signed = detachedJws(key1.privateKey);
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: '{"operationId":"trust-proof","status":"failed"}',
-    detachedJws: signed,
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile()), /signature verification failed/);
-
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey, { alg: 'none' }),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile()), /alg must be exactly RS256/);
+  assert.throws(
+    () => verifyWith(profile(), detachedJws(key1.privateKey), PIN_ONE, NOW, '{"operationId":"trust-proof","status":"failed"}'),
+    /signature verification failed/
+  );
+  assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey, { alg: 'none' })), /alg must be exactly RS256/);
 });
 
-test('supports bounded active-key overlap for rotation and rejects the old key after expiry', () => {
-  assert.doesNotThrow(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile()));
-  assert.doesNotThrow(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key2.privateKey, { kid: 'traffic-key-v2' }),
-    peerCertificateSha256: PIN_TWO,
-    nowEpochSeconds: NOW
-  }, profile()));
+test('supports bounded key and certificate rotation overlap then rejects retired material', () => {
+  assert.doesNotThrow(() => verifyWith(profile(), detachedJws(key1.privateKey), PIN_ONE, NOW));
+  assert.doesNotThrow(() => verifyWith(profile(), detachedJws(key2.privateKey, { kid: 'traffic-key-v2' }), PIN_TWO, NOW));
 
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW + 121
-  }, profile()), /outside its accepted validity window/);
-
-  assert.doesNotThrow(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key2.privateKey, { kid: 'traffic-key-v2' }),
-    peerCertificateSha256: PIN_TWO,
-    nowEpochSeconds: NOW + 121
-  }, profile()));
+  assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey), PIN_ONE, NOW + 121), /Pinned mTLS peer certificate is outside/);
+  assert.doesNotThrow(() => verifyWith(profile(), detachedJws(key2.privateKey, { kid: 'traffic-key-v2' }), PIN_TWO, NOW + 121));
 });
 
-test('rejects revoked or unknown signing keys fail closed', () => {
+test('rejects revoked, expired, unknown or weak JWS keys', () => {
   const revoked = profile({
     verificationKeys: [{
       kid: 'traffic-key-v1',
       publicKey: key1.publicKey,
       notBeforeEpochSeconds: NOW - 300,
       notAfterEpochSeconds: NOW + 3600,
-      revokedAtEpochSeconds: NOW - 1
+      revokedAtEpochSeconds: NOW
     }]
   });
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, revoked), /signing key is revoked/);
+  assert.throws(() => verifyWith(revoked), /Partner JWS signing key is revoked/);
+  assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey, { kid: 'unknown-key' })), /signing key is not trusted/);
 
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey, { kid: 'unknown-key' }),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile()), /signing key is not trusted/);
-});
-
-test('rejects weak RSA keys and malformed trust-profile rotation material', () => {
   const weak = generateKeyPairSync('rsa', { modulusLength: 1024 });
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile({
+  assert.throws(() => verifyWith(profile({
     verificationKeys: [{
       kid: 'traffic-key-v1',
       publicKey: weak.publicKey,
@@ -191,23 +163,15 @@ test('rejects weak RSA keys and malformed trust-profile rotation material', () =
       notAfterEpochSeconds: NOW + 100
     }]
   })), /at least 2048 bits/);
-
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, profile({ peerCertificateSha256Pins: [PIN_ONE, PIN_ONE] })), /pins must be unique/);
 });
 
-test('rejects production-like activation and oversized trust inputs', () => {
-  const unsafe = { ...profile(), environment: 'PRODUCTION' } as unknown as PartnerJwsMtlsTrustProfile;
-  assert.throws(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: detachedJws(key1.privateKey),
-    peerCertificateSha256: PIN_ONE,
-    nowEpochSeconds: NOW
-  }, unsafe), /Only SANDBOX partner trust profiles are enabled/);
+test('rejects duplicate pins and oversized trust inputs', () => {
+  assert.throws(() => verifyWith(profile({
+    peerCertificates: [
+      { fingerprintSha256: PIN_ONE, notBeforeEpochSeconds: NOW - 1, notAfterEpochSeconds: NOW + 100 },
+      { fingerprintSha256: PIN_ONE, notBeforeEpochSeconds: NOW - 1, notAfterEpochSeconds: NOW + 100 }
+    ]
+  })), /pins must be unique/);
 
   assert.throws(() => verifyDetachedPartnerJwsMtls({
     rawBody: 'x'.repeat(1024 * 1024 + 1),
