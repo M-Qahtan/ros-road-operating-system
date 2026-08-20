@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { lstat, realpath, stat } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
 
 export type DevicePlatform = 'ANDROID' | 'IOS';
 export type FieldScenarioKind =
@@ -53,6 +56,7 @@ export interface RealDeviceEvidenceBundle {
 export interface RealDeviceEvidenceDecision {
   readonly status: 'PASS' | 'NO_GO';
   readonly bundleSha256: string;
+  readonly candidateHeadVerified: boolean;
   readonly evidenceIntegrityVerified: boolean;
   readonly representativeRealDeviceCriticalFlowsPassed: boolean;
   readonly gpsDegradationSafeStateVerified: boolean;
@@ -63,6 +67,15 @@ export interface RealDeviceEvidenceDecision {
   readonly staleStateUnsafeActionsObserved: number;
   readonly missingCoverage: readonly string[];
   readonly blockingReasons: readonly string[];
+}
+
+const VERIFIED_EVIDENCE_FILES: unique symbol = Symbol('ros-real-device-evidence-files-verified');
+
+export interface VerifiedRealDeviceEvidenceFiles {
+  readonly bundleSha256: string;
+  readonly expectedCandidateHeadSha: string;
+  readonly verifiedFileCount: number;
+  readonly [VERIFIED_EVIDENCE_FILES]: true;
 }
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -95,6 +108,18 @@ function stringField(value: unknown, field: string, maxLength = 256): string {
   }
   if (trimmed !== value) throw new TypeError(`${field} must not contain surrounding whitespace`);
   return trimmed;
+}
+
+function lowercaseSha256(value: unknown, field: string): string {
+  const digest = stringField(value, field, 64);
+  if (!SHA256.test(digest)) throw new TypeError(`${field} must be a lowercase SHA-256 digest`);
+  return digest;
+}
+
+function lowercaseGitSha(value: unknown, field: string): string {
+  const sha = stringField(value, field, 40);
+  if (!GIT_SHA.test(sha)) throw new TypeError(`${field} must be a lowercase 40-character git SHA`);
+  return sha;
 }
 
 function booleanField(value: unknown, field: string): boolean {
@@ -130,8 +155,7 @@ function parseEvidenceFile(value: unknown, field: string): FieldEvidenceFile {
   if (path.startsWith('/') || path.includes('..') || path.includes('\\')) {
     throw new TypeError(`${field}.path must be a safe relative evidence path`);
   }
-  const sha256 = stringField(source.sha256, `${field}.sha256`, 64).toLowerCase();
-  if (!SHA256.test(sha256)) throw new TypeError(`${field}.sha256 must be a lowercase SHA-256 digest`);
+  const sha256 = lowercaseSha256(source.sha256, `${field}.sha256`);
   const sizeBytes = nonNegativeInteger(source.sizeBytes, `${field}.sizeBytes`);
   if (sizeBytes === 0) throw new TypeError(`${field}.sizeBytes must be greater than zero`);
   return Object.freeze({ path, sha256, sizeBytes });
@@ -148,8 +172,7 @@ function parseDevice(value: unknown, field: string): RealDeviceDescriptor {
   if (platform === 'IOS' && screenReader === 'TALKBACK') {
     throw new TypeError(`${field}.screenReader TALKBACK is invalid for iOS`);
   }
-  const appBuildSha256 = stringField(source.appBuildSha256, `${field}.appBuildSha256`, 64).toLowerCase();
-  if (!SHA256.test(appBuildSha256)) throw new TypeError(`${field}.appBuildSha256 must be a lowercase SHA-256 digest`);
+  const appBuildSha256 = lowercaseSha256(source.appBuildSha256, `${field}.appBuildSha256`);
   return Object.freeze({
     platform,
     model: stringField(source.model, `${field}.model`, 128),
@@ -202,8 +225,7 @@ function parseSession(value: unknown, index: number): RealDeviceEvidenceSession 
   exactKeys(source, field, ['sessionId', 'candidateHeadSha', 'environment', 'device', 'startedAt', 'completedAt', 'scenarios']);
   const sessionId = stringField(source.sessionId, `${field}.sessionId`, 128);
   if (!SESSION_ID.test(sessionId)) throw new TypeError(`${field}.sessionId format is invalid`);
-  const candidateHeadSha = stringField(source.candidateHeadSha, `${field}.candidateHeadSha`, 40).toLowerCase();
-  if (!GIT_SHA.test(candidateHeadSha)) throw new TypeError(`${field}.candidateHeadSha must be a 40-character git SHA`);
+  const candidateHeadSha = lowercaseGitSha(source.candidateHeadSha, `${field}.candidateHeadSha`);
   const startedAt = timestamp(source.startedAt, `${field}.startedAt`);
   const completedAt = timestamp(source.completedAt, `${field}.completedAt`);
   if (Date.parse(completedAt) < Date.parse(startedAt)) throw new TypeError(`${field}.completedAt precedes startedAt`);
@@ -265,6 +287,80 @@ export function realDeviceEvidenceBundleSha256(bundle: RealDeviceEvidenceBundle)
   return createHash('sha256').update(canonicalize(bundle), 'utf8').digest('hex');
 }
 
+function evidenceClaims(bundle: RealDeviceEvidenceBundle): Map<string, FieldEvidenceFile> {
+  const claims = new Map<string, FieldEvidenceFile>();
+  for (const session of bundle.sessions) {
+    for (const scenario of session.scenarios) {
+      for (const file of scenario.evidenceFiles) {
+        const previous = claims.get(file.path);
+        if (previous !== undefined && (previous.sha256 !== file.sha256 || previous.sizeBytes !== file.sizeBytes)) {
+          throw new TypeError(`evidence path ${file.path} has conflicting integrity claims`);
+        }
+        claims.set(file.path, file);
+      }
+    }
+  }
+  return claims;
+}
+
+async function sha256File(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) {
+    hash.update(chunk as Buffer);
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * Independently verifies the actual evidence-file bytes and candidate head.
+ * The returned branded receipt is the only input that can make
+ * `evidenceIntegrityVerified` and `candidateHeadVerified` true.
+ */
+export async function verifyRealDeviceEvidenceFiles(
+  bundle: RealDeviceEvidenceBundle,
+  evidenceRoot: string,
+  expectedCandidateHeadSha: string
+): Promise<VerifiedRealDeviceEvidenceFiles> {
+  const expectedHead = lowercaseGitSha(expectedCandidateHeadSha, 'expectedCandidateHeadSha');
+  for (const session of bundle.sessions) {
+    if (session.candidateHeadSha !== expectedHead) {
+      throw new Error(`session ${session.sessionId} targets ${session.candidateHeadSha}, expected ${expectedHead}`);
+    }
+  }
+
+  const rootInput = stringField(evidenceRoot, 'evidenceRoot', 2048);
+  const rootReal = await realpath(resolve(rootInput));
+  const rootPrefix = rootReal.endsWith(sep) ? rootReal : `${rootReal}${sep}`;
+  const claims = evidenceClaims(bundle);
+
+  for (const [relativePath, claim] of claims) {
+    const unresolved = resolve(rootReal, relativePath);
+    const unresolvedInfo = await lstat(unresolved);
+    if (unresolvedInfo.isSymbolicLink()) throw new Error(`evidence file ${relativePath} must not be a symbolic link`);
+
+    const targetReal = await realpath(unresolved);
+    if (!targetReal.startsWith(rootPrefix)) throw new Error(`evidence file ${relativePath} escapes the evidence root`);
+
+    const fileInfo = await stat(targetReal);
+    if (!fileInfo.isFile()) throw new Error(`evidence path ${relativePath} is not a regular file`);
+    if (fileInfo.size !== claim.sizeBytes) {
+      throw new Error(`evidence file ${relativePath} size mismatch: expected ${claim.sizeBytes}, got ${fileInfo.size}`);
+    }
+
+    const actualSha256 = await sha256File(targetReal);
+    if (actualSha256 !== claim.sha256) {
+      throw new Error(`evidence file ${relativePath} SHA-256 mismatch`);
+    }
+  }
+
+  return Object.freeze({
+    bundleSha256: realDeviceEvidenceBundleSha256(bundle),
+    expectedCandidateHeadSha: expectedHead,
+    verifiedFileCount: claims.size,
+    [VERIFIED_EVIDENCE_FILES]: true as const
+  });
+}
+
 function passed(session: RealDeviceEvidenceSession, kind: FieldScenarioKind): boolean {
   return session.scenarios.some(
     (scenario) =>
@@ -276,8 +372,13 @@ function passed(session: RealDeviceEvidenceSession, kind: FieldScenarioKind): bo
   );
 }
 
-export function evaluateRealDeviceEvidence(value: unknown): RealDeviceEvidenceDecision {
+export function evaluateRealDeviceEvidence(
+  value: unknown,
+  verifiedEvidence?: VerifiedRealDeviceEvidenceFiles
+): RealDeviceEvidenceDecision {
   const bundle = parseRealDeviceEvidenceBundle(value);
+  const bundleSha256 = realDeviceEvidenceBundleSha256(bundle);
+  const claims = evidenceClaims(bundle);
   let duplicateLogicalActionsObserved = 0;
   let staleStateUnsafeActionsObserved = 0;
   const blockingReasons: string[] = [];
@@ -292,6 +393,19 @@ export function evaluateRealDeviceEvidence(value: unknown): RealDeviceEvidenceDe
   }
   if (duplicateLogicalActionsObserved > 0) blockingReasons.push('duplicate logical actions were observed on real devices');
   if (staleStateUnsafeActionsObserved > 0) blockingReasons.push('unsafe stale-state actions were observed on real devices');
+
+  const verificationMatchesBundle =
+    verifiedEvidence !== undefined &&
+    verifiedEvidence[VERIFIED_EVIDENCE_FILES] === true &&
+    verifiedEvidence.bundleSha256 === bundleSha256 &&
+    verifiedEvidence.verifiedFileCount === claims.size;
+  const candidateHeadVerified =
+    verificationMatchesBundle &&
+    bundle.sessions.every((session) => session.candidateHeadSha === verifiedEvidence.expectedCandidateHeadSha);
+  const evidenceIntegrityVerified = verificationMatchesBundle;
+
+  if (!candidateHeadVerified) blockingReasons.push('candidate head has not been independently verified against trusted expected input');
+  if (!evidenceIntegrityVerified) blockingReasons.push('evidence file bytes have not been independently size/SHA-256 verified');
 
   const androidSessions = bundle.sessions.filter((session) => session.device.platform === 'ANDROID');
   const iosSessions = bundle.sessions.filter((session) => session.device.platform === 'IOS');
@@ -316,17 +430,18 @@ export function evaluateRealDeviceEvidence(value: unknown): RealDeviceEvidenceDe
   if (!restartReconnectSafeStateVerified) missingCoverage.push('restart/reconnect safe-state coverage');
   if (!screenReaderCriticalFlowsPassed) missingCoverage.push('TalkBack+VoiceOver critical-flow coverage');
 
-  const evidenceIntegrityVerified = bundle.sessions.every((session) =>
-    session.scenarios.every((scenario) => scenario.evidenceFiles.every((file) => SHA256.test(file.sha256) && file.sizeBytes > 0))
-  );
-  if (!evidenceIntegrityVerified) blockingReasons.push('evidence file integrity metadata is incomplete');
-
   const status =
-    blockingReasons.length === 0 && missingCoverage.length === 0 && evidenceIntegrityVerified ? 'PASS' : 'NO_GO';
+    blockingReasons.length === 0 &&
+    missingCoverage.length === 0 &&
+    candidateHeadVerified &&
+    evidenceIntegrityVerified
+      ? 'PASS'
+      : 'NO_GO';
 
   return Object.freeze({
     status,
-    bundleSha256: realDeviceEvidenceBundleSha256(bundle),
+    bundleSha256,
+    candidateHeadVerified,
     evidenceIntegrityVerified,
     representativeRealDeviceCriticalFlowsPassed,
     gpsDegradationSafeStateVerified,
