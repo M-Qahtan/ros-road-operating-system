@@ -28,6 +28,7 @@ export interface CallbackHmacKeyProvider {
 export interface CallbackReplayStore {
   claim(
     binding: CallbackPrincipalBinding,
+    contractId: string,
     keyId: string,
     nonce: string,
     expiresAtEpochSeconds: number
@@ -36,6 +37,7 @@ export interface CallbackReplayStore {
 
 export interface VerifyCallbackInput {
   readonly binding: CallbackPrincipalBinding;
+  readonly contractId: string;
   readonly keyId: string;
   readonly body: string;
   readonly timestampEpochSeconds: number;
@@ -57,6 +59,10 @@ function requireIdentifier(value: string, field: string): string {
   const normalized = value.trim();
   if (!SAFE_IDENTIFIER.test(normalized)) throw new CallbackAuthenticationError(`${field} is invalid`);
   return normalized;
+}
+
+function requireContractId(value: string): string {
+  return requireIdentifier(value, 'Callback contractId');
 }
 
 function requireKeyId(value: string): string {
@@ -111,6 +117,7 @@ function encodedField(name: string, value: string): string {
 
 function canonicalCallback(
   binding: CallbackPrincipalBinding,
+  contractId: string,
   keyId: string,
   body: string,
   timestampEpochSeconds: number,
@@ -122,6 +129,7 @@ function canonicalCallback(
     encodedField('clientId', binding.clientId),
     encodedField('tenantId', binding.tenantId),
     encodedField('purpose', binding.purpose),
+    encodedField('contractId', contractId),
     encodedField('keyId', keyId),
     `timestamp:${timestampEpochSeconds}`,
     encodedField('nonce', nonce),
@@ -157,12 +165,13 @@ export function computeCallbackSignatureHex(
     throw new CallbackAuthenticationError('Callback HMAC secret must contain at least 32 bytes');
   }
   const binding = normalizeBinding(input.binding);
+  const contractId = requireContractId(input.contractId);
   const keyId = requireKeyId(input.keyId);
   const body = requireBody(input.body);
   const timestamp = requireEpoch(input.timestampEpochSeconds, 'Callback timestamp');
   const nonce = requireNonce(input.nonce);
   return createHmac('sha256', secret)
-    .update(canonicalCallback(binding, keyId, body, timestamp, nonce), 'utf8')
+    .update(canonicalCallback(binding, contractId, keyId, body, timestamp, nonce), 'utf8')
     .digest('hex');
 }
 
@@ -180,6 +189,7 @@ export async function verifyCallbackHmac(
     true
   );
   const binding = normalizeBinding(input.binding);
+  const contractId = requireContractId(input.contractId);
   const keyId = requireKeyId(input.keyId);
   const body = requireBody(input.body);
   const timestamp = requireEpoch(input.timestampEpochSeconds, 'Callback timestamp');
@@ -197,6 +207,7 @@ export async function verifyCallbackHmac(
 
   const expected = signatureBuffer(computeCallbackSignatureHex(secret, {
     binding,
+    contractId,
     keyId,
     body,
     timestampEpochSeconds: timestamp,
@@ -213,7 +224,7 @@ export async function verifyCallbackHmac(
   }
 
   let claimed: boolean;
-  try { claimed = await replayStore.claim(binding, keyId, nonce, expiresAt); }
+  try { claimed = await replayStore.claim(binding, contractId, keyId, nonce, expiresAt); }
   catch { throw new CallbackAuthenticationError('Callback replay protection is unavailable'); }
   if (!claimed) throw new CallbackAuthenticationError('Callback nonce has already been used for this principal');
 }
