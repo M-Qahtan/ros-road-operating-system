@@ -141,6 +141,7 @@ function run(): void {
     protectedScopeBindingVerified: true,
     bodyTamperRejected: true,
     keyRotationOverlapVerified: true,
+    expiredOldKeyRejected: true,
     retiredOldMaterialRejected: true,
     revokedKeyRejected: true,
     networkCalls: 0,
