@@ -24,30 +24,16 @@ function profile(overrides: Partial<PartnerJwsMtlsTrustProfile> = {}): PartnerJw
     environment: 'SANDBOX',
     sandboxEndpointBaseUrl: 'https://traffic-sandbox.example.test/api',
     peerCertificates: [
-      {
-        fingerprintSha256: PIN_ONE,
-        notBeforeEpochSeconds: NOW - 300,
-        notAfterEpochSeconds: NOW + 120
-      },
-      {
-        fingerprintSha256: PIN_TWO,
-        notBeforeEpochSeconds: NOW - 30,
-        notAfterEpochSeconds: NOW + 3600
-      }
+      { fingerprintSha256: PIN_ONE, notBeforeEpochSeconds: NOW - 300, notAfterEpochSeconds: NOW + 120 },
+      { fingerprintSha256: PIN_TWO, notBeforeEpochSeconds: NOW - 30, notAfterEpochSeconds: NOW + 3600 }
     ],
     verificationKeys: [
-      {
-        kid: 'traffic-key-v1',
-        publicKey: key1.publicKey,
-        notBeforeEpochSeconds: NOW - 300,
-        notAfterEpochSeconds: NOW + 120
-      },
-      {
-        kid: 'traffic-key-v2',
-        publicKey: key2.publicKey,
-        notBeforeEpochSeconds: NOW - 30,
-        notAfterEpochSeconds: NOW + 3600
-      }
+      { kid: 'traffic-key-v1', publicKey: key1.publicKey, notBeforeEpochSeconds: NOW - 300, notAfterEpochSeconds: NOW + 120 },
+      { kid: 'traffic-key-v2', publicKey: key2.publicKey, notBeforeEpochSeconds: NOW - 30, notAfterEpochSeconds: NOW + 3600 }
+    ],
+    allowedCredentialPairs: [
+      { certificateFingerprintSha256: PIN_ONE, kid: 'traffic-key-v1' },
+      { certificateFingerprintSha256: PIN_TWO, kid: 'traffic-key-v2' }
     ],
     ...overrides
   };
@@ -58,7 +44,6 @@ function detachedJws(
   options: {
     readonly kid?: string;
     readonly alg?: string;
-    readonly profileId?: string;
     readonly tenantId?: string;
     readonly purpose?: string;
     readonly body?: string;
@@ -69,7 +54,7 @@ function detachedJws(
     alg: options.alg ?? 'RS256',
     typ: 'ros-callback+jws',
     kid: options.kid ?? 'traffic-key-v1',
-    ros_profile: options.profileId ?? 'traffic-sandbox.riyadh',
+    ros_profile: 'traffic-sandbox.riyadh',
     ros_tenant: options.tenantId ?? 'riyadh-pilot',
     ros_purpose: options.purpose ?? 'TRAFFIC_COORDINATION'
   }), 'utf8').toString('base64url');
@@ -85,16 +70,16 @@ function verifyWith(
   now = NOW,
   rawBody = BODY
 ): void {
-  verifyDetachedPartnerJwsMtls({
-    rawBody,
-    detachedJws: detached,
-    peerCertificateSha256: peer,
-    nowEpochSeconds: now
-  }, trustProfile);
+  verifyDetachedPartnerJwsMtls({ rawBody, detachedJws: detached, peerCertificateSha256: peer, nowEpochSeconds: now }, trustProfile);
 }
 
-test('accepts active pinned mTLS certificate and valid detached JWS bound to exact scope', () => {
-  assert.doesNotThrow(() => verifyWith(profile()));
+test('accepts only approved active certificate and JWS-key pairs', () => {
+  assert.doesNotThrow(() => verifyWith(profile(), detachedJws(key1.privateKey), PIN_ONE));
+  assert.doesNotThrow(() => verifyWith(profile(), detachedJws(key2.privateKey, { kid: 'traffic-key-v2' }), PIN_TWO));
+  assert.throws(
+    () => verifyWith(profile(), detachedJws(key2.privateKey, { kid: 'traffic-key-v2' }), PIN_ONE),
+    /combination is not authorized/
+  );
 });
 
 test('enforces trusted partner-purpose binding and sandbox-only HTTPS endpoint metadata', () => {
@@ -108,14 +93,9 @@ test('enforces trusted partner-purpose binding and sandbox-only HTTPS endpoint m
 test('rejects unpinned, expired and revoked mTLS certificate pins fail closed', () => {
   assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey), UNTRUSTED_PIN), /not pinned/);
   assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey), PIN_ONE, NOW + 121), /Pinned mTLS peer certificate is outside/);
-
   const revoked = profile({
-    peerCertificates: [{
-      fingerprintSha256: PIN_ONE,
-      notBeforeEpochSeconds: NOW - 100,
-      notAfterEpochSeconds: NOW + 100,
-      revokedAtEpochSeconds: NOW
-    }]
+    peerCertificates: [{ fingerprintSha256: PIN_ONE, notBeforeEpochSeconds: NOW - 100, notAfterEpochSeconds: NOW + 100, revokedAtEpochSeconds: NOW }],
+    allowedCredentialPairs: [{ certificateFingerprintSha256: PIN_ONE, kid: 'traffic-key-v1' }]
   });
   assert.throws(() => verifyWith(revoked), /Pinned mTLS peer certificate is revoked/);
 });
@@ -133,45 +113,41 @@ test('rejects raw-body tampering and algorithm substitution', () => {
   assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey, { alg: 'none' })), /alg must be exactly RS256/);
 });
 
-test('supports bounded key and certificate rotation overlap then rejects retired material', () => {
+test('supports bounded certificate and key rotation overlap then rejects retired old material', () => {
   assert.doesNotThrow(() => verifyWith(profile(), detachedJws(key1.privateKey), PIN_ONE, NOW));
   assert.doesNotThrow(() => verifyWith(profile(), detachedJws(key2.privateKey, { kid: 'traffic-key-v2' }), PIN_TWO, NOW));
-
   assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey), PIN_ONE, NOW + 121), /Pinned mTLS peer certificate is outside/);
   assert.doesNotThrow(() => verifyWith(profile(), detachedJws(key2.privateKey, { kid: 'traffic-key-v2' }), PIN_TWO, NOW + 121));
 });
 
-test('rejects revoked, expired, unknown or weak JWS keys', () => {
+test('rejects revoked, unknown or weak JWS keys', () => {
   const revoked = profile({
-    verificationKeys: [{
-      kid: 'traffic-key-v1',
-      publicKey: key1.publicKey,
-      notBeforeEpochSeconds: NOW - 300,
-      notAfterEpochSeconds: NOW + 3600,
-      revokedAtEpochSeconds: NOW
-    }]
+    verificationKeys: [{ kid: 'traffic-key-v1', publicKey: key1.publicKey, notBeforeEpochSeconds: NOW - 300, notAfterEpochSeconds: NOW + 3600, revokedAtEpochSeconds: NOW }],
+    allowedCredentialPairs: [{ certificateFingerprintSha256: PIN_ONE, kid: 'traffic-key-v1' }]
   });
   assert.throws(() => verifyWith(revoked), /Partner JWS signing key is revoked/);
   assert.throws(() => verifyWith(profile(), detachedJws(key1.privateKey, { kid: 'unknown-key' })), /signing key is not trusted/);
 
   const weak = generateKeyPairSync('rsa', { modulusLength: 1024 });
   assert.throws(() => verifyWith(profile({
-    verificationKeys: [{
-      kid: 'traffic-key-v1',
-      publicKey: weak.publicKey,
-      notBeforeEpochSeconds: NOW - 1,
-      notAfterEpochSeconds: NOW + 100
-    }]
+    verificationKeys: [{ kid: 'traffic-key-v1', publicKey: weak.publicKey, notBeforeEpochSeconds: NOW - 1, notAfterEpochSeconds: NOW + 100 }],
+    allowedCredentialPairs: [{ certificateFingerprintSha256: PIN_ONE, kid: 'traffic-key-v1' }]
   })), /at least 2048 bits/);
 });
 
-test('rejects duplicate pins and oversized trust inputs', () => {
+test('rejects malformed credential-pair configuration and oversized trust inputs', () => {
   assert.throws(() => verifyWith(profile({
-    peerCertificates: [
-      { fingerprintSha256: PIN_ONE, notBeforeEpochSeconds: NOW - 1, notAfterEpochSeconds: NOW + 100 },
-      { fingerprintSha256: PIN_ONE, notBeforeEpochSeconds: NOW - 1, notAfterEpochSeconds: NOW + 100 }
+    allowedCredentialPairs: [{ certificateFingerprintSha256: UNTRUSTED_PIN, kid: 'traffic-key-v1' }]
+  })), /unknown mTLS certificate pin/);
+  assert.throws(() => verifyWith(profile({
+    allowedCredentialPairs: [{ certificateFingerprintSha256: PIN_ONE, kid: 'missing-kid' }]
+  })), /unknown JWS kid/);
+  assert.throws(() => verifyWith(profile({
+    allowedCredentialPairs: [
+      { certificateFingerprintSha256: PIN_ONE, kid: 'traffic-key-v1' },
+      { certificateFingerprintSha256: PIN_ONE, kid: 'traffic-key-v1' }
     ]
-  })), /pins must be unique/);
+  })), /duplicate credential-pair/);
 
   assert.throws(() => verifyDetachedPartnerJwsMtls({
     rawBody: 'x'.repeat(1024 * 1024 + 1),
