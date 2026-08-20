@@ -3,6 +3,7 @@ CREATE TABLE integration_callback_nonces (
   tenant_id TEXT NOT NULL,
   purpose TEXT NOT NULL,
   nonce TEXT NOT NULL,
+  contract_id TEXT NOT NULL,
   key_id TEXT NOT NULL,
   claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL,
@@ -11,6 +12,7 @@ CREATE TABLE integration_callback_nonces (
   CONSTRAINT integration_callback_nonces_tenant_length CHECK (length(tenant_id) BETWEEN 1 AND 128),
   CONSTRAINT integration_callback_nonces_purpose_length CHECK (length(purpose) BETWEEN 1 AND 128),
   CONSTRAINT integration_callback_nonces_nonce_length CHECK (length(nonce) BETWEEN 16 AND 256),
+  CONSTRAINT integration_callback_nonces_contract_length CHECK (length(contract_id) BETWEEN 1 AND 128),
   CONSTRAINT integration_callback_nonces_key_length CHECK (length(key_id) BETWEEN 1 AND 64),
   CONSTRAINT integration_callback_nonces_expiry_after_claim CHECK (expires_at > claimed_at)
 );
@@ -33,4 +35,4 @@ FOR EACH ROW
 EXECUTE FUNCTION reject_integration_callback_nonce_update();
 
 COMMENT ON TABLE integration_callback_nonces IS
-  'Durable one-time callback nonce claims scoped by exact integration principal. Nonces remain unique across key rotation; expired-row pruning is an explicit maintenance action and never occurs in the request path.';
+  'Durable one-time callback nonce claims scoped by exact integration principal. contract_id is retained for signed-contract audit; primary uniqueness intentionally excludes contract_id and key_id so a nonce cannot be replayed across contracts or key rotation. Expired-row pruning is explicit maintenance and never occurs in the request path.';
