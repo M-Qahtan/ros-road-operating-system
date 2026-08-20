@@ -24,6 +24,7 @@ import {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const ACCESS_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const IDEMPOTENCY_SCOPE_DOMAIN = 'ros-road-event-idempotency/v1';
 
 export class ApplicationValidationError extends Error { override readonly name = 'ApplicationValidationError'; }
 export class ApplicationConflictError extends Error { override readonly name = 'ApplicationConflictError'; }
@@ -124,6 +125,16 @@ function validateExpectedVersion(version: number): void {
 
 function fingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+export function deriveRoadEventIdempotencyScope(operation: string, scope: RoadEventAccessScope): string {
+  const canonical = JSON.stringify({
+    domain: IDEMPOTENCY_SCOPE_DOMAIN,
+    operation,
+    tenantId: scope.tenantId,
+    purpose: scope.purpose
+  });
+  return `road-event:${createHash('sha256').update(canonical).digest('hex')}`;
 }
 
 export class RoadEventApplicationService {
@@ -291,7 +302,7 @@ export class RoadEventApplicationService {
   }
 
   private operationScope(operation: string, scope: RoadEventAccessScope): string {
-    return `${operation}:${scope.tenantId}:${scope.purpose}`;
+    return deriveRoadEventIdempotencyScope(operation, scope);
   }
 
   private async requireEvent(id: string, scope: RoadEventAccessScope): Promise<RoadEvent> {
