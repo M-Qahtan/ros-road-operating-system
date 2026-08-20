@@ -69,10 +69,11 @@ INSERT INTO audit_logs (
   '33333333-3333-4333-8333-333333333333'
 );
 INSERT INTO outbox_events (
-  aggregate_type, aggregate_id, event_type, payload, correlation_id
+  aggregate_type, aggregate_id, event_type, payload, correlation_id, tenant_id, purpose
 ) VALUES (
   'RoadEvent', '11111111-1111-4111-8111-111111111111', 'RoadEventConfirmed',
-  '{"version":3}'::jsonb, '44444444-4444-4444-8444-444444444444'
+  '{"version":3}'::jsonb, '44444444-4444-4444-8444-444444444444',
+  'riyadh-pilot', 'road-safety-response'
 );
 ROLLBACK TO SAVEPOINT atomic_write;
 
@@ -106,10 +107,11 @@ INSERT INTO audit_logs (
   '33333333-3333-4333-8333-333333333333'
 );
 INSERT INTO outbox_events (
-  aggregate_type, aggregate_id, event_type, payload, correlation_id
+  aggregate_type, aggregate_id, event_type, payload, correlation_id, tenant_id, purpose
 ) VALUES (
   'RoadEvent', '11111111-1111-4111-8111-111111111111', 'RoadEventConfirmed',
-  '{"version":3}'::jsonb, '44444444-4444-4444-8444-444444444444'
+  '{"version":3}'::jsonb, '44444444-4444-4444-8444-444444444444',
+  'riyadh-pilot', 'road-safety-response'
 );
 
 DO $$
@@ -122,6 +124,15 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM audit_logs) <> 1 OR (SELECT count(*) FROM outbox_events) <> 1 THEN
     RAISE EXCEPTION 'Atomic audit/outbox writes are missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM outbox_events
+    WHERE aggregate_type = 'RoadEvent'
+      AND aggregate_id = '11111111-1111-4111-8111-111111111111'
+      AND tenant_id = 'riyadh-pilot'
+      AND purpose = 'road-safety-response'
+  ) THEN
+    RAISE EXCEPTION 'Transactional RoadEvent outbox scope was not preserved';
   END IF;
 END;
 $$;
