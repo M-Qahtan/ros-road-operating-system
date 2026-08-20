@@ -22,12 +22,16 @@ export interface OidcTokenVerifierPort {
   verifyBearerToken(token: string): Promise<VerifiedOidcClaims>;
 }
 
+export interface IntegrationPrincipalBinding {
+  readonly clientId: string;
+  readonly tenantId: string;
+  readonly purpose: IntegrationPurpose;
+}
+
 export interface IntegrationPrincipalPolicy {
   readonly issuer: string;
   readonly audience: string;
-  readonly allowedClientIds: readonly string[];
-  readonly allowedTenantIds: readonly string[];
-  readonly allowedPurposes: readonly IntegrationPurpose[];
+  readonly allowedBindings: readonly IntegrationPrincipalBinding[];
   readonly requireMfa: boolean;
   readonly maxTokenAgeSeconds: number;
   readonly maxClockSkewSeconds: number;
@@ -59,6 +63,19 @@ function validInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+function bindingAuthorized(
+  bindings: readonly IntegrationPrincipalBinding[],
+  clientId: string,
+  tenantId: string,
+  purpose: IntegrationPurpose
+): boolean {
+  return bindings.some((binding) =>
+    binding.clientId === clientId &&
+    binding.tenantId === tenantId &&
+    binding.purpose === purpose
+  );
+}
+
 export async function resolveTrustedIntegrationPrincipal(
   bearerToken: string,
   verifier: OidcTokenVerifierPort,
@@ -70,6 +87,9 @@ export async function resolveTrustedIntegrationPrincipal(
   if (!validInteger(policy.maxTokenAgeSeconds) || !validInteger(policy.maxClockSkewSeconds)) {
     throw new IntegrationPrincipalError('Token timing policy is invalid');
   }
+  if (policy.allowedBindings.length === 0) {
+    throw new IntegrationPrincipalError('At least one exact integration principal binding is required');
+  }
 
   const claims = await verifier.verifyBearerToken(token);
   const subject = nonEmpty(claims.subject, 'subject');
@@ -79,9 +99,9 @@ export async function resolveTrustedIntegrationPrincipal(
 
   if (claims.issuer !== policy.issuer) throw new IntegrationPrincipalError('OIDC issuer is not trusted');
   if (!hasAudience(claims.audience, policy.audience)) throw new IntegrationPrincipalError('OIDC audience is not trusted');
-  if (!policy.allowedClientIds.includes(clientId)) throw new IntegrationPrincipalError('OIDC client is not authorized');
-  if (!policy.allowedTenantIds.includes(tenantId)) throw new IntegrationPrincipalError('OIDC tenant is not authorized');
-  if (!policy.allowedPurposes.includes(purpose)) throw new IntegrationPrincipalError('Integration purpose is not authorized');
+  if (!bindingAuthorized(policy.allowedBindings, clientId, tenantId, purpose)) {
+    throw new IntegrationPrincipalError('OIDC principal binding is not authorized');
+  }
 
   if (!validInteger(claims.issuedAtEpochSeconds) || !validInteger(claims.expiresAtEpochSeconds)) {
     throw new IntegrationPrincipalError('Token timestamps are invalid');
@@ -97,8 +117,8 @@ export async function resolveTrustedIntegrationPrincipal(
   }
 
   const methods = claims.authenticationMethods.map((method) => method.trim().toLowerCase());
-  const mfaVerified = methods.includes('mfa') || methods.includes('otp') || methods.includes('hwk');
-  if (policy.requireMfa && !mfaVerified) throw new IntegrationPrincipalError('MFA authentication is required');
+  const mfaVerified = methods.includes('mfa');
+  if (policy.requireMfa && !mfaVerified) throw new IntegrationPrincipalError('Explicit MFA authentication is required');
 
   return Object.freeze({ subject, clientId, tenantId, purpose, mfaVerified });
 }
