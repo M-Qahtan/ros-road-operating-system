@@ -273,7 +273,7 @@ async function proveReplayAndExactReconciliation(
   );
 
   const scopeClient = await postgres.connect();
-  let persistedScope: string;
+  let persistedScope = '';
   const leftoverFence = randomUUID();
   try {
     const scopes = await scopeClient.query<ScopeRow>(
