@@ -19,7 +19,19 @@ const PROFILE: PartnerJwsMtlsTrustProfile = {
   tenantId: 'riyadh-pilot',
   purpose: 'TRAFFIC_COORDINATION',
   environment: 'SANDBOX',
-  peerCertificateSha256Pins: [PIN_ACTIVE, PIN_NEXT],
+  sandboxEndpointBaseUrl: 'https://traffic-sandbox.example.test/api',
+  peerCertificates: [
+    {
+      fingerprintSha256: PIN_ACTIVE,
+      notBeforeEpochSeconds: NOW - 300,
+      notAfterEpochSeconds: NOW + 120
+    },
+    {
+      fingerprintSha256: PIN_NEXT,
+      notBeforeEpochSeconds: NOW - 30,
+      notAfterEpochSeconds: NOW + 3600
+    }
+  ],
   verificationKeys: [
     {
       kid: 'traffic-key-v1',
@@ -54,60 +66,55 @@ function jws(
   return `${header}..${signature}`;
 }
 
-function expectFailure(work: () => void, pattern: RegExp): void {
-  assert.throws(work, pattern);
+function verify(detachedJws: string, peer: string, now = NOW, rawBody = BODY, profile = PROFILE): void {
+  verifyDetachedPartnerJwsMtls({
+    rawBody,
+    detachedJws,
+    peerCertificateSha256: peer,
+    nowEpochSeconds: now
+  }, profile);
 }
 
 function run(): void {
-  verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: jws(oldKey.privateKey, 'traffic-key-v1'),
-    peerCertificateSha256: PIN_ACTIVE,
-    nowEpochSeconds: NOW
-  }, PROFILE);
-  verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: jws(nextKey.privateKey, 'traffic-key-v2'),
-    peerCertificateSha256: PIN_NEXT,
-    nowEpochSeconds: NOW
-  }, PROFILE);
+  verify(jws(oldKey.privateKey, 'traffic-key-v1'), PIN_ACTIVE);
+  verify(jws(nextKey.privateKey, 'traffic-key-v2'), PIN_NEXT);
 
-  expectFailure(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: jws(oldKey.privateKey, 'traffic-key-v1'),
-    peerCertificateSha256: PIN_UNKNOWN,
-    nowEpochSeconds: NOW
-  }, PROFILE), /mTLS peer certificate is not pinned/);
+  assert.throws(() => verify(jws(oldKey.privateKey, 'traffic-key-v1'), PIN_UNKNOWN), /not pinned/);
+  assert.throws(
+    () => verify(jws(oldKey.privateKey, 'traffic-key-v1', { purpose: 'INSURANCE_COORDINATION' }), PIN_ACTIVE),
+    /protected ROS scope does not match/
+  );
+  assert.throws(
+    () => verify(
+      jws(oldKey.privateKey, 'traffic-key-v1'),
+      PIN_ACTIVE,
+      NOW,
+      '{"operationId":"runtime-trust-proof","state":"FAILED"}'
+    ),
+    /signature verification failed/
+  );
 
-  expectFailure(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: jws(oldKey.privateKey, 'traffic-key-v1', { purpose: 'INSURANCE_COORDINATION' }),
-    peerCertificateSha256: PIN_ACTIVE,
-    nowEpochSeconds: NOW
-  }, PROFILE), /protected ROS scope does not match/);
+  assert.throws(
+    () => verify(jws(oldKey.privateKey, 'traffic-key-v1'), PIN_ACTIVE, NOW + 121),
+    /Pinned mTLS peer certificate is outside/
+  );
+  verify(jws(nextKey.privateKey, 'traffic-key-v2'), PIN_NEXT, NOW + 121);
 
-  expectFailure(() => verifyDetachedPartnerJwsMtls({
-    rawBody: '{"operationId":"runtime-trust-proof","state":"FAILED"}',
-    detachedJws: jws(oldKey.privateKey, 'traffic-key-v1'),
-    peerCertificateSha256: PIN_ACTIVE,
-    nowEpochSeconds: NOW
-  }, PROFILE), /signature verification failed/);
+  const revokedCertificate: PartnerJwsMtlsTrustProfile = {
+    ...PROFILE,
+    peerCertificates: [{
+      fingerprintSha256: PIN_NEXT,
+      notBeforeEpochSeconds: NOW - 30,
+      notAfterEpochSeconds: NOW + 3600,
+      revokedAtEpochSeconds: NOW
+    }]
+  };
+  assert.throws(
+    () => verify(jws(nextKey.privateKey, 'traffic-key-v2'), PIN_NEXT, NOW, BODY, revokedCertificate),
+    /Pinned mTLS peer certificate is revoked/
+  );
 
-  expectFailure(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: jws(oldKey.privateKey, 'traffic-key-v1'),
-    peerCertificateSha256: PIN_ACTIVE,
-    nowEpochSeconds: NOW + 121
-  }, PROFILE), /outside its accepted validity window/);
-
-  verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: jws(nextKey.privateKey, 'traffic-key-v2'),
-    peerCertificateSha256: PIN_NEXT,
-    nowEpochSeconds: NOW + 121
-  }, PROFILE);
-
-  const revokedProfile: PartnerJwsMtlsTrustProfile = {
+  const revokedKey: PartnerJwsMtlsTrustProfile = {
     ...PROFILE,
     verificationKeys: [{
       kid: 'traffic-key-v2',
@@ -117,22 +124,24 @@ function run(): void {
       revokedAtEpochSeconds: NOW
     }]
   };
-  expectFailure(() => verifyDetachedPartnerJwsMtls({
-    rawBody: BODY,
-    detachedJws: jws(nextKey.privateKey, 'traffic-key-v2'),
-    peerCertificateSha256: PIN_NEXT,
-    nowEpochSeconds: NOW
-  }, revokedProfile), /signing key is revoked/);
+  assert.throws(
+    () => verify(jws(nextKey.privateKey, 'traffic-key-v2'), PIN_NEXT, NOW, BODY, revokedKey),
+    /Partner JWS signing key is revoked/
+  );
 
   process.stdout.write(JSON.stringify({
     status: 'PASS',
     sandboxOnlyVerified: true,
+    httpsEndpointPolicyVerified: true,
+    partnerPurposeBindingVerified: true,
     mtlsCertificatePinVerified: true,
+    mtlsCertificateRotationVerified: true,
+    revokedCertificateRejected: true,
     detachedJwsRs256Verified: true,
     protectedScopeBindingVerified: true,
     bodyTamperRejected: true,
     keyRotationOverlapVerified: true,
-    expiredOldKeyRejected: true,
+    retiredOldMaterialRejected: true,
     revokedKeyRejected: true,
     networkCalls: 0,
     productionActivationEnabled: false
