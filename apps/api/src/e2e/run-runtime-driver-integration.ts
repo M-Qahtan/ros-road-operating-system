@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createClient } from 'redis';
 import { RoadEventNotFoundError, SeverityLevel } from '@ros/domain';
 import { createNodeRedisStreamClient } from '../messaging/node-redis-stream-client.js';
@@ -29,6 +31,24 @@ function requiredRedisUrl(): string {
   const value = process.env.REDIS_URL?.trim();
   if (!value) throw new Error('REDIS_URL is required for runtime driver integration');
   return value;
+}
+
+function proveRuntimeResilience(): void {
+  const script = fileURLToPath(new URL('./run-runtime-resilience-integration.js', import.meta.url));
+  const output = execFileSync(process.execPath, [script], {
+    env: process.env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit']
+  });
+  assert.match(output, /"status":"PASS"/);
+  assert.match(output, /"outboxUniqueDeliveryVerified":true/);
+  assert.match(output, /"workerRestartRecoveryVerified":true/);
+  assert.match(output, /"activeLeaseFencingVerified":true/);
+  assert.match(output, /"crashReservationFailClosedVerified":true/);
+  assert.match(output, /"reconciliationAlertVerified":true/);
+  assert.match(output, /"completedReplaySurvivesRestart":true/);
+  assert.match(output, /"exactFenceReconciliationVerified":true/);
+  process.stdout.write(output);
 }
 
 async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgresPool>): Promise<void> {
@@ -189,6 +209,7 @@ async function run(): Promise<void> {
     assert.equal(entry?.message.tenantId, RUNTIME_OUTBOX_SCOPE.tenantId);
     assert.equal(entry?.message.purpose, RUNTIME_OUTBOX_SCOPE.purpose);
 
+    proveRuntimeResilience();
     await assertRoadEventAbac(postgres);
 
     process.stdout.write(JSON.stringify({
@@ -200,6 +221,7 @@ async function run(): Promise<void> {
       runtimeDeliveryMode: entry?.message.deliveryMode,
       outboxScopeVerified: true,
       outboxScope: RUNTIME_OUTBOX_SCOPE,
+      runtimeResilienceVerified: true,
       abacIsolationVerified: true,
       abacDimensions: ['tenant', 'purpose'],
       abacNegativePaths: ['detail', 'list', 'update', 'timeline', 'signal']
