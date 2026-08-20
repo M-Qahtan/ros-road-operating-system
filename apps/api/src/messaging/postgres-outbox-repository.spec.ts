@@ -29,19 +29,24 @@ const row = {
   correlation_id: '33333333-3333-4333-8333-333333333333',
   causation_id: null,
   trace_id: '44444444-4444-4444-8444-444444444444',
+  tenant_id: 'riyadh-pilot',
+  purpose: 'road-safety-response',
   occurred_at: '2026-07-25T03:00:00.000Z',
   retry_count: 0
 };
 
-test('claimBatch uses SKIP LOCKED and an expiring worker lease', async () => {
+test('claimBatch uses SKIP LOCKED, excludes unscoped RoadEvents and maps trusted scope', async () => {
   const client = new FakeClient(() => ({ rows: [row], rowCount: 1 }));
   const repository = new PostgresOutboxRepository(new FakePool(client));
   const messages = await repository.claimBatch('worker-a', 25, 30_000);
   assert.equal(messages.length, 1);
   assert.match(client.queries[0]!.text, /FOR UPDATE SKIP LOCKED/);
   assert.match(client.queries[0]!.text, /locked_until < now\(\)/);
+  assert.match(client.queries[0]!.text, /aggregate_type <> 'RoadEvent'.*tenant_id IS NOT NULL.*purpose IS NOT NULL/s);
   assert.deepEqual(client.queries[0]!.values, [25, 'worker-a', 30_000]);
   assert.equal(messages[0]?.traceId, row.trace_id);
+  assert.equal(messages[0]?.tenantId, row.tenant_id);
+  assert.equal(messages[0]?.purpose, row.purpose);
 });
 
 test('acknowledgement fails when the worker no longer owns the lease', async () => {
