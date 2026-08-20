@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createClient } from 'redis';
+import { RoadEvent } from '@ros/domain';
 import { ApplicationConflictError } from '../application/road-event-application.js';
 import { IdempotencyInFlightError } from '../application/ports.js';
 import { createNodeRedisStreamClient } from '../messaging/node-redis-stream-client.js';
 import { createNodePostgresPool } from '../persistence/postgres/pg-postgres-pool.js';
+import { PostgresRoadEventRepository } from '../persistence/postgres/postgres-road-event-repository.js';
 import { PostgresIdempotencyAdapter } from '../persistence/postgres/postgres-road-event-support.js';
 import { createOutboxWorkerRuntime } from '../runtime/outbox-worker-runtime.js';
 import { createPersistentRoadEventApplication } from '../runtime/runtime-composition.js';
@@ -17,6 +19,11 @@ const PURPOSE = 'road-safety-response';
 const STREAM = process.env.ROS_OUTBOX_STREAM ?? 'ros:resilience-events';
 const CRASH_SCOPE = 'runtime-resilience:crash-before-commit';
 const CRASH_KEY = 'resilience-crash-0001';
+const AMBIGUOUS_SCOPE = 'runtime-resilience:committed-without-replay';
+const AMBIGUOUS_KEY = 'resilience-ambiguous-0001';
+const AMBIGUOUS_EVENT_ID = '97777777-7777-4777-8777-777777777777';
+const AMBIGUOUS_TRACE_ID = '98888888-8888-4888-8888-888888888888';
+const AMBIGUOUS_CORRELATION_ID = '99999999-9999-4999-8999-999999999999';
 const REPLAY_KEY = 'resilience-replay-0001';
 const REPLAY_EVENT_ID = '94444444-4444-4444-8444-444444444444';
 const REPLAY_ACTOR_ID = '95555555-5555-4555-8555-555555555555';
@@ -239,6 +246,79 @@ async function proveIdempotencyCrashFence(
   }
 }
 
+async function proveCommittedWithoutReplayStaysFailClosed(
+  postgres: ReturnType<typeof createNodePostgresPool>
+): Promise<void> {
+  const idempotency = new PostgresIdempotencyAdapter(postgres);
+  const repository = new PostgresRoadEventRepository(postgres);
+  const event = new RoadEvent({
+    id: AMBIGUOUS_EVENT_ID,
+    occurredAt: new Date('2026-08-20T00:10:00.000Z'),
+    latitude: 24.7136,
+    longitude: 46.6753
+  });
+
+  await assert.rejects(
+    idempotency.executeExclusively(AMBIGUOUS_SCOPE, AMBIGUOUS_KEY, async () => {
+      await repository.create(event, {
+        tenantId: TENANT_ID,
+        purpose: PURPOSE,
+        actorType: 'SYSTEM',
+        action: 'runtime_resilience.ambiguous_commit',
+        traceId: AMBIGUOUS_TRACE_ID,
+        eventType: 'RuntimeResilienceAmbiguousCommit',
+        correlationId: AMBIGUOUS_CORRELATION_ID
+      });
+      throw new Error('simulated process loss after domain commit before replay persistence');
+    }),
+    /simulated process loss after domain commit before replay persistence/
+  );
+
+  assert.equal(
+    await scalarCount(postgres, `SELECT count(*) AS count FROM road_events WHERE id = $1::uuid AND tenant_id = $2 AND purpose = $3`, [AMBIGUOUS_EVENT_ID, TENANT_ID, PURPOSE]),
+    1
+  );
+  assert.equal(
+    await scalarCount(postgres, `SELECT count(*) AS count FROM audit_logs WHERE resource_type = 'RoadEvent' AND resource_id = $1::uuid`, [AMBIGUOUS_EVENT_ID]),
+    1
+  );
+  assert.equal(
+    await scalarCount(postgres, `SELECT count(*) AS count FROM outbox_events WHERE aggregate_type = 'RoadEvent' AND aggregate_id = $1::uuid AND tenant_id = $2 AND purpose = $3`, [AMBIGUOUS_EVENT_ID, TENANT_ID, PURPOSE]),
+    1
+  );
+  assert.equal(
+    await scalarCount(postgres, `SELECT count(*) AS count FROM idempotency_records WHERE scope = $1 AND idempotency_key = $2`, [AMBIGUOUS_SCOPE, AMBIGUOUS_KEY]),
+    0
+  );
+  assert.equal(
+    await scalarCount(postgres, `SELECT count(*) AS count FROM idempotency_reservations WHERE scope = $1 AND idempotency_key = $2`, [AMBIGUOUS_SCOPE, AMBIGUOUS_KEY]),
+    1
+  );
+
+  let reexecutionAttempts = 0;
+  const restartedAdapter = new PostgresIdempotencyAdapter(postgres);
+  await assert.rejects(
+    restartedAdapter.executeExclusively(AMBIGUOUS_SCOPE, AMBIGUOUS_KEY, async () => {
+      reexecutionAttempts += 1;
+      return 'must-not-run';
+    }),
+    IdempotencyInFlightError
+  );
+  assert.equal(reexecutionAttempts, 0);
+  assert.equal(
+    await scalarCount(postgres, `SELECT count(*) AS count FROM road_events WHERE id = $1::uuid`, [AMBIGUOUS_EVENT_ID]),
+    1
+  );
+  assert.equal(
+    await scalarCount(postgres, `SELECT count(*) AS count FROM outbox_events WHERE aggregate_type = 'RoadEvent' AND aggregate_id = $1::uuid`, [AMBIGUOUS_EVENT_ID]),
+    1
+  );
+  assert.equal(
+    await scalarCount(postgres, `SELECT count(*) AS count FROM idempotency_reservations WHERE scope = $1 AND idempotency_key = $2`, [AMBIGUOUS_SCOPE, AMBIGUOUS_KEY]),
+    1
+  );
+}
+
 async function proveReplayAndExactReconciliation(
   postgres: ReturnType<typeof createNodePostgresPool>
 ): Promise<void> {
@@ -350,6 +430,7 @@ async function run(): Promise<void> {
 
     await proveWorkerRestartRecovery(postgres, redis);
     await proveIdempotencyCrashFence(postgres);
+    await proveCommittedWithoutReplayStaysFailClosed(postgres);
     await proveReplayAndExactReconciliation(postgres);
 
     const finalEntries = await redisVerifier.xRange(STREAM, '-', '+');
@@ -365,6 +446,7 @@ async function run(): Promise<void> {
       workerRestartRecoveryVerified: true,
       activeLeaseFencingVerified: true,
       crashReservationFailClosedVerified: true,
+      committedWithoutReplayFailClosedVerified: true,
       reconciliationAlertVerified: true,
       completedReplaySurvivesRestart: true,
       exactFenceReconciliationVerified: true
