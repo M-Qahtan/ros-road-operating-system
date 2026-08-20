@@ -36,6 +36,11 @@ export interface PartnerJwsVerificationKey {
   readonly revokedAtEpochSeconds?: number;
 }
 
+export interface PartnerCredentialPair {
+  readonly certificateFingerprintSha256: string;
+  readonly kid: string;
+}
+
 /**
  * Runtime trust material for an approved partner sandbox profile.
  * This object contains public verification material only; no private key or live credential is required.
@@ -49,6 +54,8 @@ export interface PartnerJwsMtlsTrustProfile {
   readonly sandboxEndpointBaseUrl: string;
   readonly peerCertificates: readonly PartnerMtlsCertificatePin[];
   readonly verificationKeys: readonly PartnerJwsVerificationKey[];
+  /** Explicitly approved certificate↔JWS-key combinations; prevents Cartesian trust during rotation overlap. */
+  readonly allowedCredentialPairs: readonly PartnerCredentialPair[];
 }
 
 export interface DetachedPartnerJwsInput {
@@ -228,6 +235,27 @@ function validateProfile(profile: PartnerJwsMtlsTrustProfile): PartnerJwsMtlsTru
     });
   });
 
+  if (profile.allowedCredentialPairs.length < 1 || profile.allowedCredentialPairs.length > 8) {
+    throw new PartnerTrustVerificationError('Partner trust profile must contain between 1 and 8 credential-pair bindings');
+  }
+  const pairKeys = new Set<string>();
+  const allowedCredentialPairs = profile.allowedCredentialPairs.map((pair) => {
+    const fingerprint = requireFingerprint(pair.certificateFingerprintSha256, 'Credential-pair certificate fingerprint');
+    const kid = requireToken(pair.kid, 'Credential-pair kid', MAX_KID_CHARACTERS);
+    if (!fingerprints.has(fingerprint)) {
+      throw new PartnerTrustVerificationError('Credential pair references an unknown mTLS certificate pin');
+    }
+    if (!kids.has(kid)) {
+      throw new PartnerTrustVerificationError('Credential pair references an unknown JWS kid');
+    }
+    const pairKey = `${fingerprint}:${kid}`;
+    if (pairKeys.has(pairKey)) {
+      throw new PartnerTrustVerificationError('Partner trust profile contains a duplicate credential-pair binding');
+    }
+    pairKeys.add(pairKey);
+    return Object.freeze({ certificateFingerprintSha256: fingerprint, kid });
+  });
+
   return Object.freeze({
     profileId,
     partner: profile.partner,
@@ -236,7 +264,8 @@ function validateProfile(profile: PartnerJwsMtlsTrustProfile): PartnerJwsMtlsTru
     environment: 'SANDBOX',
     sandboxEndpointBaseUrl: endpoint,
     peerCertificates: Object.freeze(peerCertificates),
-    verificationKeys: Object.freeze(verificationKeys)
+    verificationKeys: Object.freeze(verificationKeys),
+    allowedCredentialPairs: Object.freeze(allowedCredentialPairs)
   });
 }
 
@@ -259,7 +288,7 @@ function verifyCertificatePin(
   profile: PartnerJwsMtlsTrustProfile,
   presentedFingerprint: string,
   nowEpochSeconds: number
-): void {
+): string {
   const fingerprint = requireFingerprint(presentedFingerprint, 'Presented mTLS peer certificate fingerprint');
   const certificate = profile.peerCertificates.find((candidate) =>
     fingerprintsEqual(fingerprint, candidate.fingerprintSha256)
@@ -274,6 +303,7 @@ function verifyCertificatePin(
     certificate.revokedAtEpochSeconds,
     'Pinned mTLS peer certificate'
   );
+  return certificate.fingerprintSha256;
 }
 
 function chooseKey(
@@ -291,6 +321,15 @@ function chooseKey(
     'Partner JWS signing key'
   );
   return key;
+}
+
+function requireCredentialPair(profile: PartnerJwsMtlsTrustProfile, fingerprint: string, kid: string): void {
+  const allowed = profile.allowedCredentialPairs.some((pair) =>
+    pair.kid === kid && fingerprintsEqual(pair.certificateFingerprintSha256, fingerprint)
+  );
+  if (!allowed) {
+    throw new PartnerTrustVerificationError('mTLS certificate and JWS key combination is not authorized for this partner profile');
+  }
 }
 
 /**
@@ -312,7 +351,7 @@ export function verifyDetachedPartnerJwsMtls(
     throw new PartnerTrustVerificationError('Partner detached JWS exceeds the configured size limit');
   }
 
-  verifyCertificatePin(profile, input.peerCertificateSha256, now);
+  const certificateFingerprint = verifyCertificatePin(profile, input.peerCertificateSha256, now);
 
   const parts = input.detachedJws.split('.');
   if (parts.length !== 3 || parts[0] === '' || parts[1] !== '' || parts[2] === '') {
@@ -345,6 +384,7 @@ export function verifyDetachedPartnerJwsMtls(
   if (signature.length === 0) throw new PartnerTrustVerificationError('Partner JWS signature is empty');
 
   const key = chooseKey(profile, kid, now);
+  requireCredentialPair(profile, certificateFingerprint, key.kid);
   const encodedPayload = Buffer.from(input.rawBody, 'utf8').toString('base64url');
   const signingInput = Buffer.from(`${encodedHeader}.${encodedPayload}`, 'ascii');
   if (!verify('RSA-SHA256', signingInput, key.publicKey, signature)) {
