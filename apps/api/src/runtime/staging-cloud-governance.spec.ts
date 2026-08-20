@@ -39,6 +39,7 @@ function terraformJson(overrides: Record<string, unknown> = {}): Record<string, 
   return {
     format_version: '1.2',
     terraform_version: '1.15.8',
+    applyable: true,
     complete: true,
     errored: false,
     resource_changes: [
@@ -47,8 +48,10 @@ function terraformJson(overrides: Record<string, unknown> = {}): Record<string, 
       { address: 'aws_ecs_service.api', change: { actions: ['update'] } }
     ],
     resource_drift: [],
-    output_changes: {
-      staging_endpoint: { after_sensitive: false }
+    planned_values: {
+      outputs: {
+        staging_endpoint: { value: 'staging.example.invalid', type: 'string', sensitive: false }
+      }
     },
     ...overrides
   };
@@ -150,6 +153,7 @@ test('complete non-destructive staging plan package is only ready for founder re
   assert.equal(decision.planNonDestructiveVerified, true);
   assert.equal(decision.evidenceIntegrityVerified, true);
   assert.match(decision.terraformPlanSha256 ?? '', /^[a-f0-9]{64}$/);
+  assert.equal(decision.terraformPlanAnalysis?.applyable, true);
   assert.equal(decision.terraformPlanAnalysis?.createCount, 2);
   assert.equal(decision.terraformPlanAnalysis?.updateCount, 1);
   assert.deepEqual(decision.blockingReasons, []);
@@ -175,7 +179,11 @@ test('Terraform replacements and deletes are hard NO_GO', async () => {
   assert.match(decision.blockingReasons.join(' | '), /destructive\/delete actions/);
 });
 
-test('unknown Terraform actions, incomplete plans and errored plans fail closed', async () => {
+test('non-applyable, unknown-action, incomplete and errored plans fail closed', async () => {
+  const nonApplyable = await verifiedDecision(packageFixture(), terraformJson({ applyable: false }));
+  assert.equal(nonApplyable.status, 'NO_GO');
+  assert.match(nonApplyable.blockingReasons.join(' | '), /not applyable/);
+
   const unknown = await verifiedDecision(packageFixture(), terraformJson({
     resource_changes: [{ address: 'example.future_action', change: { actions: ['forget'] } }]
   }));
@@ -191,9 +199,20 @@ test('unknown Terraform actions, incomplete plans and errored plans fail closed'
   assert.match(errored.blockingReasons.join(' | '), /reports an error/);
 });
 
-test('sensitive Terraform outputs are rejected from the staging review surface', async () => {
+test('unsupported Terraform JSON major format fails closed', () => {
+  assert.throws(
+    () => analyzeTerraformShowJson(terraformJson({ format_version: '2.0' })),
+    /unsupported Terraform JSON format_version/
+  );
+});
+
+test('sensitive planned outputs are rejected from the staging review surface', async () => {
   const decision = await verifiedDecision(packageFixture(), terraformJson({
-    output_changes: { database_password: { after_sensitive: true } }
+    planned_values: {
+      outputs: {
+        database_password: { value: 'not-for-review', type: 'string', sensitive: true }
+      }
+    }
   }));
   assert.equal(decision.status, 'NO_GO');
   assert.equal(decision.terraformPlanAnalysis?.sensitiveOutputCount, 1);
@@ -233,6 +252,23 @@ test('missing required evidence kinds and tampered evidence remain NO_GO', async
     }),
     /size mismatch|SHA-256 mismatch/
   );
+});
+
+test('Terraform plan changing while terraform show runs is rejected', async () => {
+  const rawPackage = packageFixture();
+  await withFixtureRoot(rawPackage, terraformJson(), async ({ root, planPath }) => {
+    const mutatingTerraform = join(root, 'terraform-mutating-fixture');
+    await writeFile(
+      mutatingTerraform,
+      `#!/usr/bin/env node\nconst fs=require('node:fs');const plan=process.argv[4];fs.appendFileSync(plan,'changed');process.stdout.write(${JSON.stringify(JSON.stringify(terraformJson()))});\n`,
+      'utf8'
+    );
+    await chmod(mutatingTerraform, 0o755);
+    await assert.rejects(
+      verifyTerraformPlanFile(planPath, { terraformExecutable: mutatingTerraform }),
+      /changed while it was being analyzed/
+    );
+  });
 });
 
 test('wrong trusted candidate head is rejected before review', async () => {
