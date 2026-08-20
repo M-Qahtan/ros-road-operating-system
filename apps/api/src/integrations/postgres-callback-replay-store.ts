@@ -36,6 +36,7 @@ export class PostgresCallbackReplayStore implements CallbackReplayStore {
 
   async claim(
     binding: CallbackPrincipalBinding,
+    contractId: string,
     keyId: string,
     nonce: string,
     expiresAtEpochSeconds: number
@@ -43,6 +44,7 @@ export class PostgresCallbackReplayStore implements CallbackReplayStore {
     const clientId = requireIdentifier(binding.clientId, 'Callback clientId');
     const tenantId = requireIdentifier(binding.tenantId, 'Callback tenantId');
     const purpose = requireIdentifier(binding.purpose, 'Callback purpose');
+    const normalizedContractId = requireIdentifier(contractId, 'Callback contractId');
     const normalizedKeyId = requireKeyId(keyId);
     const normalizedNonce = requireNonce(nonce);
     const expiry = requireExpiry(expiresAtEpochSeconds);
@@ -51,11 +53,11 @@ export class PostgresCallbackReplayStore implements CallbackReplayStore {
     try {
       const result = await client.query(
         `INSERT INTO integration_callback_nonces (
-           client_id, tenant_id, purpose, nonce, key_id, expires_at
-         ) VALUES ($1, $2, $3, $4, $5, to_timestamp($6))
+           client_id, tenant_id, purpose, nonce, contract_id, key_id, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))
          ON CONFLICT (client_id, tenant_id, purpose, nonce) DO NOTHING
          RETURNING nonce`,
-        [clientId, tenantId, purpose, normalizedNonce, normalizedKeyId, expiry]
+        [clientId, tenantId, purpose, normalizedNonce, normalizedContractId, normalizedKeyId, expiry]
       );
       return result.rowCount === 1;
     } finally {
