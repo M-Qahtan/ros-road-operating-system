@@ -12,6 +12,22 @@ const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const MIN_RSA_MODULUS_BITS = 2048;
 const JWS_TYPE = 'ros-callback+jws';
 
+const PURPOSE_BY_PARTNER: Readonly<Record<IntegrationPartner, IntegrationPurpose>> = {
+  EMERGENCY: 'EMERGENCY_COORDINATION',
+  TRAFFIC: 'TRAFFIC_COORDINATION',
+  ROAD_OPERATOR: 'TRAFFIC_COORDINATION',
+  INSURANCE: 'INSURANCE_COORDINATION',
+  TOWING: 'TOWING_COORDINATION',
+  ROUTING: 'ROUTE_COORDINATION'
+};
+
+export interface PartnerMtlsCertificatePin {
+  readonly fingerprintSha256: string;
+  readonly notBeforeEpochSeconds: number;
+  readonly notAfterEpochSeconds: number;
+  readonly revokedAtEpochSeconds?: number;
+}
+
 export interface PartnerJwsVerificationKey {
   readonly kid: string;
   readonly publicKey: KeyObject;
@@ -22,11 +38,7 @@ export interface PartnerJwsVerificationKey {
 
 /**
  * Runtime trust material for an approved partner sandbox profile.
- *
- * This object does not create a TLS connection. The peer-certificate digest must
- * come from a TLS termination/client stack that has already completed certificate
- * parsing and chain validation. This layer then enforces ROS's explicit pin and
- * JWS policy before callback data is trusted.
+ * This object contains public verification material only; no private key or live credential is required.
  */
 export interface PartnerJwsMtlsTrustProfile {
   readonly profileId: string;
@@ -34,13 +46,15 @@ export interface PartnerJwsMtlsTrustProfile {
   readonly tenantId: string;
   readonly purpose: IntegrationPurpose;
   readonly environment: 'SANDBOX';
-  readonly peerCertificateSha256Pins: readonly string[];
+  readonly sandboxEndpointBaseUrl: string;
+  readonly peerCertificates: readonly PartnerMtlsCertificatePin[];
   readonly verificationKeys: readonly PartnerJwsVerificationKey[];
 }
 
 export interface DetachedPartnerJwsInput {
   readonly rawBody: string;
   readonly detachedJws: string;
+  /** Digest exposed by an already validated TLS stack/termination layer. */
   readonly peerCertificateSha256: string;
   readonly nowEpochSeconds?: number;
 }
@@ -67,12 +81,7 @@ function requireSafeEpoch(value: number, field: string): number {
 }
 
 function requireToken(value: string, field: string, maximum: number): string {
-  if (
-    value.length < 1 ||
-    value.length > maximum ||
-    value !== value.trim() ||
-    !TOKEN_PATTERN.test(value)
-  ) {
+  if (value.length < 1 || value.length > maximum || value !== value.trim() || !TOKEN_PATTERN.test(value)) {
     throw new PartnerTrustVerificationError(`${field} must be a canonical token between 1 and ${maximum} characters`);
   }
   return value;
@@ -86,6 +95,21 @@ function requireText(value: string, field: string, maximum = 128): string {
   return normalized;
 }
 
+function requireSandboxEndpoint(value: string): string {
+  let url: URL;
+  try { url = new URL(value.trim()); }
+  catch { throw new PartnerTrustVerificationError('Partner sandbox endpoint must be a valid URL'); }
+  if (url.protocol !== 'https:' || !url.hostname) {
+    throw new PartnerTrustVerificationError('Partner sandbox endpoint must use HTTPS and include a hostname');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new PartnerTrustVerificationError(
+      'Partner sandbox endpoint must not contain credentials, query parameters or a fragment'
+    );
+  }
+  return url.toString().replace(/\/$/, '');
+}
+
 function requireFingerprint(value: string, field: string): string {
   if (!SHA256_HEX_PATTERN.test(value)) {
     throw new PartnerTrustVerificationError(`${field} must be a lowercase SHA-256 hex digest`);
@@ -94,9 +118,7 @@ function requireFingerprint(value: string, field: string): string {
 }
 
 function fingerprintsEqual(left: string, right: string): boolean {
-  const a = Buffer.from(requireFingerprint(left, 'Presented mTLS peer certificate fingerprint'), 'hex');
-  const b = Buffer.from(requireFingerprint(right, 'Pinned mTLS peer certificate fingerprint'), 'hex');
-  return timingSafeEqual(a, b);
+  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
 }
 
 function requireStrongRs256Key(key: KeyObject): KeyObject {
@@ -105,9 +127,7 @@ function requireStrongRs256Key(key: KeyObject): KeyObject {
   }
   const modulusLength = key.asymmetricKeyDetails?.modulusLength;
   if (typeof modulusLength !== 'number' || modulusLength < MIN_RSA_MODULUS_BITS) {
-    throw new PartnerTrustVerificationError(
-      `Partner JWS RSA verification key must be at least ${MIN_RSA_MODULUS_BITS} bits`
-    );
+    throw new PartnerTrustVerificationError(`Partner JWS RSA verification key must be at least ${MIN_RSA_MODULUS_BITS} bits`);
   }
   return key;
 }
@@ -133,41 +153,78 @@ function requiredHeaderString(value: unknown, field: string, maximum = 128): str
   return requireText(value, `Partner JWS ${field}`, maximum);
 }
 
+function normalizeValidityWindow(
+  notBeforeEpochSeconds: number,
+  notAfterEpochSeconds: number,
+  revokedAtEpochSeconds: number | undefined,
+  label: string
+) {
+  const notBefore = requireSafeEpoch(notBeforeEpochSeconds, `${label} notBefore`);
+  const notAfter = requireSafeEpoch(notAfterEpochSeconds, `${label} notAfter`);
+  if (notAfter <= notBefore) throw new PartnerTrustVerificationError(`${label} notAfter must be later than notBefore`);
+  const revokedAt = revokedAtEpochSeconds === undefined
+    ? undefined
+    : requireSafeEpoch(revokedAtEpochSeconds, `${label} revokedAt`);
+  return { notBefore, notAfter, revokedAt };
+}
+
 function validateProfile(profile: PartnerJwsMtlsTrustProfile): PartnerJwsMtlsTrustProfile {
   const profileId = requireToken(profile.profileId, 'profileId', MAX_PROFILE_ID_CHARACTERS);
   const tenantId = requireText(profile.tenantId, 'tenantId');
   const purpose = requireText(profile.purpose, 'purpose') as IntegrationPurpose;
+  const expectedPurpose = PURPOSE_BY_PARTNER[profile.partner];
+  if (purpose !== expectedPurpose) {
+    throw new PartnerTrustVerificationError(`${profile.partner} trust profile requires purpose ${expectedPurpose}`);
+  }
   if (profile.environment !== 'SANDBOX') {
     throw new PartnerTrustVerificationError('Only SANDBOX partner trust profiles are enabled');
   }
-  if (profile.peerCertificateSha256Pins.length < 1 || profile.peerCertificateSha256Pins.length > 4) {
+  const endpoint = requireSandboxEndpoint(profile.sandboxEndpointBaseUrl);
+
+  if (profile.peerCertificates.length < 1 || profile.peerCertificates.length > 4) {
     throw new PartnerTrustVerificationError('Partner mTLS profile must contain between 1 and 4 certificate pins');
   }
-  const pins = profile.peerCertificateSha256Pins.map((pin) => requireFingerprint(pin, 'Pinned mTLS peer certificate fingerprint'));
-  if (new Set(pins).size !== pins.length) {
-    throw new PartnerTrustVerificationError('Partner mTLS certificate pins must be unique');
-  }
+  const fingerprints = new Set<string>();
+  const peerCertificates = profile.peerCertificates.map((certificate) => {
+    const fingerprint = requireFingerprint(certificate.fingerprintSha256, 'Pinned mTLS peer certificate fingerprint');
+    if (fingerprints.has(fingerprint)) {
+      throw new PartnerTrustVerificationError('Partner mTLS certificate pins must be unique');
+    }
+    fingerprints.add(fingerprint);
+    const window = normalizeValidityWindow(
+      certificate.notBeforeEpochSeconds,
+      certificate.notAfterEpochSeconds,
+      certificate.revokedAtEpochSeconds,
+      'mTLS certificate pin'
+    );
+    return Object.freeze({
+      fingerprintSha256: fingerprint,
+      notBeforeEpochSeconds: window.notBefore,
+      notAfterEpochSeconds: window.notAfter,
+      ...(window.revokedAt === undefined ? {} : { revokedAtEpochSeconds: window.revokedAt })
+    });
+  });
+
   if (profile.verificationKeys.length < 1 || profile.verificationKeys.length > 4) {
     throw new PartnerTrustVerificationError('Partner JWS profile must contain between 1 and 4 verification keys');
   }
-
   const kids = new Set<string>();
-  const keys = profile.verificationKeys.map((key) => {
+  const verificationKeys = profile.verificationKeys.map((key) => {
     const kid = requireToken(key.kid, 'kid', MAX_KID_CHARACTERS);
     if (kids.has(kid)) throw new PartnerTrustVerificationError(`Partner JWS profile contains duplicate kid ${kid}`);
     kids.add(kid);
-    const notBefore = requireSafeEpoch(key.notBeforeEpochSeconds, 'JWS key notBefore');
-    const notAfter = requireSafeEpoch(key.notAfterEpochSeconds, 'JWS key notAfter');
-    if (notAfter <= notBefore) throw new PartnerTrustVerificationError('JWS key notAfter must be later than notBefore');
-    const revokedAt = key.revokedAtEpochSeconds === undefined
-      ? undefined
-      : requireSafeEpoch(key.revokedAtEpochSeconds, 'JWS key revokedAt');
+    const window = normalizeValidityWindow(
+      key.notBeforeEpochSeconds,
+      key.notAfterEpochSeconds,
+      key.revokedAtEpochSeconds,
+      'JWS key'
+    );
     return Object.freeze({
       kid,
       publicKey: requireStrongRs256Key(key.publicKey),
-      notBeforeEpochSeconds: notBefore,
-      notAfterEpochSeconds: notAfter,
-      ...(revokedAt === undefined ? {} : { revokedAtEpochSeconds: revokedAt })
+      notBeforeEpochSeconds: window.notBefore,
+      notAfterEpochSeconds: window.notAfter,
+      ...(window.revokedAt === undefined ? {} : { revokedAtEpochSeconds: window.revokedAt })
     });
   });
 
@@ -177,9 +234,46 @@ function validateProfile(profile: PartnerJwsMtlsTrustProfile): PartnerJwsMtlsTru
     tenantId,
     purpose,
     environment: 'SANDBOX',
-    peerCertificateSha256Pins: Object.freeze(pins),
-    verificationKeys: Object.freeze(keys)
+    sandboxEndpointBaseUrl: endpoint,
+    peerCertificates: Object.freeze(peerCertificates),
+    verificationKeys: Object.freeze(verificationKeys)
   });
+}
+
+function assertActiveWindow(
+  nowEpochSeconds: number,
+  notBeforeEpochSeconds: number,
+  notAfterEpochSeconds: number,
+  revokedAtEpochSeconds: number | undefined,
+  label: string
+): void {
+  if (nowEpochSeconds < notBeforeEpochSeconds || nowEpochSeconds >= notAfterEpochSeconds) {
+    throw new PartnerTrustVerificationError(`${label} is outside its accepted validity window`);
+  }
+  if (revokedAtEpochSeconds !== undefined && nowEpochSeconds >= revokedAtEpochSeconds) {
+    throw new PartnerTrustVerificationError(`${label} is revoked`);
+  }
+}
+
+function verifyCertificatePin(
+  profile: PartnerJwsMtlsTrustProfile,
+  presentedFingerprint: string,
+  nowEpochSeconds: number
+): void {
+  const fingerprint = requireFingerprint(presentedFingerprint, 'Presented mTLS peer certificate fingerprint');
+  const certificate = profile.peerCertificates.find((candidate) =>
+    fingerprintsEqual(fingerprint, candidate.fingerprintSha256)
+  );
+  if (certificate === undefined) {
+    throw new PartnerTrustVerificationError('mTLS peer certificate is not pinned for this partner profile');
+  }
+  assertActiveWindow(
+    nowEpochSeconds,
+    certificate.notBeforeEpochSeconds,
+    certificate.notAfterEpochSeconds,
+    certificate.revokedAtEpochSeconds,
+    'Pinned mTLS peer certificate'
+  );
 }
 
 function chooseKey(
@@ -189,19 +283,19 @@ function chooseKey(
 ): PartnerJwsVerificationKey {
   const key = profile.verificationKeys.find((candidate) => candidate.kid === kid);
   if (key === undefined) throw new PartnerTrustVerificationError('Partner JWS signing key is not trusted');
-  if (nowEpochSeconds < key.notBeforeEpochSeconds || nowEpochSeconds >= key.notAfterEpochSeconds) {
-    throw new PartnerTrustVerificationError('Partner JWS signing key is outside its accepted validity window');
-  }
-  if (key.revokedAtEpochSeconds !== undefined && nowEpochSeconds >= key.revokedAtEpochSeconds) {
-    throw new PartnerTrustVerificationError('Partner JWS signing key is revoked');
-  }
+  assertActiveWindow(
+    nowEpochSeconds,
+    key.notBeforeEpochSeconds,
+    key.notAfterEpochSeconds,
+    key.revokedAtEpochSeconds,
+    'Partner JWS signing key'
+  );
   return key;
 }
 
 /**
  * Verifies the ROS detached-JWS callback profile after an mTLS layer has exposed
  * the validated peer certificate fingerprint.
- *
  * Compact form: `<protected-header>..<signature>`.
  * Signing input: `<protected-header>.<base64url(raw-body)>`.
  */
@@ -218,12 +312,7 @@ export function verifyDetachedPartnerJwsMtls(
     throw new PartnerTrustVerificationError('Partner detached JWS exceeds the configured size limit');
   }
 
-  const presentedFingerprint = requireFingerprint(
-    input.peerCertificateSha256,
-    'Presented mTLS peer certificate fingerprint'
-  );
-  const certificatePinned = profile.peerCertificateSha256Pins.some((pin) => fingerprintsEqual(presentedFingerprint, pin));
-  if (!certificatePinned) throw new PartnerTrustVerificationError('mTLS peer certificate is not pinned for this partner profile');
+  verifyCertificatePin(profile, input.peerCertificateSha256, now);
 
   const parts = input.detachedJws.split('.');
   if (parts.length !== 3 || parts[0] === '' || parts[1] !== '' || parts[2] === '') {
@@ -233,10 +322,8 @@ export function verifyDetachedPartnerJwsMtls(
   const header = parseHeader(encodedHeader);
   if (header.alg !== 'RS256') throw new PartnerTrustVerificationError('Partner JWS alg must be exactly RS256');
   if (header.typ !== JWS_TYPE) throw new PartnerTrustVerificationError(`Partner JWS typ must be ${JWS_TYPE}`);
-  if (header.crit !== undefined) {
-    if (!Array.isArray(header.crit) || header.crit.length > 0) {
-      throw new PartnerTrustVerificationError('Partner JWS critical headers are not supported');
-    }
+  if (header.crit !== undefined && (!Array.isArray(header.crit) || header.crit.length > 0)) {
+    throw new PartnerTrustVerificationError('Partner JWS critical headers are not supported');
   }
 
   const kid = requireToken(requiredHeaderString(header.kid, 'kid'), 'kid', MAX_KID_CHARACTERS);
