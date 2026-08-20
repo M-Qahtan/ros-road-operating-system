@@ -20,6 +20,7 @@ This catalogue defines the runtime signals that must be observable before ROS ca
 | Outbox logical delivery integrity | unique published IDs / intended logical events | `100%` with zero duplicates | gate | at-least-once infrastructure must not create duplicate logical actions |
 | Worker expired-lease recovery | expired owned event reclaimed by a new worker | required PASS | gate | proves crash/restart recovery |
 | Active-lease fencing | unexpired lease cannot be stolen | required PASS | gate | prevents concurrent duplicate handling |
+| Ambiguous command completion | domain/audit/outbox committed but replay record absent | must remain blocked | gate | prevents duplicate safety-critical mutation after the highest-risk crash window |
 
 ## Alert semantics
 
@@ -52,10 +53,11 @@ A runtime-resilience candidate should produce SHA-bound evidence that demonstrat
 3. expired worker lease recovery after simulated restart;
 4. active lease fencing until expiry;
 5. crash-before-commit leaves a durable idempotency reservation and blocks automatic retry;
-6. completed replay survives a new application composition/process instance;
-7. completed replay plus leftover reservation can be reconciled only with the exact fence token, without re-executing the logical command;
-8. stranded reservation state maps to a page-level alert;
-9. tenant/purpose scope remains enforced throughout the tested runtime path.
+6. a domain commit followed by failure before replay persistence leaves RoadEvent, audit and Outbox committed exactly once, leaves no replay record, retains the reservation, and prevents a fresh process from re-running the guarded callback;
+7. completed replay survives a new application composition/process instance;
+8. completed replay plus leftover reservation can be reconciled only with the exact fence token, without re-executing the logical command;
+9. stranded reservation state maps to a page-level alert;
+10. tenant/purpose scope remains enforced throughout the tested runtime path.
 
 ## Promotion boundary
 
