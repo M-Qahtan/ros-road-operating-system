@@ -21,43 +21,29 @@ const PROFILE: PartnerJwsMtlsTrustProfile = {
   environment: 'SANDBOX',
   sandboxEndpointBaseUrl: 'https://traffic-sandbox.example.test/api',
   peerCertificates: [
-    {
-      fingerprintSha256: PIN_ACTIVE,
-      notBeforeEpochSeconds: NOW - 300,
-      notAfterEpochSeconds: NOW + 120
-    },
-    {
-      fingerprintSha256: PIN_NEXT,
-      notBeforeEpochSeconds: NOW - 30,
-      notAfterEpochSeconds: NOW + 3600
-    }
+    { fingerprintSha256: PIN_ACTIVE, notBeforeEpochSeconds: NOW - 300, notAfterEpochSeconds: NOW + 120 },
+    { fingerprintSha256: PIN_NEXT, notBeforeEpochSeconds: NOW - 30, notAfterEpochSeconds: NOW + 3600 }
   ],
   verificationKeys: [
-    {
-      kid: 'traffic-key-v1',
-      publicKey: oldKey.publicKey,
-      notBeforeEpochSeconds: NOW - 300,
-      notAfterEpochSeconds: NOW + 120
-    },
-    {
-      kid: 'traffic-key-v2',
-      publicKey: nextKey.publicKey,
-      notBeforeEpochSeconds: NOW - 30,
-      notAfterEpochSeconds: NOW + 3600
-    }
+    { kid: 'traffic-key-v1', publicKey: oldKey.publicKey, notBeforeEpochSeconds: NOW - 300, notAfterEpochSeconds: NOW + 120 },
+    { kid: 'traffic-key-v2', publicKey: nextKey.publicKey, notBeforeEpochSeconds: NOW - 30, notAfterEpochSeconds: NOW + 3600 }
+  ],
+  allowedCredentialPairs: [
+    { certificateFingerprintSha256: PIN_ACTIVE, kid: 'traffic-key-v1' },
+    { certificateFingerprintSha256: PIN_NEXT, kid: 'traffic-key-v2' }
   ]
 };
 
 function jws(
   privateKey: typeof oldKey.privateKey,
   kid: string,
-  overrides: Partial<{ readonly profile: string; readonly tenant: string; readonly purpose: string }> = {}
+  overrides: Partial<{ readonly tenant: string; readonly purpose: string }> = {}
 ): string {
   const header = Buffer.from(JSON.stringify({
     alg: 'RS256',
     typ: 'ros-callback+jws',
     kid,
-    ros_profile: overrides.profile ?? PROFILE.profileId,
+    ros_profile: PROFILE.profileId,
     ros_tenant: overrides.tenant ?? PROFILE.tenantId,
     ros_purpose: overrides.purpose ?? PROFILE.purpose
   }), 'utf8').toString('base64url');
@@ -67,18 +53,17 @@ function jws(
 }
 
 function verify(detachedJws: string, peer: string, now = NOW, rawBody = BODY, profile = PROFILE): void {
-  verifyDetachedPartnerJwsMtls({
-    rawBody,
-    detachedJws,
-    peerCertificateSha256: peer,
-    nowEpochSeconds: now
-  }, profile);
+  verifyDetachedPartnerJwsMtls({ rawBody, detachedJws, peerCertificateSha256: peer, nowEpochSeconds: now }, profile);
 }
 
 function run(): void {
   verify(jws(oldKey.privateKey, 'traffic-key-v1'), PIN_ACTIVE);
   verify(jws(nextKey.privateKey, 'traffic-key-v2'), PIN_NEXT);
 
+  assert.throws(
+    () => verify(jws(nextKey.privateKey, 'traffic-key-v2'), PIN_ACTIVE),
+    /combination is not authorized/
+  );
   assert.throws(() => verify(jws(oldKey.privateKey, 'traffic-key-v1'), PIN_UNKNOWN), /not pinned/);
   assert.throws(
     () => verify(jws(oldKey.privateKey, 'traffic-key-v1', { purpose: 'INSURANCE_COORDINATION' }), PIN_ACTIVE),
@@ -107,7 +92,8 @@ function run(): void {
       notBeforeEpochSeconds: NOW - 30,
       notAfterEpochSeconds: NOW + 3600,
       revokedAtEpochSeconds: NOW
-    }]
+    }],
+    allowedCredentialPairs: [{ certificateFingerprintSha256: PIN_NEXT, kid: 'traffic-key-v2' }]
   };
   assert.throws(
     () => verify(jws(nextKey.privateKey, 'traffic-key-v2'), PIN_NEXT, NOW, BODY, revokedCertificate),
@@ -122,7 +108,8 @@ function run(): void {
       notBeforeEpochSeconds: NOW - 30,
       notAfterEpochSeconds: NOW + 3600,
       revokedAtEpochSeconds: NOW
-    }]
+    }],
+    allowedCredentialPairs: [{ certificateFingerprintSha256: PIN_NEXT, kid: 'traffic-key-v2' }]
   };
   assert.throws(
     () => verify(jws(nextKey.privateKey, 'traffic-key-v2'), PIN_NEXT, NOW, BODY, revokedKey),
@@ -136,6 +123,7 @@ function run(): void {
     partnerPurposeBindingVerified: true,
     mtlsCertificatePinVerified: true,
     mtlsCertificateRotationVerified: true,
+    exactCredentialPairBindingVerified: true,
     revokedCertificateRejected: true,
     detachedJwsRs256Verified: true,
     protectedScopeBindingVerified: true,
