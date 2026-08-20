@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   CallbackAuthenticationError,
+  TrustedCallbackProfile,
   computeCallbackSignatureHex,
   verifyCallbackHmac
 } from '../integrations/callback-auth.js';
@@ -8,24 +9,23 @@ import { PostgresCallbackReplayStore } from '../integrations/postgres-callback-r
 import { createNodePostgresPool } from '../persistence/postgres/pg-postgres-pool.js';
 
 const TEST_HMAC_KEY_MATERIAL = 'runtime-test-only-0123456789abcdef0123456789abcdef';
-const TRAFFIC_PROFILE = 'traffic-sandbox.riyadh';
-const INSURANCE_PROFILE = 'insurance-sandbox.riyadh';
+const TRAFFIC_PROFILE: TrustedCallbackProfile = {
+  profileId: 'traffic-sandbox.riyadh',
+  secret: TEST_HMAC_KEY_MATERIAL
+};
+const INSURANCE_PROFILE: TrustedCallbackProfile = {
+  profileId: 'insurance-sandbox.riyadh',
+  secret: TEST_HMAC_KEY_MATERIAL
+};
 const NONCE = 'runtime-nonce-000000000001';
 const BODY = '{"operationId":"callback-runtime-proof","status":"accepted"}';
 
-function signed(profileId: string, timestampEpochSeconds: number) {
+function signed(profile: TrustedCallbackProfile, timestampEpochSeconds: number) {
   return {
-    profileId,
     body: BODY,
     nonce: NONCE,
     timestampEpochSeconds,
-    signatureHex: computeCallbackSignatureHex(
-      TEST_HMAC_KEY_MATERIAL,
-      profileId,
-      BODY,
-      timestampEpochSeconds,
-      NONCE
-    )
+    signatureHex: computeCallbackSignatureHex(profile, BODY, timestampEpochSeconds, NONCE)
   };
 }
 
@@ -39,7 +39,7 @@ async function run(): Promise<void> {
       await cleanup.query(
         `DELETE FROM integration_callback_nonces
           WHERE profile_id IN ($1, $2) AND nonce = $3`,
-        [TRAFFIC_PROFILE, INSURANCE_PROFILE, NONCE]
+        [TRAFFIC_PROFILE.profileId, INSURANCE_PROFILE.profileId, NONCE]
       );
     } finally {
       cleanup.release();
@@ -47,22 +47,17 @@ async function run(): Promise<void> {
 
     const replayStore = new PostgresCallbackReplayStore(postgres);
     const traffic = signed(TRAFFIC_PROFILE, now);
-    await verifyCallbackHmac(traffic, TEST_HMAC_KEY_MATERIAL, replayStore, { nowEpochSeconds: now });
+    await verifyCallbackHmac(traffic, TRAFFIC_PROFILE, replayStore, { nowEpochSeconds: now });
 
     await assert.rejects(
-      verifyCallbackHmac(traffic, TEST_HMAC_KEY_MATERIAL, replayStore, { nowEpochSeconds: now }),
+      verifyCallbackHmac(traffic, TRAFFIC_PROFILE, replayStore, { nowEpochSeconds: now }),
       (error: unknown) =>
         error instanceof CallbackAuthenticationError &&
         /already been used for this profile/.test(error.message)
     );
 
     await assert.rejects(
-      verifyCallbackHmac(
-        { ...traffic, profileId: INSURANCE_PROFILE },
-        TEST_HMAC_KEY_MATERIAL,
-        replayStore,
-        { nowEpochSeconds: now }
-      ),
+      verifyCallbackHmac(traffic, INSURANCE_PROFILE, replayStore, { nowEpochSeconds: now }),
       (error: unknown) =>
         error instanceof CallbackAuthenticationError &&
         /signature verification failed/.test(error.message)
@@ -70,7 +65,7 @@ async function run(): Promise<void> {
 
     await verifyCallbackHmac(
       signed(INSURANCE_PROFILE, now),
-      TEST_HMAC_KEY_MATERIAL,
+      INSURANCE_PROFILE,
       replayStore,
       { nowEpochSeconds: now }
     );
@@ -83,12 +78,12 @@ async function run(): Promise<void> {
            FROM integration_callback_nonces
           WHERE profile_id IN ($1, $2) AND nonce = $3
           ORDER BY profile_id`,
-        [TRAFFIC_PROFILE, INSURANCE_PROFILE, NONCE]
+        [TRAFFIC_PROFILE.profileId, INSURANCE_PROFILE.profileId, NONCE]
       );
       assert.equal(rows.rowCount, 2);
       assert.deepEqual(
         rows.rows.map((row) => row.profile_id),
-        [INSURANCE_PROFILE, TRAFFIC_PROFILE]
+        [INSURANCE_PROFILE.profileId, TRAFFIC_PROFILE.profileId]
       );
       assert.ok(rows.rows.every((row) => row.nonce === NONCE));
 
@@ -96,7 +91,7 @@ async function run(): Promise<void> {
         await verification.query(
           `UPDATE integration_callback_nonces SET expires_at = expires_at + interval '1 second'
             WHERE profile_id = $1 AND nonce = $2`,
-          [TRAFFIC_PROFILE, NONCE]
+          [TRAFFIC_PROFILE.profileId, NONCE]
         );
       } catch (error) {
         immutable = error instanceof Error && /immutable/.test(error.message);
@@ -109,6 +104,7 @@ async function run(): Promise<void> {
     process.stdout.write(JSON.stringify({
       status: 'PASS',
       callbackSignatureVerified: true,
+      requestCannotOverrideProfileVerified: true,
       sameProfileReplayRejected: true,
       crossProfileSignatureBindingVerified: true,
       profileScopedNonceReuseVerified: true,
