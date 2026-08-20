@@ -3,13 +3,6 @@ import { JwksDocumentFetcherPort, JwksProviderError } from './jwks-key-provider.
 const DEFAULT_TIMEOUT_MS = 2_000;
 const DEFAULT_MAX_BODY_BYTES = 128 * 1024;
 
-export interface JwksHttpResponsePort {
-  readonly ok: boolean;
-  readonly status: number;
-  readonly headers: { get(name: string): string | null };
-  text(): Promise<string>;
-}
-
 export type JwksHttpFetchPort = (
   url: string,
   init: {
@@ -18,7 +11,7 @@ export type JwksHttpFetchPort = (
     readonly headers: Readonly<Record<string, string>>;
     readonly signal: AbortSignal;
   }
-) => Promise<JwksHttpResponsePort>;
+) => Promise<Response>;
 
 export interface HttpsJwksFetcherOptions {
   readonly timeoutMs?: number;
@@ -44,6 +37,31 @@ function trustedHttpsUrl(raw: string): string {
 
 const defaultFetch: JwksHttpFetchPort = async (url, init) => fetch(url, init);
 
+async function readBoundedBody(response: Response, maximumBodyBytes: number): Promise<string> {
+  if (response.body === null) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximumBodyBytes) {
+        await reader.cancel('JWKS response exceeds configured size limit');
+        throw new JwksProviderError('JWKS HTTPS response exceeds the configured size limit');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } catch (error) {
+    if (error instanceof JwksProviderError) throw error;
+    throw new JwksProviderError('JWKS HTTPS response body could not be read safely');
+  } finally {
+    try { reader.releaseLock(); } catch { /* The reader may already be released/cancelled. */ }
+  }
+  return Buffer.concat(chunks, total).toString('utf8');
+}
+
 export class HttpsJwksDocumentFetcher implements JwksDocumentFetcherPort {
   private readonly url: string;
   private readonly timeoutMs: number;
@@ -58,7 +76,7 @@ export class HttpsJwksDocumentFetcher implements JwksDocumentFetcherPort {
   }
 
   async fetchJwks(): Promise<unknown> {
-    let response: JwksHttpResponsePort;
+    let response: Response;
     try {
       response = await this.httpFetch(this.url, {
         method: 'GET',
@@ -79,7 +97,7 @@ export class HttpsJwksDocumentFetcher implements JwksDocumentFetcherPort {
         throw new JwksProviderError('JWKS HTTPS response exceeds the configured size limit');
       }
     }
-    const body = await response.text();
+    const body = await readBoundedBody(response, this.maximumBodyBytes);
     if (Buffer.byteLength(body, 'utf8') > this.maximumBodyBytes) {
       throw new JwksProviderError('JWKS HTTPS response exceeds the configured size limit');
     }
