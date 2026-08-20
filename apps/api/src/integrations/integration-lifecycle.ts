@@ -439,10 +439,20 @@ export class PostgresIntegrationSandbox {
       const existing = await client.query<DeliveryRow>(
         `SELECT * FROM integration_deliveries
           WHERE logical_operation_id = $1
-             OR (profile_id = $2 AND idempotency_key = $3)
+             OR (
+               profile_id = $2 AND partner = $3 AND purpose = $4 AND tenant_id = $5
+               AND idempotency_key = $6
+             )
           ORDER BY logical_operation_id
           FOR UPDATE`,
-        [logicalOperationId, profile.profileId, idempotencyKey]
+        [
+          logicalOperationId,
+          profile.profileId,
+          profile.partner,
+          profile.purpose,
+          profile.tenantId,
+          idempotencyKey
+        ]
       );
       if (existing.rowCount !== 1 || existing.rows[0] === undefined) {
         throw new IntegrationLifecycleError('Integration logical operation or idempotency identity conflicts with another delivery');
@@ -451,6 +461,9 @@ export class PostgresIntegrationSandbox {
       if (
         row.logical_operation_id !== logicalOperationId ||
         row.profile_id !== profile.profileId ||
+        row.partner !== profile.partner ||
+        row.purpose !== profile.purpose ||
+        row.tenant_id !== profile.tenantId ||
         row.idempotency_key !== idempotencyKey ||
         row.request_fingerprint !== fingerprint
       ) {
@@ -470,7 +483,7 @@ export class PostgresIntegrationSandbox {
     const sentAt = iso(sentAtInput, 'sentAt');
 
     return this.transaction(async (client) => {
-      const row = await this.lockByOperation(client, profile.profileId, logicalOperationId);
+      const row = await this.lockByOperation(client, profile, logicalOperationId);
       if (row.provider_request_id !== null) return receiptFromRow(row);
       if (row.state !== 'PREPARED') throw new IntegrationLifecycleError('Only a prepared delivery may be sent');
       if (new Date(sentAt).getTime() < new Date(rowIso(row.prepared_at, 'prepared_at')).getTime()) {
@@ -480,12 +493,13 @@ export class PostgresIntegrationSandbox {
       const providerId = providerRequestId(profile.profileId, logicalOperationId);
       const updated = await client.query<DeliveryRow>(
         `UPDATE integration_deliveries
-            SET state = 'ACCEPTED', provider_request_id = $3,
+            SET state = 'ACCEPTED', provider_request_id = $6,
                 attempt_count = attempt_count + 1,
-                accepted_at = $4::timestamptz, updated_at = $4::timestamptz
+                accepted_at = $7::timestamptz, updated_at = $7::timestamptz
           WHERE logical_operation_id = $1 AND profile_id = $2
+            AND partner = $3 AND purpose = $4 AND tenant_id = $5
           RETURNING *`,
-        [logicalOperationId, profile.profileId, providerId, sentAt]
+        [logicalOperationId, profile.profileId, profile.partner, profile.purpose, profile.tenantId, providerId, sentAt]
       );
       if (updated.rowCount !== 1 || updated.rows[0] === undefined) {
         throw new IntegrationLifecycleError('Integration delivery could not be accepted');
@@ -500,8 +514,10 @@ export class PostgresIntegrationSandbox {
     const client = await this.pool.connect();
     try {
       const result = await client.query<DeliveryRow>(
-        `SELECT * FROM integration_deliveries WHERE profile_id = $1 AND provider_request_id = $2`,
-        [profile.profileId, providerId]
+        `SELECT * FROM integration_deliveries
+          WHERE profile_id = $1 AND partner = $2 AND purpose = $3 AND tenant_id = $4
+            AND provider_request_id = $5`,
+        [profile.profileId, profile.partner, profile.purpose, profile.tenantId, providerId]
       );
       if (result.rowCount !== 1 || result.rows[0] === undefined) {
         throw new IntegrationLifecycleError('Integration delivery was not found');
@@ -524,7 +540,7 @@ export class PostgresIntegrationSandbox {
     const cancelledAt = iso(cancelledAtInput, 'cancelledAt');
 
     return this.transaction(async (client) => {
-      const row = await this.lockByProvider(client, profile.profileId, providerId);
+      const row = await this.lockByProvider(client, profile, providerId);
       if (row.state === 'CANCELLED') {
         if (row.reason !== reason) throw new IntegrationLifecycleError('Cancellation replay changed its reason');
         return statusFromRow(row);
@@ -537,10 +553,11 @@ export class PostgresIntegrationSandbox {
       }
       const updated = await client.query<DeliveryRow>(
         `UPDATE integration_deliveries
-            SET state = 'CANCELLED', reason = $3, updated_at = $4::timestamptz
+            SET state = 'CANCELLED', reason = $6, updated_at = $7::timestamptz
           WHERE logical_operation_id = $1 AND profile_id = $2
+            AND partner = $3 AND purpose = $4 AND tenant_id = $5
           RETURNING *`,
-        [row.logical_operation_id, profile.profileId, reason, cancelledAt]
+        [row.logical_operation_id, profile.profileId, profile.partner, profile.purpose, profile.tenantId, reason, cancelledAt]
       );
       if (updated.rowCount !== 1 || updated.rows[0] === undefined) {
         throw new IntegrationLifecycleError('Integration cancellation could not be persisted');
@@ -556,13 +573,22 @@ export class PostgresIntegrationSandbox {
     const profile = requireProfile(profileInput);
     const callbackId = requireText(input.callbackId, 'callbackId');
     const providerId = requireText(input.providerRequestId, 'providerRequestId');
+    if (!['ACKNOWLEDGED', 'COMPLETED', 'FAILED'].includes(input.state)) {
+      throw new IntegrationLifecycleError('Callback state is invalid');
+    }
     const occurredAt = iso(input.occurredAt, 'callback occurredAt');
     const reason = input.reason === undefined ? null : requireText(input.reason, 'callback reason', 500);
-    const normalizedInput = { ...input, callbackId, providerRequestId: providerId, occurredAt, ...(reason === null ? {} : { reason }) };
+    const normalizedInput: IntegrationCallbackInput = {
+      callbackId,
+      providerRequestId: providerId,
+      state: input.state,
+      occurredAt,
+      ...(reason === null ? {} : { reason })
+    };
     const fingerprint = callbackFingerprint(normalizedInput);
 
     return this.transaction(async (client) => {
-      const row = await this.lockByProvider(client, profile.profileId, providerId);
+      const row = await this.lockByProvider(client, profile, providerId);
       const callbackInsert = await client.query<CallbackRow>(
         `INSERT INTO integration_delivery_callbacks (
            profile_id, callback_id, logical_operation_id, semantic_fingerprint, received_at
@@ -601,10 +627,20 @@ export class PostgresIntegrationSandbox {
 
       const updated = await client.query<DeliveryRow>(
         `UPDATE integration_deliveries
-            SET state = $3, reason = $4, updated_at = $5::timestamptz
+            SET state = $6, reason = $7, updated_at = $8::timestamptz
           WHERE logical_operation_id = $1 AND profile_id = $2
+            AND partner = $3 AND purpose = $4 AND tenant_id = $5
           RETURNING *`,
-        [row.logical_operation_id, profile.profileId, input.state, reason, occurredAt]
+        [
+          row.logical_operation_id,
+          profile.profileId,
+          profile.partner,
+          profile.purpose,
+          profile.tenantId,
+          input.state,
+          reason,
+          occurredAt
+        ]
       );
       if (updated.rowCount !== 1 || updated.rows[0] === undefined) {
         throw new IntegrationLifecycleError('Integration callback state could not be persisted');
@@ -613,12 +649,17 @@ export class PostgresIntegrationSandbox {
     });
   }
 
-  private async lockByOperation(client: PostgresClient, profileId: string, logicalOperationId: string): Promise<DeliveryRow> {
+  private async lockByOperation(
+    client: PostgresClient,
+    profile: TrustedIntegrationProfile,
+    logicalOperationId: string
+  ): Promise<DeliveryRow> {
     const result = await client.query<DeliveryRow>(
       `SELECT * FROM integration_deliveries
         WHERE logical_operation_id = $1 AND profile_id = $2
+          AND partner = $3 AND purpose = $4 AND tenant_id = $5
         FOR UPDATE`,
-      [logicalOperationId, profileId]
+      [logicalOperationId, profile.profileId, profile.partner, profile.purpose, profile.tenantId]
     );
     if (result.rowCount !== 1 || result.rows[0] === undefined) {
       throw new IntegrationLifecycleError('Integration delivery was not found');
@@ -626,12 +667,17 @@ export class PostgresIntegrationSandbox {
     return result.rows[0];
   }
 
-  private async lockByProvider(client: PostgresClient, profileId: string, providerId: string): Promise<DeliveryRow> {
+  private async lockByProvider(
+    client: PostgresClient,
+    profile: TrustedIntegrationProfile,
+    providerId: string
+  ): Promise<DeliveryRow> {
     const result = await client.query<DeliveryRow>(
       `SELECT * FROM integration_deliveries
-        WHERE profile_id = $1 AND provider_request_id = $2
+        WHERE profile_id = $1 AND partner = $2 AND purpose = $3 AND tenant_id = $4
+          AND provider_request_id = $5
         FOR UPDATE`,
-      [profileId, providerId]
+      [profile.profileId, profile.partner, profile.purpose, profile.tenantId, providerId]
     );
     if (result.rowCount !== 1 || result.rows[0] === undefined) {
       throw new IntegrationLifecycleError('Integration delivery was not found');
