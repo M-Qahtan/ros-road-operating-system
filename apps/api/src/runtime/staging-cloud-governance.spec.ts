@@ -16,6 +16,12 @@ import {
   verifyTerraformPlanFile
 } from './staging-cloud-governance.js';
 
+type DeepMutable<T> = T extends readonly (infer U)[]
+  ? DeepMutable<U>[]
+  : T extends object
+    ? { -readonly [K in keyof T]: DeepMutable<T[K]> }
+    : T;
+
 const HEAD = 'a'.repeat(40);
 const EVIDENCE_BYTES = Buffer.from('ros staging governance evidence fixture\n', 'utf8');
 const EVIDENCE_SHA = createHash('sha256').update(EVIDENCE_BYTES).digest('hex');
@@ -48,7 +54,7 @@ function terraformJson(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
-function packageFixture(): StagingCloudReviewPackage {
+function packageFixture(): DeepMutable<StagingCloudReviewPackage> {
   return {
     schema: 'ros-staging-cloud-review/v1',
     candidateHeadSha: HEAD,
@@ -218,7 +224,9 @@ test('missing required evidence kinds and tampered evidence remain NO_GO', async
   const tampered = packageFixture();
   await assert.rejects(
     withFixtureRoot(tampered, terraformJson(), async ({ root, planPath, terraformExecutable }) => {
-      const target = join(root, tampered.evidenceFiles[0]!.path);
+      const firstEvidence = tampered.evidenceFiles[0];
+      if (firstEvidence === undefined) throw new Error('test fixture missing first evidence');
+      const target = join(root, firstEvidence.path);
       await writeFile(target, Buffer.from('tampered staging evidence\n', 'utf8'));
       const verifiedPlan = await verifyTerraformPlanFile(planPath, { terraformExecutable });
       return verifyStagingCloudPackage(tampered, root, HEAD, verifiedPlan);
@@ -252,7 +260,7 @@ test('forbidden credentials, unresolved findings and external authority remain N
   ];
   for (const [field, value] of cases) {
     const rawPackage = packageFixture();
-    rawPackage.claims = { ...rawPackage.claims, [field]: value } as StagingCloudReviewPackage['claims'];
+    rawPackage.claims = { ...rawPackage.claims, [field]: value } as DeepMutable<StagingCloudReviewPackage['claims']>;
     const decision = await verifiedDecision(rawPackage, terraformJson());
     assert.equal(decision.status, 'NO_GO', field);
     assert.equal(decision.terraformApplyAuthorized, false, field);
@@ -261,12 +269,14 @@ test('forbidden credentials, unresolved findings and external authority remain N
 });
 
 test('package parser rejects unknown credential-like fields, duplicate evidence and non-STAGING environment', () => {
-  const unknown = packageFixture() as StagingCloudReviewPackage & { awsSecretAccessKey?: string };
+  const unknown = packageFixture() as DeepMutable<StagingCloudReviewPackage> & { awsSecretAccessKey?: string };
   unknown.awsSecretAccessKey = 'must-not-be-accepted';
   assert.throws(() => parseStagingCloudReviewPackage(unknown), /awsSecretAccessKey is not allowed/);
 
   const duplicate = packageFixture();
-  duplicate.evidenceFiles = [...duplicate.evidenceFiles, { ...duplicate.evidenceFiles[0]! }];
+  const firstEvidence = duplicate.evidenceFiles[0];
+  if (firstEvidence === undefined) throw new Error('test fixture missing first evidence');
+  duplicate.evidenceFiles = [...duplicate.evidenceFiles, { ...firstEvidence }];
   assert.throws(() => parseStagingCloudReviewPackage(duplicate), /duplicate evidence path|duplicate evidence kind/);
 
   const wrongEnvironment = { ...packageFixture(), environment: 'PRODUCTION' };
