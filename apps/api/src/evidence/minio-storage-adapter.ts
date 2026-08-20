@@ -60,6 +60,12 @@ function requireFutureExpiry(now: Date, expiresAt: Date): number {
   return seconds;
 }
 
+function sameMetadata(left: StoredObjectMetadata, right: StoredObjectMetadata): boolean {
+  return left.sizeBytes === right.sizeBytes
+    && left.contentType === right.contentType
+    && left.checksumSha256 === right.checksumSha256;
+}
+
 export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
   private readonly endpoint: URL;
   private readonly fetchImpl: typeof fetch;
@@ -123,6 +129,9 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
   }
 
   async quarantine(objectKey: string, quarantineKey: string): Promise<void> {
+    const sourceMetadata = await this.inspect(objectKey);
+    if (sourceMetadata === undefined) throw new Error('Object quarantine source does not exist');
+
     const expiresAt = new Date(this.now().getTime() + 60_000);
     const copySource = `/${this.options.bucket}/${encodePath(objectKey)}`;
     const copy = await this.fetchImpl(this.presign('PUT', quarantineKey, expiresAt, { 'x-amz-copy-source': copySource }), {
@@ -130,6 +139,12 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
       headers: { 'x-amz-copy-source': copySource }
     });
     if (!copy.ok) throw new Error(`Object quarantine copy failed with status ${copy.status}`);
+
+    const quarantineMetadata = await this.inspect(quarantineKey);
+    if (quarantineMetadata === undefined || !sameMetadata(sourceMetadata, quarantineMetadata)) {
+      throw new Error('Object quarantine verification failed; original object was retained');
+    }
+
     const remove = await this.fetchImpl(this.presign('DELETE', objectKey, expiresAt, {}), { method: 'DELETE' });
     if (!remove.ok && remove.status !== 404) throw new Error(`Object quarantine delete failed with status ${remove.status}`);
   }
