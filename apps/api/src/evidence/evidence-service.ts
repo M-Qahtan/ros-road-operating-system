@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   EvidenceAccessDeniedError,
+  EvidenceAccessPrincipal,
   EvidenceExpiredError,
   EvidenceIntegrityError,
   EvidenceNotFoundError,
@@ -15,6 +16,7 @@ import {
 } from './evidence-types.js';
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+const ACCESS_ATTRIBUTE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SAFE_FILENAME_PATTERN = /[^A-Za-z0-9._-]+/g;
 const ALLOWED_CONTENT_TYPES = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'video/mp4',
@@ -26,7 +28,7 @@ const MAX_DOWNLOAD_TTL_MS = 5 * 60 * 1000;
 
 export interface CreateEvidenceIntentInput {
   readonly roadEventId: string;
-  readonly actorId: string;
+  readonly principal: EvidenceAccessPrincipal;
   readonly traceId: string;
   readonly filename: string;
   readonly contentType: string;
@@ -51,6 +53,16 @@ function requireIdentifier(value: string, field: string): string {
   const normalized = value.trim();
   if (normalized.length === 0 || normalized.length > 128) throw new EvidenceValidationError(`${field} is invalid`);
   return normalized;
+}
+
+function requirePrincipal(principal: EvidenceAccessPrincipal): EvidenceAccessPrincipal {
+  const actorId = requireIdentifier(principal.actorId, 'actorId');
+  const tenantId = requireIdentifier(principal.tenantId, 'tenantId');
+  const purpose = requireIdentifier(principal.purpose, 'purpose');
+  if (!ACCESS_ATTRIBUTE_PATTERN.test(tenantId) || !ACCESS_ATTRIBUTE_PATTERN.test(purpose)) {
+    throw new EvidenceValidationError('Evidence access scope is invalid');
+  }
+  return { actorId, tenantId, purpose };
 }
 
 function requireChecksum(value: string): string {
@@ -97,9 +109,11 @@ export class EvidenceService {
 
   async createUploadIntent(input: CreateEvidenceIntentInput): Promise<EvidenceUploadIntent> {
     const roadEventId = requireIdentifier(input.roadEventId, 'roadEventId');
-    const actorId = requireIdentifier(input.actorId, 'actorId');
+    const principal = requirePrincipal(input.principal);
     const traceId = requireIdentifier(input.traceId, 'traceId');
-    if (!(await this.authorization.canAccess(actorId, roadEventId, 'UPLOAD'))) throw new EvidenceAccessDeniedError('RoadEvent evidence upload is not authorized');
+    if (!(await this.authorization.canAccess(principal, roadEventId, 'UPLOAD'))) {
+      throw new EvidenceAccessDeniedError('RoadEvent evidence upload is not authorized');
+    }
     if (!ALLOWED_CONTENT_TYPES.has(input.contentType)) throw new EvidenceValidationError('contentType is not allowed');
     if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 1 || input.sizeBytes > MAX_SIZE_BYTES) {
       throw new EvidenceValidationError(`sizeBytes must be between 1 and ${MAX_SIZE_BYTES}`);
@@ -118,15 +132,16 @@ export class EvidenceService {
       contentType: input.contentType, declaredSizeBytes: input.sizeBytes,
       declaredChecksumSha256: checksum, status: 'PENDING_UPLOAD', uploadExpiresAt,
       retention: { retainUntil: new Date(input.retention.retainUntil), legalHold: input.retention.legalHold },
-      createdBy: actorId, createdAt: now
+      createdBy: principal.actorId, createdAt: now
     };
     const upload = await this.storage.createUploadRequest(objectKey, input.contentType, input.sizeBytes, checksum, uploadExpiresAt);
-    await this.repository.create(record, { actorId, traceId, action: 'evidence.upload_intent_created', occurredAt: now });
+    await this.repository.create(record, { actorId: principal.actorId, traceId, action: 'evidence.upload_intent_created', occurredAt: now });
     return { evidence: record, upload };
   }
 
-  async completeUpload(evidenceId: string, actorId: string, traceId: string): Promise<EvidenceRecord> {
-    const record = await this.requireAuthorized(evidenceId, actorId, 'UPLOAD');
+  async completeUpload(evidenceId: string, principal: EvidenceAccessPrincipal, traceId: string): Promise<EvidenceRecord> {
+    const access = requirePrincipal(principal);
+    const record = await this.requireAuthorized(evidenceId, access, 'UPLOAD');
     const now = this.now();
     if (record.status !== 'PENDING_UPLOAD') throw new EvidenceValidationError(`Evidence cannot complete from ${record.status}`);
     if (now > record.uploadExpiresAt) throw new EvidenceExpiredError('Evidence upload intent expired');
@@ -143,27 +158,30 @@ export class EvidenceService {
       const reason = scan.reason.trim().slice(0, 500) || 'scanner rejected object';
       await this.storage.quarantine(record.objectKey, `quarantine/${record.id}`);
       return this.repository.markQuarantined(record.id, reason, now, {
-        actorId, traceId, action: 'evidence.quarantined', reason, occurredAt: now
+        actorId: access.actorId, traceId, action: 'evidence.quarantined', reason, occurredAt: now
       });
     }
     return this.repository.markPreserved(record.id, object.sizeBytes, object.checksumSha256.toLowerCase(), now, {
-      actorId, traceId, action: 'evidence.preserved', occurredAt: now
+      actorId: access.actorId, traceId, action: 'evidence.preserved', occurredAt: now
     });
   }
 
-  async createDownloadRequest(evidenceId: string, actorId: string): Promise<SignedObjectRequest> {
-    const record = await this.requireAuthorized(evidenceId, actorId, 'DOWNLOAD');
+  async createDownloadRequest(evidenceId: string, principal: EvidenceAccessPrincipal): Promise<SignedObjectRequest> {
+    const record = await this.requireAuthorized(evidenceId, requirePrincipal(principal), 'DOWNLOAD');
     if (record.status !== 'PRESERVED') throw new EvidenceUnavailableError(`Evidence is ${record.status}`);
     return this.storage.createDownloadRequest(record.objectKey, new Date(this.now().getTime() + this.downloadTtlMs));
   }
 
-  private async requireAuthorized(evidenceId: string, actorId: string, action: 'UPLOAD' | 'DOWNLOAD'): Promise<EvidenceRecord> {
+  private async requireAuthorized(
+    evidenceId: string,
+    principal: EvidenceAccessPrincipal,
+    action: 'UPLOAD' | 'DOWNLOAD'
+  ): Promise<EvidenceRecord> {
     requireIdentifier(evidenceId, 'evidenceId');
-    const normalizedActor = requireIdentifier(actorId, 'actorId');
     const record = await this.repository.findById(evidenceId);
-    if (record === undefined) throw new EvidenceNotFoundError('Evidence was not found');
-    if (!(await this.authorization.canAccess(normalizedActor, record.roadEventId, action))) {
-      throw new EvidenceAccessDeniedError('Cross-event evidence access is not authorized');
+    if (record === undefined || !(await this.authorization.canAccess(principal, record.roadEventId, action))) {
+      // Do not disclose whether a cross-scope evidence identifier exists.
+      throw new EvidenceNotFoundError('Evidence was not found');
     }
     return record;
   }

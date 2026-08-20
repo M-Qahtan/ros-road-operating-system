@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   EvidenceAccessDeniedError,
+  EvidenceAccessPrincipal,
   EvidenceExpiredError,
   EvidenceIntegrityError,
+  EvidenceNotFoundError,
   EvidenceObjectStorage,
   EvidenceRecord,
   EvidenceRepository,
@@ -18,11 +20,19 @@ import { EvidenceService } from './evidence-service.js';
 const EVIDENCE_ID = '11111111-1111-4111-8111-111111111111';
 const EVENT_A = '22222222-2222-4222-8222-222222222222';
 const EVENT_B = '33333333-3333-4333-8333-333333333333';
-const ACTOR_A = 'operator-a';
-const ACTOR_B = 'operator-b';
 const TRACE_ID = 'trace-evidence-1';
 const CHECKSUM = 'a'.repeat(64);
 const NOW = new Date('2026-07-25T04:00:00.000Z');
+const PRINCIPAL_A: EvidenceAccessPrincipal = {
+  actorId: 'operator-a',
+  tenantId: 'riyadh-ops',
+  purpose: 'ROAD_SAFETY_OPERATIONS'
+};
+const PRINCIPAL_B: EvidenceAccessPrincipal = {
+  actorId: 'operator-b',
+  tenantId: 'other-tenant',
+  purpose: 'ROAD_SAFETY_OPERATIONS'
+};
 
 class MemoryRepository implements EvidenceRepository {
   readonly records = new Map<string, EvidenceRecord>();
@@ -84,8 +94,8 @@ class MemoryStorage implements EvidenceObjectStorage {
 
 class MemoryAuthorization implements RoadEventEvidenceAuthorization {
   constructor(private readonly grants: ReadonlyMap<string, readonly string[]>) {}
-  async canAccess(actorId: string, roadEventId: string): Promise<boolean> {
-    return this.grants.get(actorId)?.includes(roadEventId) ?? false;
+  async canAccess(principal: EvidenceAccessPrincipal, roadEventId: string): Promise<boolean> {
+    return this.grants.get(principal.actorId)?.includes(roadEventId) ?? false;
   }
 }
 
@@ -98,8 +108,8 @@ function createHarness(scannerResult: Awaited<ReturnType<MalwareScanner['scan']>
   const repository = new MemoryRepository();
   const storage = new MemoryStorage();
   const authorization = new MemoryAuthorization(new Map([
-    [ACTOR_A, [EVENT_A]],
-    [ACTOR_B, [EVENT_B]]
+    [PRINCIPAL_A.actorId, [EVENT_A]],
+    [PRINCIPAL_B.actorId, [EVENT_B]]
   ]));
   const service = new EvidenceService(repository, storage, new ConfigurableScanner(scannerResult), authorization, {
     now: () => new Date(NOW),
@@ -113,7 +123,7 @@ function createHarness(scannerResult: Awaited<ReturnType<MalwareScanner['scan']>
 async function createIntent(harness: ReturnType<typeof createHarness>) {
   return harness.service.createUploadIntent({
     roadEventId: EVENT_A,
-    actorId: ACTOR_A,
+    principal: PRINCIPAL_A,
     traceId: TRACE_ID,
     filename: '../camera frame.jpg',
     contentType: 'image/jpeg',
@@ -128,17 +138,35 @@ test('upload intent sanitizes filename, binds RoadEvent and returns a short-live
   const result = await createIntent(harness);
   assert.equal(result.evidence.id, EVIDENCE_ID);
   assert.equal(result.evidence.roadEventId, EVENT_A);
+  assert.equal(result.evidence.createdBy, PRINCIPAL_A.actorId);
   assert.equal(result.evidence.originalFilename, 'camera_frame.jpg');
   assert.match(result.evidence.objectKey, new RegExp(`road-events/${EVENT_A}/evidence/${EVIDENCE_ID}/camera_frame.jpg$`));
   assert.equal(result.upload.expiresAt.toISOString(), '2026-07-25T04:02:00.000Z');
   assert.deepEqual(harness.repository.audits, ['evidence.upload_intent_created']);
 });
 
+test('upload intent rejects a principal that cannot access the RoadEvent', async () => {
+  const harness = createHarness();
+  await assert.rejects(
+    harness.service.createUploadIntent({
+      roadEventId: EVENT_A,
+      principal: PRINCIPAL_B,
+      traceId: TRACE_ID,
+      filename: 'frame.jpg',
+      contentType: 'image/jpeg',
+      sizeBytes: 1024,
+      checksumSha256: CHECKSUM,
+      retention: { retainUntil: new Date('2027-07-25T00:00:00.000Z'), legalHold: false }
+    }),
+    EvidenceAccessDeniedError
+  );
+});
+
 test('completion verifies object metadata and checksum before preservation', async () => {
   const harness = createHarness();
   await createIntent(harness);
   harness.storage.metadata = { sizeBytes: 1024, contentType: 'image/jpeg', checksumSha256: CHECKSUM };
-  const completed = await harness.service.completeUpload(EVIDENCE_ID, ACTOR_A, TRACE_ID);
+  const completed = await harness.service.completeUpload(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID);
   assert.equal(completed.status, 'PRESERVED');
   assert.equal(completed.actualSizeBytes, 1024);
   assert.equal(completed.verifiedChecksumSha256, CHECKSUM);
@@ -148,19 +176,19 @@ test('completion verifies object metadata and checksum before preservation', asy
 test('expired intent is rejected before object completion', async () => {
   const repository = new MemoryRepository();
   const storage = new MemoryStorage();
-  const authorization = new MemoryAuthorization(new Map([[ACTOR_A, [EVENT_A]]]));
+  const authorization = new MemoryAuthorization(new Map([[PRINCIPAL_A.actorId, [EVENT_A]]]));
   const clock = { now: new Date(NOW) };
   const service = new EvidenceService(repository, storage, new ConfigurableScanner({ outcome: 'CLEAN' }), authorization, {
     now: () => new Date(clock.now), createId: () => EVIDENCE_ID, uploadTtlMs: 1000
   });
   await service.createUploadIntent({
-    roadEventId: EVENT_A, actorId: ACTOR_A, traceId: TRACE_ID, filename: 'frame.jpg',
+    roadEventId: EVENT_A, principal: PRINCIPAL_A, traceId: TRACE_ID, filename: 'frame.jpg',
     contentType: 'image/jpeg', sizeBytes: 1024, checksumSha256: CHECKSUM,
     retention: { retainUntil: new Date('2027-01-01T00:00:00.000Z'), legalHold: false }
   });
   storage.metadata = { sizeBytes: 1024, contentType: 'image/jpeg', checksumSha256: CHECKSUM };
   clock.now = new Date('2026-07-25T04:00:02.000Z');
-  await assert.rejects(() => service.completeUpload(EVIDENCE_ID, ACTOR_A, TRACE_ID), EvidenceExpiredError);
+  await assert.rejects(() => service.completeUpload(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID), EvidenceExpiredError);
 });
 
 test('tampered size, type or checksum is rejected', async () => {
@@ -172,7 +200,7 @@ test('tampered size, type or checksum is rejected', async () => {
     const harness = createHarness();
     await createIntent(harness);
     harness.storage.metadata = metadata;
-    await assert.rejects(() => harness.service.completeUpload(EVIDENCE_ID, ACTOR_A, TRACE_ID), EvidenceIntegrityError);
+    await assert.rejects(() => harness.service.completeUpload(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID), EvidenceIntegrityError);
   }
 });
 
@@ -184,21 +212,21 @@ test('malicious or scanner-error objects are quarantined while metadata remains 
     const harness = createHarness(scannerResult);
     const intent = await createIntent(harness);
     harness.storage.metadata = { sizeBytes: 1024, contentType: 'image/jpeg', checksumSha256: CHECKSUM };
-    const completed = await harness.service.completeUpload(EVIDENCE_ID, ACTOR_A, TRACE_ID);
+    const completed = await harness.service.completeUpload(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID);
     assert.equal(completed.status, 'QUARANTINED');
     assert.equal((await harness.repository.findById(EVIDENCE_ID))?.objectKey, intent.evidence.objectKey);
     assert.equal(harness.storage.quarantines.length, 1);
-    await assert.rejects(() => harness.service.createDownloadRequest(EVIDENCE_ID, ACTOR_A), EvidenceUnavailableError);
+    await assert.rejects(() => harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_A), EvidenceUnavailableError);
   }
 });
 
-test('cross-event access is rejected for completion and download', async () => {
+test('cross-scope evidence identifiers are hidden for completion and download', async () => {
   const harness = createHarness();
   await createIntent(harness);
   harness.storage.metadata = { sizeBytes: 1024, contentType: 'image/jpeg', checksumSha256: CHECKSUM };
-  await assert.rejects(() => harness.service.completeUpload(EVIDENCE_ID, ACTOR_B, TRACE_ID), EvidenceAccessDeniedError);
-  await harness.service.completeUpload(EVIDENCE_ID, ACTOR_A, TRACE_ID);
-  await assert.rejects(() => harness.service.createDownloadRequest(EVIDENCE_ID, ACTOR_B), EvidenceAccessDeniedError);
-  const download = await harness.service.createDownloadRequest(EVIDENCE_ID, ACTOR_A);
+  await assert.rejects(() => harness.service.completeUpload(EVIDENCE_ID, PRINCIPAL_B, TRACE_ID), EvidenceNotFoundError);
+  await harness.service.completeUpload(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID);
+  await assert.rejects(() => harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_B), EvidenceNotFoundError);
+  const download = await harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_A);
   assert.match(download.url, /signed=download/);
 });

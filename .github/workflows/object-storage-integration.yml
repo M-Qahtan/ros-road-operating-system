@@ -19,6 +19,8 @@ env:
   CANDIDATE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
   TESTED_MERGE_SHA: ${{ github.sha }}
   NODE_ENV: test
+  DATABASE_URL: postgresql://ros:object-storage-integration-only@localhost:5432/ros
+  PGPASSWORD: object-storage-integration-only
   OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
   OBJECT_STORAGE_REGION: us-east-1
   OBJECT_STORAGE_BUCKET: ros-evidence
@@ -29,6 +31,20 @@ jobs:
   object-storage-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: ros
+          POSTGRES_PASSWORD: object-storage-integration-only
+          POSTGRES_DB: ros
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ros -d ros"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Check out tested candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,6 +58,25 @@ jobs:
         run: corepack enable
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Provide PostgreSQL client from pinned service image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime-ci-bin
+          cat > .runtime-ci-bin/psql <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm --network host \
+            -v "$PWD:/workspace:ro" \
+            -w /workspace \
+            -e PGPASSWORD="${PGPASSWORD:-}" \
+            postgis/postgis:16-3.4 \
+            psql "$@"
+          EOF
+          chmod +x .runtime-ci-bin/psql
+          echo "$PWD/.runtime-ci-bin" >> "$GITHUB_PATH"
+      - name: Apply migrations and database invariants
+        run: bash scripts/run-postgres-integration.sh
       - name: Start isolated MinIO
         shell: bash
         run: |
@@ -73,14 +108,16 @@ jobs:
             -c 'mc alias set ros-ci http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc mb --ignore-existing ros-ci/ros-evidence'
       - name: Build API and dependencies
         run: pnpm --filter @ros/api... build
-      - name: Prove presigned upload metadata download and quarantine
+      - name: Prove scoped PostgreSQL EvidenceService with MinIO
         shell: bash
         run: |
           set -euo pipefail
           node apps/api/dist/e2e/run-object-storage-integration.js 2>&1 | tee object-storage-integration.log
           grep -q '"status":"PASS"' object-storage-integration.log
+          grep -q '"postgresEvidencePersisted":true' object-storage-integration.log
+          grep -q '"roadEventScopeVerified":true' object-storage-integration.log
           grep -q '"uploadChecksumVerified":true' object-storage-integration.log
-          grep -q '"quarantineCopyVerified":true' object-storage-integration.log
+          grep -q '"crossTenantEvidenceHidden":true' object-storage-integration.log
       - name: Write object-storage evidence manifest
         if: always()
         shell: bash
