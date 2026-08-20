@@ -15,6 +15,10 @@ const TRAFFIC_PROFILE: TrustedIntegrationProfile = {
   tenantId: 'riyadh-pilot',
   mode: 'SIMULATION_ONLY'
 };
+const MISBOUND_TRAFFIC_PROFILE: TrustedIntegrationProfile = {
+  ...TRAFFIC_PROFILE,
+  tenantId: 'other-tenant'
+};
 const INSURANCE_PROFILE: TrustedIntegrationProfile = {
   profileId: 'insurance-sandbox.riyadh',
   partner: 'INSURANCE',
@@ -85,6 +89,11 @@ async function run(): Promise<void> {
       /reused with different semantics|conflicts with another delivery/
     );
 
+    await assert.rejects(
+      sandbox.send(MISBOUND_TRAFFIC_PROFILE, operationId, sentAt),
+      /Integration delivery was not found/
+    );
+
     const [firstReceipt, concurrentReceipt] = await Promise.all([
       sandbox.send(TRAFFIC_PROFILE, operationId, sentAt),
       restartedBeforeSend.send(TRAFFIC_PROFILE, operationId, sentAt)
@@ -105,6 +114,10 @@ async function run(): Promise<void> {
     assert.equal(stateAfterSend.acceptedAt, firstReceipt.acceptedAt);
     assert.equal(stateAfterSend.simulationOnly, true);
 
+    await assert.rejects(
+      restartedAfterSend.status(MISBOUND_TRAFFIC_PROFILE, firstReceipt.providerRequestId),
+      /Integration delivery was not found/
+    );
     await assert.rejects(
       restartedAfterSend.status(INSURANCE_PROFILE, firstReceipt.providerRequestId),
       /Integration delivery was not found/
@@ -299,6 +312,7 @@ async function run(): Promise<void> {
       minimumNecessaryProjectionVerified: true,
       persistentPrepareIdempotencyVerified: true,
       semanticIdempotencyConflictRejected: true,
+      exactTrustedProfileBindingVerified: true,
       concurrentSendExactlyOneLogicalActionVerified: true,
       sendAttemptCount: 1,
       restartReceiptReplayVerified: true,
