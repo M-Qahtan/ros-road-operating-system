@@ -1,6 +1,7 @@
 import { createServer, IncomingMessage } from 'node:http';
 import { parsePort } from './config.js';
 import { createRoadEventHttpHandler } from './http/road-event-http.js';
+import { createRuntimeActorResolver } from './http/runtime-actor-resolver.js';
 import { applySecurityHeaders, resolveTraceId } from './request-security.js';
 import { bootstrapRoadEventRuntime } from './runtime/runtime-bootstrap.js';
 import { evaluateReadiness, validateRuntimeEnvironment } from './runtime/operational-readiness.js';
@@ -8,8 +9,9 @@ import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
 
 validateRuntimeEnvironment(process.env);
 const port = parsePort(process.env.PORT);
+const actorResolver = createRuntimeActorResolver(process.env);
 const runtime = await bootstrapRoadEventRuntime(process.env);
-const handleRoadEvent = createRoadEventHttpHandler(runtime.application);
+const handleRoadEvent = createRoadEventHttpHandler(runtime.application, actorResolver);
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -79,17 +81,12 @@ async function shutdown(signal: 'SIGTERM' | 'SIGINT'): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(structuredLog('info', 'ROS API shutdown requested', { operation: signal }));
-
-  await new Promise<void>((resolve) => {
-    server.close(() => resolve());
-  });
+  await new Promise<void>((resolve) => { server.close(() => resolve()); });
   try {
     await runtime.close();
   } catch {
     process.exitCode = 1;
-    console.error(structuredLog('error', 'ROS runtime resource shutdown failed', {
-      operation: 'runtime.close'
-    }));
+    console.error(structuredLog('error', 'ROS runtime resource shutdown failed', { operation: 'runtime.close' }));
   }
 }
 
@@ -97,8 +94,5 @@ process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
 process.once('SIGINT', () => { void shutdown('SIGINT'); });
 
 server.listen(port, () => {
-  console.log(structuredLog('info', 'ROS API listening', {
-    operation: `listen:${port}`,
-    runtimeMode: runtime.mode
-  }));
+  console.log(structuredLog('info', 'ROS API listening', { operation: `listen:${port}`, runtimeMode: runtime.mode }));
 });

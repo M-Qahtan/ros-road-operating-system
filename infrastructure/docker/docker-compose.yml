@@ -53,6 +53,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-staging}
       ROS_RUNTIME_PROFILE: simulation
+      ROS_AUTH_PROFILE: simulation
       PORT: 3000
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL}

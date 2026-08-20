@@ -14,7 +14,7 @@ import {
   RoadEventApplicationService
 } from '../application/road-event-application.js';
 import { AuthorizationDeniedError } from '../application/local-adapters.js';
-import { AuthenticatedActor, RosRole } from '../application/ports.js';
+import { ActorResolver, createActorResolverForEnvironment } from './actor-resolver.js';
 
 export interface HttpRequest {
   readonly method: string;
@@ -25,10 +25,7 @@ export interface HttpRequest {
   readonly traceId: string;
 }
 
-export interface HttpResponse {
-  readonly status: number;
-  readonly body: unknown;
-}
+export interface HttpResponse { readonly status: number; readonly body: unknown; }
 
 class HttpInputError extends Error { override readonly name = 'HttpInputError'; }
 
@@ -55,24 +52,10 @@ function stringArray(record: Record<string, unknown>, field: string): string[] {
   return value as string[];
 }
 
-function parseActor(headers: Readonly<Record<string, string | undefined>>): AuthenticatedActor {
-  const actorId = headers['x-actor-id'];
-  const rawRoles = headers['x-ros-roles'];
-  const tenantId = headers['x-tenant-id'];
-  const purpose = headers['x-purpose'];
-  if (actorId === undefined || rawRoles === undefined || tenantId === undefined || purpose === undefined) {
-    throw new AuthorizationDeniedError('Missing actor identity or access-scope headers');
-  }
-  const allowed = new Set<RosRole>(['OPERATOR', 'SUPERVISOR', 'AUDITOR', 'INTEGRATION_SERVICE']);
-  const roles = rawRoles.split(',').map((role) => role.trim()).filter((role): role is RosRole => allowed.has(role as RosRole));
-  if (roles.length === 0) throw new AuthorizationDeniedError('No recognized ROS role was supplied');
-  return { actorId, roles, tenantId, purpose };
-}
-
-function commandContext(request: HttpRequest) {
+async function commandContext(request: HttpRequest, actorResolver: ActorResolver) {
   const idempotencyKey = request.headers['idempotency-key'];
   if (idempotencyKey === undefined) throw new HttpInputError('Idempotency-Key header is required');
-  return { actor: parseActor(request.headers), traceId: request.traceId, idempotencyKey };
+  return { actor: await actorResolver.resolve(request.headers), traceId: request.traceId, idempotencyKey };
 }
 
 function parseSeverity(value: unknown) {
@@ -121,7 +104,10 @@ function mapError(error: unknown, traceId: string): HttpResponse {
   return { status: 500, body: envelope(false, null, { code: 'INTERNAL_ERROR', message: 'Unexpected server error' }, traceId) };
 }
 
-export function createRoadEventHttpHandler(application: RoadEventApplicationService) {
+export function createRoadEventHttpHandler(
+  application: RoadEventApplicationService,
+  actorResolver: ActorResolver = createActorResolverForEnvironment(process.env)
+) {
   return async function handle(request: HttpRequest): Promise<HttpResponse> {
     try {
       const eventMatch = /^\/api\/v1\/road-events\/([0-9a-f-]+)$/.exec(request.path);
@@ -131,36 +117,30 @@ export function createRoadEventHttpHandler(application: RoadEventApplicationServ
         const body = asRecord(request.body);
         const severity = body.severity === undefined ? undefined : parseSeverity(body.severity);
         const data = await application.create({
-          id: requiredString(body, 'id'),
-          occurredAt: requiredString(body, 'occurredAt'),
-          latitude: requiredNumber(body, 'latitude'),
-          longitude: requiredNumber(body, 'longitude'),
+          id: requiredString(body, 'id'), occurredAt: requiredString(body, 'occurredAt'),
+          latitude: requiredNumber(body, 'latitude'), longitude: requiredNumber(body, 'longitude'),
           ...(severity === undefined ? {} : { severity })
-        }, commandContext(request));
+        }, await commandContext(request, actorResolver));
         return { status: 201, body: envelope(true, data, null, request.traceId) };
       }
 
       if (request.method === 'GET' && request.path === '/api/v1/road-events') {
         const statuses = request.query.status === undefined ? undefined : request.query.status.split(',').map(parseStatus);
-        const severities = request.query.severity === undefined
-          ? undefined
-          : request.query.severity.split(',').map((level) => {
-              if (!Object.values(SeverityLevel).includes(level as SeverityLevel)) throw new HttpInputError('severity filter is invalid');
-              return level as SeverityLevel;
-            });
+        const severities = request.query.severity === undefined ? undefined : request.query.severity.split(',').map((level) => {
+          if (!Object.values(SeverityLevel).includes(level as SeverityLevel)) throw new HttpInputError('severity filter is invalid');
+          return level as SeverityLevel;
+        });
         const data = await application.list({
-          ...(statuses === undefined ? {} : { statuses }),
-          ...(severities === undefined ? {} : { severities }),
+          ...(statuses === undefined ? {} : { statuses }), ...(severities === undefined ? {} : { severities }),
           ...(request.query.occurredFrom === undefined ? {} : { occurredFrom: new Date(request.query.occurredFrom) }),
           ...(request.query.occurredTo === undefined ? {} : { occurredTo: new Date(request.query.occurredTo) }),
-          limit: numberQuery(request.query.limit, 20),
-          offset: numberQuery(request.query.offset, 0)
-        }, parseActor(request.headers));
+          limit: numberQuery(request.query.limit, 20), offset: numberQuery(request.query.offset, 0)
+        }, await actorResolver.resolve(request.headers));
         return { status: 200, body: envelope(true, data, null, request.traceId) };
       }
 
       if (eventMatch !== null && request.method === 'GET') {
-        const data = await application.getById(eventMatch[1]!, parseActor(request.headers));
+        const data = await application.getById(eventMatch[1]!, await actorResolver.resolve(request.headers));
         return { status: 200, body: envelope(true, data, null, request.traceId) };
       }
 
@@ -168,45 +148,25 @@ export function createRoadEventHttpHandler(application: RoadEventApplicationServ
         const roadEventId = actionMatch[1]!;
         const action = actionMatch[2]!;
         if (request.method === 'GET' && action === 'timeline') {
-          const data = await application.timeline(roadEventId, parseActor(request.headers));
+          const data = await application.timeline(roadEventId, await actorResolver.resolve(request.headers));
           return { status: 200, body: envelope(true, data, null, request.traceId) };
         }
         if (request.method !== 'POST') return { status: 405, body: envelope(false, null, { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' }, request.traceId) };
         const body = asRecord(request.body);
-        const context = commandContext(request);
+        const context = await commandContext(request, actorResolver);
         if (action === 'severity') {
-          const data = await application.reassessSeverity({
-            roadEventId,
-            expectedVersion: requiredNumber(body, 'expectedVersion'),
-            assessment: parseSeverity(body.assessment),
-            reason: requiredString(body, 'reason')
-          }, context);
+          const data = await application.reassessSeverity({ roadEventId, expectedVersion: requiredNumber(body, 'expectedVersion'), assessment: parseSeverity(body.assessment), reason: requiredString(body, 'reason') }, context);
           return { status: 200, body: envelope(true, data, null, request.traceId) };
         }
         if (action === 'transition') {
-          const data = await application.transition({
-            roadEventId,
-            expectedVersion: requiredNumber(body, 'expectedVersion'),
-            nextStatus: parseStatus(body.nextStatus),
-            reason: requiredString(body, 'reason')
-          }, context);
+          const data = await application.transition({ roadEventId, expectedVersion: requiredNumber(body, 'expectedVersion'), nextStatus: parseStatus(body.nextStatus), reason: requiredString(body, 'reason') }, context);
           return { status: 200, body: envelope(true, data, null, request.traceId) };
         }
         if (action === 'closure-authorization') {
-          const data = await application.authorizeClosure({
-            roadEventId,
-            expectedVersion: requiredNumber(body, 'expectedVersion'),
-            reason: requiredString(body, 'reason'),
-            authorizedAt: requiredString(body, 'authorizedAt')
-          }, context);
+          const data = await application.authorizeClosure({ roadEventId, expectedVersion: requiredNumber(body, 'expectedVersion'), reason: requiredString(body, 'reason'), authorizedAt: requiredString(body, 'authorizedAt') }, context);
           return { status: 200, body: envelope(true, data, null, request.traceId) };
         }
-        const data = await application.attachSignal({
-          roadEventId,
-          signalId: requiredString(body, 'signalId'),
-          matchScore: requiredNumber(body, 'matchScore'),
-          mergeReasons: stringArray(body, 'mergeReasons')
-        }, context);
+        const data = await application.attachSignal({ roadEventId, signalId: requiredString(body, 'signalId'), matchScore: requiredNumber(body, 'matchScore'), mergeReasons: stringArray(body, 'mergeReasons') }, context);
         return { status: 200, body: envelope(true, data, null, request.traceId) };
       }
 
