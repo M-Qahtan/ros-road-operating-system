@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { RoadEvent, RoadEventClosureRequiresHumanAuthorizationError, RoadEventStatus, SeverityLevel } from '@ros/domain';
-import { RoadEventApplicationService } from './road-event-application.js';
+import { deriveRoadEventIdempotencyScope, RoadEventApplicationService } from './road-event-application.js';
 import {
   AuthorizationDeniedError,
   MemoryIdempotencyAdapter,
@@ -49,6 +49,43 @@ test('idempotent create retries return the same result without duplicate reposit
   assert.deepEqual(second, first);
   assert.equal((await repository.list({ limit: 20, offset: 0 }, SCOPE)).total, 1);
   assert.equal((await repository.listForRoadEvent(EVENT_ID, SCOPE)).length, 1);
+});
+
+test('idempotency scope derivation is unambiguous and bounded for valid access scopes', () => {
+  const first = deriveRoadEventIdempotencyScope('road_event:create', { tenantId: 'a:b', purpose: 'c' });
+  const second = deriveRoadEventIdempotencyScope('road_event:create', { tenantId: 'a', purpose: 'b:c' });
+  assert.notEqual(first, second);
+  assert.match(first, /^road-event:[0-9a-f]{64}$/);
+  assert.ok(first.length <= 128);
+
+  const maximum = deriveRoadEventIdempotencyScope('road_event:authorize_closure', {
+    tenantId: `t${'a'.repeat(127)}`,
+    purpose: `p${'b'.repeat(127)}`
+  });
+  assert.match(maximum, /^road-event:[0-9a-f]{64}$/);
+  assert.ok(maximum.length <= 128);
+});
+
+test('delimiter-equivalent tenant and purpose pairs do not share idempotency records', async () => {
+  const { repository, service } = createFixture();
+  const actorA: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'], tenantId: 'a:b', purpose: 'c' };
+  const actorB: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'], tenantId: 'a', purpose: 'b:c' };
+
+  await service.create({
+    id: EVENT_ID,
+    occurredAt: '2026-07-25T03:00:00.000Z',
+    latitude: 24.7136,
+    longitude: 46.6753
+  }, context('shared-key-0001', actorA));
+  await service.create({
+    id: '66666666-6666-4666-8666-666666666666',
+    occurredAt: '2026-07-25T03:01:00.000Z',
+    latitude: 24.7137,
+    longitude: 46.6754
+  }, context('shared-key-0001', actorB));
+
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, actorA)).total, 1);
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, actorB)).total, 1);
 });
 
 test('operator cannot grant supervisor-only closure authorization', async () => {
