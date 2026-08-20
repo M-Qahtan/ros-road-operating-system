@@ -7,11 +7,13 @@ export interface MinioStorageOptions {
   readonly bucket: string;
   readonly accessKeyId: string;
   readonly secretAccessKey: string;
+  readonly sessionToken?: string;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => Date;
 }
 
 const EMPTY_PAYLOAD_HASH = createHash('sha256').update('').digest('hex');
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 
 function hmac(key: Buffer | string, value: string): Buffer {
   return createHmac('sha256', key).update(value).digest();
@@ -21,8 +23,21 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function requireObjectKey(value: string): string {
+  const normalized = value.trim();
+  if (normalized.length < 1 || Buffer.byteLength(normalized, 'utf8') > 1024) {
+    throw new TypeError('Object key must contain between 1 and 1024 UTF-8 bytes');
+  }
+  if (CONTROL_CHARACTER_PATTERN.test(normalized)) throw new TypeError('Object key contains control characters');
+  const segments = normalized.split('/');
+  if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
+    throw new TypeError('Object key contains an unsafe path segment');
+  }
+  return normalized;
+}
+
 function encodePath(value: string): string {
-  return value.split('/').map((part) => encodeURIComponent(part)).join('/');
+  return requireObjectKey(value).split('/').map((part) => encodeURIComponent(part)).join('/');
 }
 
 function formatAmzDate(date: Date): { amzDate: string; dateStamp: string } {
@@ -53,8 +68,14 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
   constructor(private readonly options: MinioStorageOptions) {
     this.endpoint = new URL(options.endpoint);
     if (!['http:', 'https:'].includes(this.endpoint.protocol)) throw new TypeError('MinIO endpoint must use HTTP or HTTPS');
+    if (this.endpoint.username || this.endpoint.password || this.endpoint.hash || this.endpoint.search) {
+      throw new TypeError('MinIO endpoint must not contain credentials, query parameters or a fragment');
+    }
     if (options.region.trim().length === 0 || options.bucket.trim().length === 0) throw new TypeError('MinIO region and bucket are required');
     if (options.accessKeyId.trim().length === 0 || options.secretAccessKey.length < 8) throw new TypeError('MinIO credentials are invalid');
+    if (options.sessionToken !== undefined && options.sessionToken.trim().length < 8) {
+      throw new TypeError('MinIO session token is invalid');
+    }
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? (() => new Date());
   }
@@ -84,7 +105,11 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
 
   async inspect(objectKey: string): Promise<StoredObjectMetadata | undefined> {
     const expiresAt = new Date(this.now().getTime() + 60_000);
-    const response = await this.fetchImpl(this.presign('HEAD', objectKey, expiresAt, {}), { method: 'HEAD' });
+    const checksumHeaders = { 'x-amz-checksum-mode': 'ENABLED' };
+    const response = await this.fetchImpl(
+      this.presign('HEAD', objectKey, expiresAt, checksumHeaders),
+      { method: 'HEAD', headers: checksumHeaders }
+    );
     if (response.status === 404) return undefined;
     if (!response.ok) throw new Error(`Object metadata request failed with status ${response.status}`);
     const size = Number(response.headers.get('content-length'));
@@ -119,13 +144,16 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
     const normalizedHeaders: Record<string, string> = { host };
     for (const [key, value] of Object.entries(headers)) normalizedHeaders[key.toLowerCase()] = value.trim().replace(/\s+/g, ' ');
     const signedHeaders = Object.keys(normalizedHeaders).sort().join(';');
-    const query = {
+    const query: Record<string, string> = {
       'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
       'X-Amz-Credential': `${this.options.accessKeyId}/${credentialScope}`,
       'X-Amz-Date': amzDate,
       'X-Amz-Expires': String(expires),
       'X-Amz-SignedHeaders': signedHeaders
     };
+    if (this.options.sessionToken !== undefined) {
+      query['X-Amz-Security-Token'] = this.options.sessionToken;
+    }
     const canonicalHeaders = Object.entries(normalizedHeaders)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, value]) => `${key}:${value}\n`)
