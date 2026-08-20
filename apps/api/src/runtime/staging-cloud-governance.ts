@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
 
 export const PILOT_ENGINEERING_RPO_MINUTES = 5;
 export const PILOT_ENGINEERING_RTO_MINUTES = 30;
@@ -72,6 +74,15 @@ export interface TerraformPlanAnalysis {
   readonly unknownActionAddresses: readonly string[];
 }
 
+const VERIFIED_TERRAFORM_PLAN: unique symbol = Symbol('ros-verified-terraform-plan');
+const VERIFIED_STAGING_PACKAGE: unique symbol = Symbol('ros-verified-staging-package');
+
+export interface VerifiedTerraformPlan {
+  readonly terraformPlanSha256: string;
+  readonly terraformPlanAnalysis: TerraformPlanAnalysis;
+  readonly [VERIFIED_TERRAFORM_PLAN]: true;
+}
+
 export interface VerifiedStagingCloudPackage {
   readonly packageSha256: string;
   readonly expectedCandidateHeadSha: string;
@@ -79,6 +90,7 @@ export interface VerifiedStagingCloudPackage {
   readonly terraformPlanAnalysis: TerraformPlanAnalysis;
   readonly verifiedEvidenceFileCount: number;
   readonly evidenceKinds: readonly StagingEvidenceKind[];
+  readonly [VERIFIED_STAGING_PACKAGE]: true;
 }
 
 export interface StagingCloudReviewDecision {
@@ -111,6 +123,7 @@ const REQUIRED_EVIDENCE_KINDS: readonly StagingEvidenceKind[] = [
   'SECURITY_POSTURE'
 ];
 const ALLOWED_TERRAFORM_ACTIONS = new Set(['no-op', 'read', 'create', 'update']);
+const execFileAsync = promisify(execFile);
 
 function object(value: unknown, field: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -391,6 +404,42 @@ async function digestFile(path: string): Promise<string> {
   return hash.digest('hex');
 }
 
+export async function verifyTerraformPlanFile(
+  terraformPlanPath: string,
+  options: { readonly terraformExecutable?: string } = {}
+): Promise<VerifiedTerraformPlan> {
+  const planPath = resolve(text(terraformPlanPath, 'terraformPlanPath', 2048));
+  const planInfo = await lstat(planPath);
+  if (planInfo.isSymbolicLink() || !planInfo.isFile()) {
+    throw new Error('Terraform plan must be a regular non-symbolic-link file');
+  }
+
+  const terraformExecutable = options.terraformExecutable ?? 'terraform';
+  if (terraformExecutable !== 'terraform' && process.env.NODE_ENV !== 'test') {
+    throw new Error('alternate Terraform executable is allowed only in test mode');
+  }
+
+  const terraformPlanSha256 = await digestFile(planPath);
+  const { stdout } = await execFileAsync(terraformExecutable, ['show', '-json', planPath], {
+    encoding: 'utf8',
+    timeout: 120_000,
+    maxBuffer: 16 * 1024 * 1024,
+    windowsHide: true
+  });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error('terraform show -json returned malformed JSON');
+  }
+  const terraformPlanAnalysis = analyzeTerraformShowJson(parsed);
+  return Object.freeze({
+    terraformPlanSha256,
+    terraformPlanAnalysis,
+    [VERIFIED_TERRAFORM_PLAN]: true as const
+  });
+}
+
 async function verifyEvidenceFiles(
   packageValue: StagingCloudReviewPackage,
   rootInput: string
@@ -415,28 +464,25 @@ export async function verifyStagingCloudPackage(
   packageValue: StagingCloudReviewPackage,
   evidenceRoot: string,
   expectedCandidateHeadSha: string,
-  terraformPlanPath: string,
-  terraformShowJson: unknown
+  verifiedPlan: VerifiedTerraformPlan
 ): Promise<VerifiedStagingCloudPackage> {
   const expectedHead = gitSha(expectedCandidateHeadSha, 'expectedCandidateHeadSha');
   if (packageValue.candidateHeadSha !== expectedHead) {
     throw new Error(`package candidate ${packageValue.candidateHeadSha} does not match trusted expected head`);
   }
-
-  const planPath = resolve(text(terraformPlanPath, 'terraformPlanPath', 2048));
-  const planInfo = await lstat(planPath);
-  if (planInfo.isSymbolicLink() || !planInfo.isFile()) throw new Error('Terraform plan must be a regular non-symbolic-link file');
-  const terraformPlanSha256 = await digestFile(planPath);
-  const terraformPlanAnalysis = analyzeTerraformShowJson(terraformShowJson);
+  if (verifiedPlan[VERIFIED_TERRAFORM_PLAN] !== true) {
+    throw new Error('Terraform plan must be verified from the plan file and terraform show -json');
+  }
   const evidenceKinds = await verifyEvidenceFiles(packageValue, evidenceRoot);
 
   return Object.freeze({
     packageSha256: stagingCloudPackageSha256(packageValue),
     expectedCandidateHeadSha: expectedHead,
-    terraformPlanSha256,
-    terraformPlanAnalysis,
+    terraformPlanSha256: verifiedPlan.terraformPlanSha256,
+    terraformPlanAnalysis: verifiedPlan.terraformPlanAnalysis,
     verifiedEvidenceFileCount: packageValue.evidenceFiles.length,
-    evidenceKinds
+    evidenceKinds,
+    [VERIFIED_STAGING_PACKAGE]: true as const
   });
 }
 
@@ -447,6 +493,7 @@ export function evaluateStagingCloudReview(
   const packageValue = parseStagingCloudReviewPackage(value);
   const packageSha256 = stagingCloudPackageSha256(packageValue);
   const verificationMatches = verification !== undefined &&
+    verification[VERIFIED_STAGING_PACKAGE] === true &&
     verification.packageSha256 === packageSha256 &&
     verification.verifiedEvidenceFileCount === packageValue.evidenceFiles.length;
   const candidateHeadVerified = verificationMatches && verification.expectedCandidateHeadSha === packageValue.candidateHeadSha;
