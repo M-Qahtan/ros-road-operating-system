@@ -56,7 +56,6 @@ export function validateRuntimeEnvironment(environment: NodeJS.ProcessEnv): void
 function timeout<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Readiness probe timed out')), milliseconds);
-    timer.unref?.();
     operation.then(
       (value) => {
         clearTimeout(timer);
