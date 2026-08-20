@@ -35,7 +35,8 @@ CREATE TABLE integration_deliveries (
   ),
   CONSTRAINT integration_deliveries_time_order CHECK (updated_at >= prepared_at),
   UNIQUE (profile_id, idempotency_key),
-  UNIQUE (profile_id, provider_request_id)
+  UNIQUE (profile_id, provider_request_id),
+  UNIQUE (logical_operation_id, profile_id)
 );
 
 CREATE INDEX integration_deliveries_scope_state_idx
@@ -100,13 +101,16 @@ EXECUTE FUNCTION enforce_integration_delivery_update();
 CREATE TABLE integration_delivery_callbacks (
   profile_id TEXT NOT NULL,
   callback_id TEXT NOT NULL,
-  logical_operation_id TEXT NOT NULL REFERENCES integration_deliveries(logical_operation_id),
+  logical_operation_id TEXT NOT NULL,
   semantic_fingerprint CHAR(64) NOT NULL,
   received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (profile_id, callback_id),
   CONSTRAINT integration_delivery_callbacks_profile_length CHECK (length(profile_id) BETWEEN 1 AND 128),
   CONSTRAINT integration_delivery_callbacks_id_length CHECK (length(callback_id) BETWEEN 1 AND 128),
-  CONSTRAINT integration_delivery_callbacks_fingerprint_format CHECK (semantic_fingerprint ~ '^[0-9a-f]{64}$')
+  CONSTRAINT integration_delivery_callbacks_fingerprint_format CHECK (semantic_fingerprint ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT integration_delivery_callbacks_profile_operation_fk
+    FOREIGN KEY (logical_operation_id, profile_id)
+    REFERENCES integration_deliveries(logical_operation_id, profile_id)
 );
 
 CREATE INDEX integration_delivery_callbacks_operation_idx
@@ -134,4 +138,4 @@ EXECUTE FUNCTION reject_integration_delivery_callback_mutation();
 COMMENT ON TABLE integration_deliveries IS
   'Persistent SIMULATION_ONLY partner delivery state. Transport/provider status never grants ROS road, clinical, legal, or S3/S4 operational authority.';
 COMMENT ON TABLE integration_delivery_callbacks IS
-  'Append-only logical callback deduplication records after transport callback authentication/replay checks.';
+  'Append-only logical callback deduplication records bound to the exact trusted partner profile after callback authentication/replay checks.';
