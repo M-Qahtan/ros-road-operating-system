@@ -51,9 +51,10 @@ function productionEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Proces
     OIDC_ISSUER: 'https://identity.example.test',
     OIDC_JWKS_URL: 'https://identity.example.test/.well-known/jwks.json',
     OIDC_AUDIENCE: 'ros-api',
-    OIDC_ALLOWED_CLIENT_IDS: 'traffic-sandbox',
-    OIDC_ALLOWED_TENANT_IDS: 'riyadh-pilot',
-    OIDC_ALLOWED_PURPOSES: 'TRAFFIC_COORDINATION',
+    OIDC_ALLOWED_BINDINGS: JSON.stringify([
+      { clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION' },
+      { clientId: 'insurance-sandbox', tenantId: 'riyadh-pilot', purpose: 'INSURANCE_COORDINATION' }
+    ]),
     OIDC_MAX_TOKEN_AGE_SECONDS: '600',
     OIDC_MAX_CLOCK_SKEW_SECONDS: '30',
     OIDC_JWKS_CACHE_TTL_SECONDS: '300',
@@ -78,20 +79,40 @@ test('production runtime verifies signed bearer and returns authoritative ABAC s
   });
 });
 
-test('production fails closed without OIDC profile or trust inputs', () => {
+test('production rejects a cross-client binding even when each value is individually allowed elsewhere', async () => {
+  const resolver = createRuntimeActorResolver(productionEnvironment(), { jwksFetch: fakeFetch });
+  await assert.rejects(
+    resolver.resolve({ authorization: `Bearer ${token({ purpose: 'INSURANCE_COORDINATION' })}` }),
+    /could not be verified/
+  );
+});
+
+test('production fails closed without OIDC profile, trust inputs, or valid binding configuration', () => {
   assert.throws(() => createRuntimeActorResolver({ NODE_ENV: 'production' }), /ROS_AUTH_PROFILE=oidc/);
   assert.throws(() => createRuntimeActorResolver({ NODE_ENV: 'production', ROS_AUTH_PROFILE: 'oidc' }), /OIDC_ISSUER is required/);
   assert.throws(
     () => createRuntimeActorResolver(productionEnvironment({ OIDC_JWKS_URL: 'http://identity.example.test/jwks' })),
     /must use HTTPS/
   );
+  assert.throws(
+    () => createRuntimeActorResolver(productionEnvironment({ OIDC_ALLOWED_BINDINGS: '{bad-json' })),
+    /must be valid JSON/
+  );
+  assert.throws(
+    () => createRuntimeActorResolver(productionEnvironment({
+      OIDC_ALLOWED_BINDINGS: JSON.stringify([
+        { clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION' },
+        { clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION' }
+      ])
+    })),
+    /duplicate binding/
+  );
 });
 
-test('signed but unauthorized tenant, purpose or missing MFA is rejected', async () => {
+test('signed but unauthorized tenant or non-explicit MFA is rejected', async () => {
   const resolver = createRuntimeActorResolver(productionEnvironment(), { jwksFetch: fakeFetch });
   await assert.rejects(resolver.resolve({ authorization: `Bearer ${token({ tenant_id: 'other-tenant' })}` }), /could not be verified/);
-  await assert.rejects(resolver.resolve({ authorization: `Bearer ${token({ purpose: 'INSURANCE_COORDINATION' })}` }), /could not be verified/);
-  await assert.rejects(resolver.resolve({ authorization: `Bearer ${token({ amr: ['pwd'] })}` }), /could not be verified/);
+  await assert.rejects(resolver.resolve({ authorization: `Bearer ${token({ amr: ['otp'] })}` }), /could not be verified/);
 });
 
 test('non-production staging requires explicit simulation or OIDC profile', async () => {
