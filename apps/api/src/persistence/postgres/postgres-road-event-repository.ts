@@ -343,9 +343,18 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     await client.query(
       `INSERT INTO outbox_events (
         aggregate_type, aggregate_id, event_type, payload,
-        correlation_id, causation_id, occurred_at
-      ) VALUES ('RoadEvent', $1::uuid, $2, $3::jsonb, $4::uuid, $5::uuid, $6)`,
-      [event.id, context.eventType, afterState, context.correlationId, context.causationId ?? null, occurredAt]
+        correlation_id, causation_id, occurred_at, tenant_id, purpose
+      ) VALUES ('RoadEvent', $1::uuid, $2, $3::jsonb, $4::uuid, $5::uuid, $6, $7, $8)`,
+      [
+        event.id,
+        context.eventType,
+        afterState,
+        context.correlationId,
+        context.causationId ?? null,
+        occurredAt,
+        context.tenantId,
+        context.purpose
+      ]
     );
   }
 
