@@ -22,6 +22,8 @@ const OTHER_BINDING: CallbackPrincipalBinding = {
   tenantId: 'riyadh-pilot',
   purpose: 'INSURANCE_COORDINATION'
 };
+const STATUS_CONTRACT = 'traffic-status-v1';
+const CLOSURE_CONTRACT = 'traffic-closure-v1';
 const OLD_SECRET = 'old-test-only-0123456789abcdef0123456789abcdef';
 const NEW_SECRET = 'new-test-only-0123456789abcdef0123456789abcdef';
 
@@ -29,6 +31,7 @@ class MemoryReplayStore implements CallbackReplayStore {
   private readonly claimed = new Set<string>();
   async claim(
     binding: CallbackPrincipalBinding,
+    _contractId: string,
     _keyId: string,
     nonce: string,
     _expiresAtEpochSeconds: number
@@ -63,6 +66,7 @@ function signedInput(
 ): VerifyCallbackInput {
   const unsigned: Omit<VerifyCallbackInput, 'signatureHex'> = {
     binding: BINDING,
+    contractId: STATUS_CONTRACT,
     keyId: 'key-new',
     body: '{"status":"accepted"}',
     nonce: 'nonce-abcdefghijklmnop',
@@ -99,6 +103,21 @@ test('rejects body binding and key-id tampering', async () => {
   );
 });
 
+test('signature is bound to immutable callback contract and cross-contract attempt does not consume nonce', async () => {
+  const store = new MemoryReplayStore();
+  const nonce = 'contract-nonce-abcdef123456';
+  const signed = signedInput({ contractId: STATUS_CONTRACT, nonce });
+  await assert.rejects(
+    verifyCallbackHmac({ ...signed, contractId: CLOSURE_CONTRACT }, keyProvider, store, { nowEpochSeconds: NOW }),
+    /signature verification failed/
+  );
+  await verifyCallbackHmac(signed, keyProvider, store, { nowEpochSeconds: NOW });
+  await assert.rejects(
+    verifyCallbackHmac({ ...signed, contractId: CLOSURE_CONTRACT }, keyProvider, store, { nowEpochSeconds: NOW }),
+    /signature verification failed/
+  );
+});
+
 test('length-prefixed canonicalization prevents nonce/body delimiter reinterpretation', async () => {
   const store = new MemoryReplayStore();
   const original = signedInput({ nonce: 'nonce-abcdefghijkl.b', body: 'c' });
@@ -113,11 +132,11 @@ test('length-prefixed canonicalization prevents nonce/body delimiter reinterpret
   );
 });
 
-test('nonce replay remains blocked across accepted key rotation', async () => {
+test('nonce replay remains blocked across accepted key rotation and contracts', async () => {
   const store = new MemoryReplayStore();
   const nonce = 'rotation-nonce-abcdef123456';
-  const oldInput = signedInput({ keyId: 'key-old', nonce }, OLD_SECRET);
-  const newInput = signedInput({ keyId: 'key-new', nonce }, NEW_SECRET);
+  const oldInput = signedInput({ keyId: 'key-old', contractId: STATUS_CONTRACT, nonce }, OLD_SECRET);
+  const newInput = signedInput({ keyId: 'key-new', contractId: CLOSURE_CONTRACT, nonce }, NEW_SECRET);
   await verifyCallbackHmac(oldInput, keyProvider, store, { nowEpochSeconds: NOW });
   await assert.rejects(
     verifyCallbackHmac(newInput, keyProvider, store, { nowEpochSeconds: NOW }),
@@ -128,8 +147,8 @@ test('nonce replay remains blocked across accepted key rotation', async () => {
 test('different exact principals may use the same opaque nonce without cross-partner denial', async () => {
   const store = new MemoryReplayStore();
   const nonce = 'shared-nonce-abcdef1234567';
-  assert.equal(await store.claim(BINDING, 'key-new', nonce, NOW + 300), true);
-  assert.equal(await store.claim(OTHER_BINDING, 'key-new', nonce, NOW + 300), true);
+  assert.equal(await store.claim(BINDING, STATUS_CONTRACT, 'key-new', nonce, NOW + 300), true);
+  assert.equal(await store.claim(OTHER_BINDING, 'insurance-status-v1', 'key-new', nonce, NOW + 300), true);
 });
 
 test('rejects stale future and key-validity violations', async () => {
@@ -175,7 +194,7 @@ test('fails closed on key-provider or replay-store outage', async () => {
   );
 });
 
-test('rejects malformed signature weak key material invalid nonce and oversized body', async () => {
+test('rejects malformed signature weak key material invalid contract nonce and oversized body', async () => {
   const store = new MemoryReplayStore();
   await assert.rejects(
     verifyCallbackHmac({ ...signedInput(), signatureHex: 'bad' }, keyProvider, store, { nowEpochSeconds: NOW }),
@@ -184,6 +203,7 @@ test('rejects malformed signature weak key material invalid nonce and oversized 
   assert.throws(
     () => computeCallbackSignatureHex('too-short', {
       binding: BINDING,
+      contractId: STATUS_CONTRACT,
       keyId: 'key-new',
       body: '{}',
       timestampEpochSeconds: NOW,
@@ -194,6 +214,18 @@ test('rejects malformed signature weak key material invalid nonce and oversized 
   assert.throws(
     () => computeCallbackSignatureHex(NEW_SECRET, {
       binding: BINDING,
+      contractId: '',
+      keyId: 'key-new',
+      body: '{}',
+      timestampEpochSeconds: NOW,
+      nonce: 'valid-nonce-abcdef123456'
+    }),
+    /contractId is invalid/
+  );
+  assert.throws(
+    () => computeCallbackSignatureHex(NEW_SECRET, {
+      binding: BINDING,
+      contractId: STATUS_CONTRACT,
       keyId: 'key-new',
       body: '{}',
       timestampEpochSeconds: NOW,
@@ -204,6 +236,7 @@ test('rejects malformed signature weak key material invalid nonce and oversized 
   assert.throws(
     () => computeCallbackSignatureHex(NEW_SECRET, {
       binding: BINDING,
+      contractId: STATUS_CONTRACT,
       keyId: 'key-new',
       body: 'x'.repeat(1024 * 1024 + 1),
       timestampEpochSeconds: NOW,
