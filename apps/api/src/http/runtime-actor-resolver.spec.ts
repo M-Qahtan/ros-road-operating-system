@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { JwksHttpFetchPort, JwksHttpResponsePort } from '../integrations/jwks-https-fetcher.js';
+import { JwksHttpFetchPort } from '../integrations/jwks-https-fetcher.js';
 import { createRuntimeActorResolver } from './runtime-actor-resolver.js';
 
 const ACTOR_ID = '11111111-1111-4111-8111-111111111111';
@@ -32,14 +32,11 @@ function token(payloadOverrides: Readonly<Record<string, unknown>> = {}): string
   return `${input}.${signature}`;
 }
 
-function jwksResponse(): JwksHttpResponsePort {
-  const body = JSON.stringify({ keys: [{ ...exportedJwk, kid: 'runtime-key-1', alg: 'RS256', use: 'sig', key_ops: ['verify'] }] });
-  return {
-    ok: true,
-    status: 200,
-    headers: { get(name: string): string | null { return name.toLowerCase() === 'content-type' ? 'application/jwk-set+json' : null; } },
-    text: async () => body
-  };
+function jwksResponse(): Response {
+  return new Response(
+    JSON.stringify({ keys: [{ ...exportedJwk, kid: 'runtime-key-1', alg: 'RS256', use: 'sig', key_ops: ['verify'] }] }),
+    { status: 200, headers: { 'content-type': 'application/jwk-set+json' } }
+  );
 }
 
 const fakeFetch: JwksHttpFetchPort = async () => jwksResponse();
