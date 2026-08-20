@@ -13,7 +13,8 @@
     "simulate:riyadh": "pnpm build && node dist/e2e/run-riyadh-pilot.js",
     "simulate:ros-eye": "pnpm build && node dist/e2e/run-ros-eye-pilot.js",
     "evaluate:safety-fusion": "pnpm build && node dist/e2e/run-safety-fusion-evaluation.js",
-    "validate:real-device-evidence": "pnpm build && node dist/e2e/run-real-device-evidence-validation.js"
+    "validate:real-device-evidence": "pnpm build && node dist/e2e/run-real-device-evidence-validation.js",
+    "validate:partner-sandbox-evidence": "pnpm build && node dist/e2e/run-partner-sandbox-evidence-validation.js"
   },
   "dependencies": {
     "@ros/contracts": "workspace:*",
