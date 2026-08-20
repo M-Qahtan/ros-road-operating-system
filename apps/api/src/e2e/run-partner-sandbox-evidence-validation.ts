@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import {
   evaluatePartnerSandboxEvidence,
   parsePartnerSandboxEvidenceBundle,
-  PartnerSandboxExpectedContext,
+  parsePartnerSandboxExpectedContext,
   verifyPartnerSandboxEvidence
 } from '../integrations/partner-sandbox-evidence.js';
 
@@ -29,14 +29,11 @@ async function main(): Promise<void> {
   const bundleInput = await readJson(bundlePath);
   const expectedInput = await readJson(expectedContextPath);
   const bundle = parsePartnerSandboxEvidenceBundle(bundleInput);
-  const verification = await verifyPartnerSandboxEvidence(
-    bundle,
-    evidenceRoot,
-    expectedInput as PartnerSandboxExpectedContext
-  );
+  const expectedContext = parsePartnerSandboxExpectedContext(expectedInput);
+  const verification = await verifyPartnerSandboxEvidence(bundle, evidenceRoot, expectedContext);
   const decision = evaluatePartnerSandboxEvidence(bundle, verification);
   process.stdout.write(`${JSON.stringify(decision)}\n`);
-  if (decision.status !== 'VERIFIED_FOR_EXTERNAL_REVIEW') process.exitCode = 2;
+  if (decision.status !== 'PACKAGE_READY_FOR_EXTERNAL_REVIEW') process.exitCode = 2;
 }
 
 main().catch((error: unknown) => {
