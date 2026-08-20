@@ -5,9 +5,33 @@ const DEFAULT_POOL_MAX = 10;
 const MAX_POOL_MAX = 100;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 2_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10_000;
+const REQUIRED_RUNTIME_RELATIONS = Object.freeze([
+  'road_events',
+  'idempotency_records',
+  'idempotency_reservations',
+  'audit_logs',
+  'outbox_events',
+  'road_event_signals'
+]);
+const REQUIRED_RUNTIME_COLUMNS = Object.freeze([
+  { tableName: 'road_events', columnName: 'tenant_id' },
+  { tableName: 'road_events', columnName: 'purpose' },
+  { tableName: 'outbox_events', columnName: 'tenant_id' },
+  { tableName: 'outbox_events', columnName: 'purpose' }
+]);
+
+interface RuntimeSchemaProbeRow {
+  readonly relation_name: string;
+}
+
+interface RuntimeColumnProbeRow {
+  readonly table_name: string;
+  readonly column_name: string;
+}
 
 export interface PgRuntimePool extends PostgresPool {
   verifyConnection(): Promise<void>;
+  verifyReadiness(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -144,6 +168,45 @@ export class NodePostgresPool implements PgRuntimePool {
     const client = await this.connect();
     try {
       await client.query('SELECT 1 AS ros_runtime_probe');
+    } finally {
+      client.release();
+    }
+  }
+
+  async verifyReadiness(): Promise<void> {
+    const client = await this.connect();
+    try {
+      await client.query('SELECT 1 AS ros_runtime_probe');
+      const missingRelations = await client.query<RuntimeSchemaProbeRow>(
+        `SELECT required.relation_name
+         FROM unnest($1::text[]) AS required(relation_name)
+         WHERE to_regclass('public.' || required.relation_name) IS NULL`,
+        [REQUIRED_RUNTIME_RELATIONS]
+      );
+      if (missingRelations.rows.length > 0) {
+        const missing = missingRelations.rows.map((row) => row.relation_name).sort().join(', ');
+        throw new Error(`PostgreSQL runtime schema is incomplete: missing relations: ${missing}`);
+      }
+
+      const requiredTables = REQUIRED_RUNTIME_COLUMNS.map((entry) => entry.tableName);
+      const requiredColumns = REQUIRED_RUNTIME_COLUMNS.map((entry) => entry.columnName);
+      const missingColumns = await client.query<RuntimeColumnProbeRow>(
+        `SELECT required.table_name, required.column_name
+         FROM unnest($1::text[], $2::text[]) AS required(table_name, column_name)
+         LEFT JOIN information_schema.columns actual
+           ON actual.table_schema = 'public'
+          AND actual.table_name = required.table_name
+          AND actual.column_name = required.column_name
+         WHERE actual.column_name IS NULL`,
+        [requiredTables, requiredColumns]
+      );
+      if (missingColumns.rows.length > 0) {
+        const missing = missingColumns.rows
+          .map((row) => `${row.table_name}.${row.column_name}`)
+          .sort()
+          .join(', ');
+        throw new Error(`PostgreSQL runtime schema is incomplete: missing columns: ${missing}`);
+      }
     } finally {
       client.release();
     }
