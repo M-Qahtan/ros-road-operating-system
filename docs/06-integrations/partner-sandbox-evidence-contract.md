@@ -2,11 +2,34 @@
 
 ## Purpose
 
-This contract defines the evidence boundary used **after** a named external partner grants an approved sandbox window. It prepares ROS to verify that the configured sandbox profile, trust pair and delivery semantics were actually exercised without converting successful sandbox evidence into production or public-road authority.
+This contract defines the evidence boundary used **after** a named external partner grants an approved sandbox window. It prepares ROS to verify that a sandbox evidence package is bound to the approved candidate/profile/window and that its receipt files are intact. It deliberately does **not** pretend that the semantic claims inside those receipts have been independently proven by this parser.
 
 The executable contract is `apps/api/src/integrations/partner-sandbox-evidence.ts` with schema `ros-partner-sandbox-evidence/v1`.
 
-Current engineering work does **not** contact any external partner endpoint. The validator is prepared now; future evidence cannot reach `VERIFIED_FOR_EXTERNAL_REVIEW` unless it records at least one network call inside an externally approved sandbox window.
+Current engineering work does **not** contact any external partner endpoint. The validator is prepared now; future evidence cannot reach `PACKAGE_READY_FOR_EXTERNAL_REVIEW` unless the bundle claims at least one network call inside an externally approved sandbox window and passes all package-integrity/trust checks.
+
+## What the validator proves — and what it does not
+
+The validator can independently prove:
+
+- exact candidate SHA binding;
+- exact approved partner/profile/tenant/purpose/endpoint binding;
+- exact approved mTLS certificate SHA-256 ↔ JWS `kid` pair binding;
+- execution timestamps inside the approved sandbox window;
+- byte integrity of every referenced receipt file;
+- completeness/consistency of the required intake claims;
+- absence of a claim that forbidden operational/production/public-road authority was exercised.
+
+The validator **does not parse arbitrary partner receipts deeply enough to independently derive** facts such as callback replay rejection, outage recovery or exactly-one delivery. Those remain evidence-package assertions that safety/security/privacy/operations reviewers must verify against the byte-verified receipts.
+
+Accordingly, every successful decision returns:
+
+- `status = PACKAGE_READY_FOR_EXTERNAL_REVIEW`;
+- `semanticClaimsIndependentlyVerified = false`;
+- `summaryClaimsRequireExternalReview = true`;
+- `activationAuthorized = false`.
+
+A successful package is therefore ready to be reviewed, not ready to be activated.
 
 ## Trust is supplied outside the evidence bundle
 
@@ -22,7 +45,9 @@ The bundle cannot choose its own trusted identity. The validator requires a sepa
 - approval reference;
 - approval start/end timestamps.
 
-The evidence bundle must match that expected context exactly. A different tenant, purpose, endpoint, profile, candidate head or certificate↔`kid` pair fails closed.
+The expected-context document is itself strictly parsed. Unknown fields are rejected; this prevents accidental inclusion or silent acceptance of private keys, client secrets or other credential material. Duplicate credential-pair bindings are rejected.
+
+The evidence bundle must match the expected context exactly. A different tenant, purpose, endpoint, profile, candidate head or certificate↔`kid` pair fails closed.
 
 The expected context must come from the approved ROS configuration/review package, not from callback/request fields supplied by the partner.
 
@@ -39,9 +64,9 @@ Supported partner classes remain the current ROS contract:
 
 Only environment `SANDBOX` is accepted by this evidence contract.
 
-## Evidence required from an authorized sandbox session
+## Evidence-package claims required from an authorized sandbox session
 
-A session may become `VERIFIED_FOR_EXTERNAL_REVIEW` only when all of the following are represented and backed by byte-verified receipt files:
+A package may become `PACKAGE_READY_FOR_EXTERNAL_REVIEW` only when it declares all of the following and the package is byte/trust/window verified:
 
 - at least one actual call to the approved sandbox endpoint;
 - exactly-one logical action semantics;
@@ -58,7 +83,7 @@ A session may become `VERIFIED_FOR_EXTERNAL_REVIEW` only when all of the followi
 - no real emergency dispatch performed;
 - no public-road action performed.
 
-A result of `VERIFIED_FOR_EXTERNAL_REVIEW` is an evidence disposition only. `activationAuthorized` is hard-coded to `false`.
+These declarations are intake requirements. External reviewers remain responsible for confirming that the referenced receipts actually substantiate them.
 
 ## Receipt integrity
 
@@ -80,7 +105,7 @@ Suitable receipt material may include redacted request/response records, TLS pee
 
 ## Forbidden evidence content
 
-Do not store private signing keys, bearer credentials, reusable authentication material or production credentials in the evidence bundle or receipt package. The evidence contract uses public identifiers/fingerprints and proof outputs only.
+Do not store private signing keys, bearer credentials, reusable authentication material or production credentials in the evidence bundle, expected context or receipt package. The evidence contract uses public identifiers/fingerprints and proof outputs only.
 
 Any need to collect additional sensitive data requires a separate privacy/security approval before collection.
 
@@ -95,12 +120,13 @@ When a real partner sandbox is later authorized:
 5. exercise only the approved sandbox operations;
 6. capture minimum-necessary receipts;
 7. run retry/idempotency, callback replay, delayed-callback and outage/recovery cases;
-8. prove status/cancel behavior;
-9. verify no duplicate logical action occurred;
-10. verify no ROS operational/public-road authority was granted;
+8. exercise status/cancel behavior;
+9. record whether any duplicate logical action occurred;
+10. confirm no ROS operational/public-road authority was granted;
 11. hash the raw receipt files;
 12. run `validate:partner-sandbox-evidence`;
-13. submit `VERIFIED_FOR_EXTERNAL_REVIEW` output plus the external approval package to safety/security/privacy/operations review.
+13. submit the `PACKAGE_READY_FOR_EXTERNAL_REVIEW` output, receipts and external approval package to safety/security/privacy/operations review;
+14. only those reviewers may disposition the semantic claims; this command never activates an integration.
 
 ## Command
 
@@ -108,11 +134,11 @@ After building the API package:
 
 `node dist/e2e/run-partner-sandbox-evidence-validation.js <bundle.json> <evidence-root> <expected-context.json>`
 
-The command exits non-zero for malformed/untrusted evidence or `NO_GO`.
+The command exits non-zero for malformed/untrusted/incomplete evidence or `NO_GO`.
 
 ## Remaining activation gates
 
-Even successful sandbox evidence does not establish:
+Even a successfully reviewed sandbox package does not establish:
 
 - production endpoint approval;
 - production credentials or certificates;
