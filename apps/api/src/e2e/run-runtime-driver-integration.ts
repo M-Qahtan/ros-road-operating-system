@@ -33,13 +33,19 @@ function requiredRedisUrl(): string {
   return value;
 }
 
-function proveRuntimeResilience(): void {
-  const script = fileURLToPath(new URL('./run-runtime-resilience-integration.js', import.meta.url));
+function runChildProof(scriptName: string): string {
+  const script = fileURLToPath(new URL(`./${scriptName}`, import.meta.url));
   const output = execFileSync(process.execPath, [script], {
     env: process.env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit']
   });
+  process.stdout.write(output);
+  return output;
+}
+
+function proveRuntimeResilience(): void {
+  const output = runChildProof('run-runtime-resilience-integration.js');
   assert.match(output, /"status":"PASS"/);
   assert.match(output, /"outboxUniqueDeliveryVerified":true/);
   assert.match(output, /"workerRestartRecoveryVerified":true/);
@@ -49,48 +55,54 @@ function proveRuntimeResilience(): void {
   assert.match(output, /"reconciliationAlertVerified":true/);
   assert.match(output, /"completedReplaySurvivesRestart":true/);
   assert.match(output, /"exactFenceReconciliationVerified":true/);
-  process.stdout.write(output);
 }
 
 function proveCallbackReplay(): void {
-  const script = fileURLToPath(new URL('./run-callback-replay-integration.js', import.meta.url));
-  const output = execFileSync(process.execPath, [script], {
-    env: process.env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit']
-  });
+  const output = runChildProof('run-callback-replay-integration.js');
   assert.match(output, /"status":"PASS"/);
   assert.match(output, /"callbackSignatureVerified":true/);
+  assert.match(output, /"requestCannotOverrideProfileVerified":true/);
   assert.match(output, /"sameProfileReplayRejected":true/);
   assert.match(output, /"crossProfileSignatureBindingVerified":true/);
   assert.match(output, /"profileScopedNonceReuseVerified":true/);
   assert.match(output, /"nonceImmutabilityVerified":true/);
-  process.stdout.write(output);
 }
 
 function provePartnerLifecycle(): void {
-  const script = fileURLToPath(new URL('./run-partner-lifecycle-integration.js', import.meta.url));
-  const output = execFileSync(process.execPath, [script], {
-    env: process.env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit']
-  });
+  const output = runChildProof('run-partner-lifecycle-integration.js');
   assert.match(output, /"status":"PASS"/);
   assert.match(output, /"simulationOnly":true/);
   assert.match(output, /"minimumNecessaryProjectionVerified":true/);
   assert.match(output, /"persistentPrepareIdempotencyVerified":true/);
+  assert.match(output, /"semanticIdempotencyConflictRejected":true/);
+  assert.match(output, /"exactTrustedProfileBindingVerified":true/);
   assert.match(output, /"concurrentSendExactlyOneLogicalActionVerified":true/);
   assert.match(output, /"sendAttemptCount":1/);
   assert.match(output, /"restartReceiptReplayVerified":true/);
   assert.match(output, /"crossProfileStatusIsolationVerified":true/);
   assert.match(output, /"callbackReplaySemanticsVerified":true/);
+  assert.match(output, /"delayedCallbackRejected":true/);
   assert.match(output, /"terminalStateGuardVerified":true/);
   assert.match(output, /"callbackAppendOnlyVerified":true/);
   assert.match(output, /"providerIdentityImmutableVerified":true/);
   assert.match(output, /"cancellationIdempotencyVerified":true/);
   assert.match(output, /"networkCalls":0/);
   assert.match(output, /"operationalAuthorityGranted":false/);
-  process.stdout.write(output);
+}
+
+function provePartnerTrust(): void {
+  const output = runChildProof('run-partner-trust-integration.js');
+  assert.match(output, /"status":"PASS"/);
+  assert.match(output, /"sandboxOnlyVerified":true/);
+  assert.match(output, /"mtlsCertificatePinVerified":true/);
+  assert.match(output, /"detachedJwsRs256Verified":true/);
+  assert.match(output, /"protectedScopeBindingVerified":true/);
+  assert.match(output, /"bodyTamperRejected":true/);
+  assert.match(output, /"keyRotationOverlapVerified":true/);
+  assert.match(output, /"expiredOldKeyRejected":true/);
+  assert.match(output, /"revokedKeyRejected":true/);
+  assert.match(output, /"networkCalls":0/);
+  assert.match(output, /"productionActivationEnabled":false/);
 }
 
 async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgresPool>): Promise<void> {
@@ -242,6 +254,7 @@ async function run(): Promise<void> {
     proveRuntimeResilience();
     proveCallbackReplay();
     provePartnerLifecycle();
+    provePartnerTrust();
     await assertRoadEventAbac(postgres);
 
     process.stdout.write(JSON.stringify({
@@ -256,6 +269,7 @@ async function run(): Promise<void> {
       runtimeResilienceVerified: true,
       callbackReplayVerified: true,
       partnerLifecycleVerified: true,
+      partnerTrustVerified: true,
       abacIsolationVerified: true,
       abacDimensions: ['tenant', 'purpose'],
       abacNegativePaths: ['detail', 'list', 'update', 'timeline', 'signal']
