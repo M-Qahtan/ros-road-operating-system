@@ -17,10 +17,15 @@ const CLAIMS: VerifiedOidcClaims = {
   expiresAtEpochSeconds: NOW + 300
 };
 const POLICY: IntegrationPrincipalPolicy = {
-  issuer: 'https://identity.example.test', audience: 'ros-api',
-  allowedClientIds: ['traffic-sandbox'], allowedTenantIds: ['riyadh-pilot'],
-  allowedPurposes: ['TRAFFIC_COORDINATION'], requireMfa: true,
-  maxTokenAgeSeconds: 600, maxClockSkewSeconds: 30
+  issuer: 'https://identity.example.test',
+  audience: 'ros-api',
+  allowedBindings: [
+    { clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION' },
+    { clientId: 'insurance-sandbox', tenantId: 'riyadh-pilot', purpose: 'INSURANCE_COORDINATION' }
+  ],
+  requireMfa: true,
+  maxTokenAgeSeconds: 600,
+  maxClockSkewSeconds: 30
 };
 
 function verifier(claims: VerifiedOidcClaims = CLAIMS): OidcTokenVerifierPort {
@@ -40,13 +45,10 @@ test('development simulation requires explicit actor and access scope headers', 
     tenantId: 'riyadh-pilot',
     purpose: 'road-safety-response'
   });
-  await assert.rejects(
-    resolver.resolve({ 'x-actor-id': ACTOR_ID, 'x-ros-roles': 'OPERATOR' }),
-    /access-scope headers/
-  );
+  await assert.rejects(resolver.resolve({ 'x-actor-id': ACTOR_ID, 'x-ros-roles': 'OPERATOR' }), /access-scope headers/);
 });
 
-test('production denies self-attested headers without a trusted resolver', async () => {
+test('production denies self-attested identity and scope without a trusted resolver', async () => {
   const resolver = createActorResolverForEnvironment({ NODE_ENV: 'production', ROS_AUTH_PROFILE: 'simulation' });
   await assert.rejects(resolver.resolve({
     'x-actor-id': ACTOR_ID,
@@ -57,8 +59,10 @@ test('production denies self-attested headers without a trusted resolver', async
 });
 
 test('trusted OIDC identity supplies authoritative tenant and purpose and ignores attacker headers', async () => {
-  const oidc = createOidcIntegrationActorResolver(verifier(), POLICY, () => NOW);
-  const resolver = createActorResolverForEnvironment({ NODE_ENV: 'production' }, oidc);
+  const resolver = createActorResolverForEnvironment(
+    { NODE_ENV: 'production' },
+    createOidcIntegrationActorResolver(verifier(), POLICY, () => NOW)
+  );
   assert.deepEqual(await resolver.resolve({
     authorization: 'Bearer signed-token',
     'x-actor-id': 'attacker-controlled',
@@ -73,7 +77,16 @@ test('trusted OIDC identity supplies authoritative tenant and purpose and ignore
   });
 });
 
-test('trusted OIDC resolver rejects missing bearer, unauthorized scope, missing MFA and non-UUID subject', async () => {
+test('individually allowed values in the wrong client-purpose binding are rejected', async () => {
+  const crossBound = createOidcIntegrationActorResolver(
+    verifier({ ...CLAIMS, purpose: 'INSURANCE_COORDINATION' }),
+    POLICY,
+    () => NOW
+  );
+  await assert.rejects(crossBound.resolve({ authorization: 'Bearer signed-token' }), /could not be verified/);
+});
+
+test('trusted OIDC resolver rejects missing bearer, unauthorized scope, non-explicit MFA and non-UUID subject', async () => {
   const resolver = createOidcIntegrationActorResolver(verifier(), POLICY, () => NOW);
   await assert.rejects(resolver.resolve({}), /Bearer authorization is required/);
   await assert.rejects(
@@ -82,12 +95,7 @@ test('trusted OIDC resolver rejects missing bearer, unauthorized scope, missing 
     /could not be verified/
   );
   await assert.rejects(
-    createOidcIntegrationActorResolver(verifier({ ...CLAIMS, purpose: 'INSURANCE_COORDINATION' }), POLICY, () => NOW)
-      .resolve({ authorization: 'Bearer signed-token' }),
-    /could not be verified/
-  );
-  await assert.rejects(
-    createOidcIntegrationActorResolver(verifier({ ...CLAIMS, authenticationMethods: ['pwd'] }), POLICY, () => NOW)
+    createOidcIntegrationActorResolver(verifier({ ...CLAIMS, authenticationMethods: ['otp'] }), POLICY, () => NOW)
       .resolve({ authorization: 'Bearer signed-token' }),
     /could not be verified/
   );
