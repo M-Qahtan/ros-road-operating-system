@@ -76,3 +76,15 @@ test('PostgreSQL protocol/schema failure fails readiness closed', async () => {
     }
   });
 });
+
+test('a stalled dependency fails closed before the readiness client deadline', async () => {
+  const never = () => new Promise<void>(() => {});
+  const startedAt = Date.now();
+  const result = await evaluateReadiness({ database: never, redis: async () => {} });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(result.status, 'not_ready');
+  assert.equal(result.checks.database, 'unreachable');
+  assert.equal(result.checks.redis, 'reachable');
+  assert.ok(elapsedMs < 1_800, `readiness took too long to fail closed: ${elapsedMs}ms`);
+});

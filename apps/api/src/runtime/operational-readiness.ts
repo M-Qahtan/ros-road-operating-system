@@ -14,7 +14,10 @@ export interface RuntimeReadinessProbes {
   readonly redis?: () => Promise<void>;
 }
 
-const DEFAULT_PROBE_TIMEOUT_MS = 3_000;
+// Must remain below the caller/readiness-client deadline so dependency loss is
+// reported as an explicit HTTP 503 rather than a client-side timeout. The
+// underlying PostgreSQL/Redis operations retain their own bounded timeouts.
+const DEFAULT_PROBE_TIMEOUT_MS = 1_000;
 
 function nodeEnvironment(environment: NodeJS.ProcessEnv): string {
   return (environment.NODE_ENV ?? 'development').trim().toLowerCase();
