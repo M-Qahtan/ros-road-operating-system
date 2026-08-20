@@ -27,7 +27,12 @@ const NEW_SECRET = 'new-test-only-0123456789abcdef0123456789abcdef';
 
 class MemoryReplayStore implements CallbackReplayStore {
   private readonly claimed = new Set<string>();
-  async claim(binding: CallbackPrincipalBinding, _keyId: string, nonce: string): Promise<boolean> {
+  async claim(
+    binding: CallbackPrincipalBinding,
+    _keyId: string,
+    nonce: string,
+    _expiresAtEpochSeconds: number
+  ): Promise<boolean> {
     const id = JSON.stringify([binding.clientId, binding.tenantId, binding.purpose, nonce]);
     if (this.claimed.has(id)) return false;
     this.claimed.add(id);
@@ -56,7 +61,7 @@ function signedInput(
   overrides: Partial<Omit<VerifyCallbackInput, 'signatureHex'>> = {},
   secret = NEW_SECRET
 ): VerifyCallbackInput {
-  const unsigned = {
+  const unsigned: Omit<VerifyCallbackInput, 'signatureHex'> = {
     binding: BINDING,
     keyId: 'key-new',
     body: '{"status":"accepted"}',
