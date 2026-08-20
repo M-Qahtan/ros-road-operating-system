@@ -9,6 +9,7 @@ import { createOutboxWorkerRuntime } from '../runtime/outbox-worker-runtime.js';
 const OUTBOX_ID = '81111111-1111-4111-8111-111111111111';
 const AGGREGATE_ID = '82222222-2222-4222-8222-222222222222';
 const CORRELATION_ID = '83333333-3333-4333-8333-333333333333';
+const RUNTIME_OUTBOX_SCOPE = { tenantId: 'runtime-proof-tenant', purpose: 'road-safety-response' } as const;
 const ABAC_EVENT_ID = '84444444-4444-4444-8444-444444444444';
 const ABAC_ACTOR_ID = '85555555-5555-4555-8555-555555555555';
 const ABAC_SIGNAL_ID = '86666666-6666-4666-8666-666666666666';
@@ -140,10 +141,17 @@ async function run(): Promise<void> {
       await client.query(
         `INSERT INTO outbox_events (
            id, aggregate_type, aggregate_id, event_type, payload,
-           correlation_id, occurred_at
+           correlation_id, tenant_id, purpose, occurred_at
          ) VALUES ($1::uuid, 'RoadEvent', $2::uuid, 'RoadEventCreated',
-                   $3::jsonb, $4::uuid, now())`,
-        [OUTBOX_ID, AGGREGATE_ID, { source: 'runtime-driver-integration' }, CORRELATION_ID]
+                   $3::jsonb, $4::uuid, $5, $6, now())`,
+        [
+          OUTBOX_ID,
+          AGGREGATE_ID,
+          { source: 'runtime-driver-integration' },
+          CORRELATION_ID,
+          RUNTIME_OUTBOX_SCOPE.tenantId,
+          RUNTIME_OUTBOX_SCOPE.purpose
+        ]
       );
     } finally {
       client.release();
@@ -178,6 +186,8 @@ async function run(): Promise<void> {
     assert.equal(entry?.message.eventId, OUTBOX_ID);
     assert.equal(entry?.message.simulationMode, 'false');
     assert.equal(entry?.message.deliveryMode, 'runtime');
+    assert.equal(entry?.message.tenantId, RUNTIME_OUTBOX_SCOPE.tenantId);
+    assert.equal(entry?.message.purpose, RUNTIME_OUTBOX_SCOPE.purpose);
 
     await assertRoadEventAbac(postgres);
 
@@ -188,6 +198,8 @@ async function run(): Promise<void> {
       redisStreamEntries: entries.length,
       outboxPublished: true,
       runtimeDeliveryMode: entry?.message.deliveryMode,
+      outboxScopeVerified: true,
+      outboxScope: RUNTIME_OUTBOX_SCOPE,
       abacIsolationVerified: true,
       abacDimensions: ['tenant', 'purpose'],
       abacNegativePaths: ['detail', 'list', 'update', 'timeline', 'signal']
