@@ -61,6 +61,7 @@ export interface StagingCloudReviewPackage {
 export interface TerraformPlanAnalysis {
   readonly formatVersion: string;
   readonly terraformVersion: string;
+  readonly applyable: boolean;
   readonly complete: boolean;
   readonly errored: boolean;
   readonly createCount: number;
@@ -114,6 +115,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const GIT_SHA = /^[a-f0-9]{40}$/;
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$/;
 const REGION = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/;
+const TERRAFORM_JSON_FORMAT_V1 = /^1(?:\.\d+)?$/;
 const REQUIRED_EVIDENCE_KINDS: readonly StagingEvidenceKind[] = [
   'BACKUP_RESTORE',
   'FAULT_INJECTION',
@@ -152,12 +154,6 @@ function text(value: unknown, field: string, max = 256): string {
 function token(value: unknown, field: string): string {
   const result = text(value, field, 192);
   if (!TOKEN.test(result)) throw new TypeError(`${field} must be a canonical token`);
-  return result;
-}
-
-function sha256(value: unknown, field: string): string {
-  const result = text(value, field, 64);
-  if (!SHA256.test(result)) throw new TypeError(`${field} must be a lowercase SHA-256 digest`);
   return result;
 }
 
@@ -258,10 +254,12 @@ function parseEvidenceFile(value: unknown, index: number): StagingEvidenceFile {
   if (path.startsWith('/') || path.includes('..') || path.includes('\\')) {
     throw new TypeError(`${field}.path must be a safe relative path`);
   }
+  const digest = text(source.sha256, `${field}.sha256`, 64);
+  if (!SHA256.test(digest)) throw new TypeError(`${field}.sha256 must be a lowercase SHA-256 digest`);
   return Object.freeze({
     kind: enumValue(source.kind, `${field}.kind`, REQUIRED_EVIDENCE_KINDS),
     path,
-    sha256: sha256(source.sha256, `${field}.sha256`),
+    sha256: digest,
     sizeBytes: positiveInteger(source.sizeBytes, `${field}.sizeBytes`)
   });
 }
@@ -315,7 +313,7 @@ export function stagingCloudPackageSha256(value: StagingCloudReviewPackage): str
 }
 
 function actionSummary(changes: unknown, field: string): Omit<TerraformPlanAnalysis,
-  'formatVersion' | 'terraformVersion' | 'complete' | 'errored' | 'sensitiveOutputCount'> {
+  'formatVersion' | 'terraformVersion' | 'applyable' | 'complete' | 'errored' | 'sensitiveOutputCount'> {
   if (!Array.isArray(changes)) throw new TypeError(`${field} must be an array`);
   let createCount = 0;
   let updateCount = 0;
@@ -362,13 +360,15 @@ function actionSummary(changes: unknown, field: string): Omit<TerraformPlanAnaly
   };
 }
 
-function countSensitiveOutputs(value: unknown): number {
+function countSensitivePlannedOutputs(value: unknown): number {
   if (value === undefined) return 0;
-  const outputs = object(value, 'output_changes');
+  const plannedValues = object(value, 'planned_values');
+  if (plannedValues.outputs === undefined) return 0;
+  const outputs = object(plannedValues.outputs, 'planned_values.outputs');
   let count = 0;
   for (const [name, raw] of Object.entries(outputs)) {
-    const output = object(raw, `output_changes.${name}`);
-    if (output.after_sensitive === true) count += 1;
+    const output = object(raw, `planned_values.outputs.${name}`);
+    if (output.sensitive === true) count += 1;
   }
   return count;
 }
@@ -376,23 +376,29 @@ function countSensitiveOutputs(value: unknown): number {
 /**
  * Analyze ephemeral `terraform show -json` output. Callers must not archive or
  * commit the raw JSON because Terraform can expose sensitive values in it.
+ * Terraform JSON format major 1 is supported; unsupported major versions fail closed.
  */
 export function analyzeTerraformShowJson(value: unknown): TerraformPlanAnalysis {
   const source = object(value, 'terraformPlan');
+  const formatVersion = text(source.format_version, 'terraformPlan.format_version', 32);
+  if (!TERRAFORM_JSON_FORMAT_V1.test(formatVersion)) {
+    throw new TypeError(`unsupported Terraform JSON format_version: ${formatVersion}`);
+  }
   const resourceSummary = actionSummary(source.resource_changes ?? [], 'resource_changes');
   const driftSummary = actionSummary(source.resource_drift ?? [], 'resource_drift');
   return Object.freeze({
-    formatVersion: text(source.format_version, 'terraformPlan.format_version', 32),
+    formatVersion,
     terraformVersion: text(source.terraform_version, 'terraformPlan.terraform_version', 64),
-    complete: source.complete === undefined ? true : booleanValue(source.complete, 'terraformPlan.complete'),
-    errored: source.errored === undefined ? false : booleanValue(source.errored, 'terraformPlan.errored'),
+    applyable: booleanValue(source.applyable, 'terraformPlan.applyable'),
+    complete: booleanValue(source.complete, 'terraformPlan.complete'),
+    errored: booleanValue(source.errored, 'terraformPlan.errored'),
     createCount: resourceSummary.createCount,
     updateCount: resourceSummary.updateCount,
     readCount: resourceSummary.readCount,
     noOpCount: resourceSummary.noOpCount,
     deleteCount: resourceSummary.deleteCount + driftSummary.deleteCount,
     unknownActionCount: resourceSummary.unknownActionCount + driftSummary.unknownActionCount,
-    sensitiveOutputCount: countSensitiveOutputs(source.output_changes),
+    sensitiveOutputCount: countSensitivePlannedOutputs(source.planned_values),
     destructiveAddresses: Object.freeze([...resourceSummary.destructiveAddresses, ...driftSummary.destructiveAddresses]),
     unknownActionAddresses: Object.freeze([...resourceSummary.unknownActionAddresses, ...driftSummary.unknownActionAddresses])
   });
@@ -419,13 +425,18 @@ export async function verifyTerraformPlanFile(
     throw new Error('alternate Terraform executable is allowed only in test mode');
   }
 
-  const terraformPlanSha256 = await digestFile(planPath);
+  const beforeSha256 = await digestFile(planPath);
   const { stdout } = await execFileAsync(terraformExecutable, ['show', '-json', planPath], {
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: 16 * 1024 * 1024,
     windowsHide: true
   });
+  const afterSha256 = await digestFile(planPath);
+  if (beforeSha256 !== afterSha256) {
+    throw new Error('Terraform plan changed while it was being analyzed');
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -434,7 +445,7 @@ export async function verifyTerraformPlanFile(
   }
   const terraformPlanAnalysis = analyzeTerraformShowJson(parsed);
   return Object.freeze({
-    terraformPlanSha256,
+    terraformPlanSha256: beforeSha256,
     terraformPlanAnalysis,
     [VERIFIED_TERRAFORM_PLAN]: true as const
   });
@@ -500,7 +511,7 @@ export function evaluateStagingCloudReview(
   const planIntegrityVerified = verificationMatches && SHA256.test(verification.terraformPlanSha256);
   const evidenceIntegrityVerified = verificationMatches;
   const plan = verificationMatches ? verification.terraformPlanAnalysis : null;
-  const planNonDestructiveVerified = plan !== null && plan.deleteCount === 0 && plan.unknownActionCount === 0 && plan.complete && !plan.errored;
+  const planNonDestructiveVerified = plan !== null && plan.applyable && plan.deleteCount === 0 && plan.unknownActionCount === 0 && plan.complete && !plan.errored;
 
   const blockingReasons: string[] = [];
   if (!candidateHeadVerified) blockingReasons.push('candidate head is not independently verified');
@@ -509,11 +520,12 @@ export function evaluateStagingCloudReview(
   if (plan === null) {
     blockingReasons.push('Terraform plan semantics are not independently analyzed');
   } else {
+    if (!plan.applyable) blockingReasons.push('Terraform plan is not applyable');
     if (!plan.complete) blockingReasons.push('Terraform plan is incomplete/deferred');
     if (plan.errored) blockingReasons.push('Terraform plan reports an error');
     if (plan.deleteCount > 0) blockingReasons.push(`Terraform plan contains destructive/delete actions: ${plan.destructiveAddresses.join(', ')}`);
     if (plan.unknownActionCount > 0) blockingReasons.push(`Terraform plan contains unknown actions: ${plan.unknownActionAddresses.join(', ')}`);
-    if (plan.sensitiveOutputCount > 0) blockingReasons.push('Terraform plan declares sensitive outputs; remove them from the review surface');
+    if (plan.sensitiveOutputCount > 0) blockingReasons.push('Terraform planned values expose sensitive outputs; remove them from the review surface');
   }
 
   const evidenceKinds = new Set(verificationMatches ? verification.evidenceKinds : []);
