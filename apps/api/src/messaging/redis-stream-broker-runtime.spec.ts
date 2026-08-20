@@ -19,11 +19,13 @@ const MESSAGE: OutboxMessage = {
   eventType: 'RoadEventCreated',
   payload: { severity: 'S2' },
   correlationId: '33333333-3333-4333-8333-333333333333',
+  tenantId: 'riyadh-pilot',
+  purpose: 'road-safety-response',
   occurredAt: new Date('2026-08-19T20:00:00.000Z'),
   retryCount: 0
 };
 
-test('runtime broker publishes explicit non-simulation delivery metadata', async () => {
+test('runtime broker publishes explicit non-simulation delivery metadata and trusted scope', async () => {
   const client = new CaptureRedisStreamClient();
   const broker = new RedisStreamEventBroker(client, 'ros:integration-events', false);
   await broker.publish(MESSAGE);
@@ -32,6 +34,8 @@ test('runtime broker publishes explicit non-simulation delivery metadata', async
   assert.equal(client.calls[0]!.stream, 'ros:integration-events');
   assert.equal(client.calls[0]!.fields.simulationMode, 'false');
   assert.equal(client.calls[0]!.fields.deliveryMode, 'runtime');
+  assert.equal(client.calls[0]!.fields.tenantId, MESSAGE.tenantId);
+  assert.equal(client.calls[0]!.fields.purpose, MESSAGE.purpose);
 });
 
 test('default broker remains simulation-only for deterministic existing harnesses', async () => {
@@ -41,4 +45,16 @@ test('default broker remains simulation-only for deterministic existing harnesse
 
   assert.equal(client.calls[0]!.fields.simulationMode, 'true');
   assert.equal(client.calls[0]!.fields.deliveryMode, 'simulation');
+});
+
+test('broker fails closed for a RoadEvent without trusted tenant and purpose', async () => {
+  const client = new CaptureRedisStreamClient();
+  const broker = new RedisStreamEventBroker(client, 'ros:integration-events', false);
+  const { tenantId: _tenantId, purpose: _purpose, ...unscoped } = MESSAGE;
+
+  await assert.rejects(
+    () => broker.publish(unscoped),
+    /missing trusted access scope/
+  );
+  assert.equal(client.calls.length, 0);
 });
