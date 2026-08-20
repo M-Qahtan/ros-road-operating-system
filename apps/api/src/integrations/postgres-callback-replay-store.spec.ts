@@ -20,31 +20,55 @@ class SingleClientPool implements PostgresPool {
 }
 
 const binding = { clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION' as const };
+const contractId = 'traffic-status-v1';
 
-test('claims exact principal nonce with key id and immutable replay scope', async () => {
+test('claims exact principal nonce with signed contract and key audit data', async () => {
   const client = new ScriptedClient({ rows: [{ nonce: 'nonce-abcdefghijklmnop' }], rowCount: 1 });
   const store = new PostgresCallbackReplayStore(new SingleClientPool(client));
-  assert.equal(await store.claim(binding, 'key-2026-08', 'nonce-abcdefghijklmnop', 1_800_000_300), true);
+  assert.equal(
+    await store.claim(binding, contractId, 'key-2026-08', 'nonce-abcdefghijklmnop', 1_800_000_300),
+    true
+  );
+  assert.match(client.queries[0]!.text, /contract_id/);
   assert.match(client.queries[0]!.text, /ON CONFLICT \(client_id, tenant_id, purpose, nonce\) DO NOTHING/);
   assert.deepEqual(client.queries[0]!.values, [
     'traffic-sandbox', 'riyadh-pilot', 'TRAFFIC_COORDINATION',
-    'nonce-abcdefghijklmnop', 'key-2026-08', 1_800_000_300
+    'nonce-abcdefghijklmnop', contractId, 'key-2026-08', 1_800_000_300
   ]);
   assert.equal(client.released, true);
 });
 
-test('returns false when the same principal nonce was already claimed', async () => {
+test('returns false when the same principal nonce was already claimed under another contract or key', async () => {
   const client = new ScriptedClient({ rows: [], rowCount: 0 });
   const store = new PostgresCallbackReplayStore(new SingleClientPool(client));
-  assert.equal(await store.claim(binding, 'key-rotated', 'nonce-abcdefghijklmnop', 1_800_000_300), false);
+  assert.equal(
+    await store.claim(binding, 'traffic-closure-v1', 'key-rotated', 'nonce-abcdefghijklmnop', 1_800_000_300),
+    false
+  );
 });
 
-test('rejects malformed binding key nonce and expiry before touching Postgres', async () => {
+test('rejects malformed binding contract key nonce and expiry before touching Postgres', async () => {
   const client = new ScriptedClient({ rows: [], rowCount: 0 });
   const store = new PostgresCallbackReplayStore(new SingleClientPool(client));
-  await assert.rejects(store.claim({ ...binding, clientId: '' }, 'key', 'nonce-abcdefghijklmnop', 1_800_000_300), /clientId is invalid/);
-  await assert.rejects(store.claim(binding, '', 'nonce-abcdefghijklmnop', 1_800_000_300), /keyId is invalid/);
-  await assert.rejects(store.claim(binding, 'key', 'short', 1_800_000_300), /between 16 and 256/);
-  await assert.rejects(store.claim(binding, 'key', 'nonce-abcdefghijklmnop', 0), /expiry must be a positive/);
+  await assert.rejects(
+    store.claim({ ...binding, clientId: '' }, contractId, 'key', 'nonce-abcdefghijklmnop', 1_800_000_300),
+    /clientId is invalid/
+  );
+  await assert.rejects(
+    store.claim(binding, '', 'key', 'nonce-abcdefghijklmnop', 1_800_000_300),
+    /contractId is invalid/
+  );
+  await assert.rejects(
+    store.claim(binding, contractId, '', 'nonce-abcdefghijklmnop', 1_800_000_300),
+    /keyId is invalid/
+  );
+  await assert.rejects(
+    store.claim(binding, contractId, 'key', 'short', 1_800_000_300),
+    /between 16 and 256/
+  );
+  await assert.rejects(
+    store.claim(binding, contractId, 'key', 'nonce-abcdefghijklmnop', 0),
+    /expiry must be a positive/
+  );
   assert.equal(client.queries.length, 0);
 });
