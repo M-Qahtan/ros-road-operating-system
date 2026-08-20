@@ -87,13 +87,14 @@ jobs:
         run: bash scripts/run-postgres-integration.sh
       - name: Build API and dependencies
         run: pnpm --filter @ros/api... build
-      - name: Prove PostgreSQL runtime delivery and RoadEvent ABAC isolation
+      - name: Prove PostgreSQL runtime delivery, outbox scope propagation and RoadEvent ABAC isolation
         shell: bash
         run: |
           set -euo pipefail
           node apps/api/dist/e2e/run-runtime-driver-integration.js 2>&1 | tee runtime-driver-integration.log
           grep -q '"status":"PASS"' runtime-driver-integration.log
           grep -q '"runtimeDeliveryMode":"runtime"' runtime-driver-integration.log
+          grep -q '"outboxScopeVerified":true' runtime-driver-integration.log
           grep -q '"abacIsolationVerified":true' runtime-driver-integration.log
       - name: Write runtime driver evidence manifest
         if: always()
