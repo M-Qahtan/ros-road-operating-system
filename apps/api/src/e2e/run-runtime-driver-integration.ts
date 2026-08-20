@@ -45,6 +45,7 @@ function proveRuntimeResilience(): void {
   assert.match(output, /"workerRestartRecoveryVerified":true/);
   assert.match(output, /"activeLeaseFencingVerified":true/);
   assert.match(output, /"crashReservationFailClosedVerified":true/);
+  assert.match(output, /"committedWithoutReplayFailClosedVerified":true/);
   assert.match(output, /"reconciliationAlertVerified":true/);
   assert.match(output, /"completedReplaySurvivesRestart":true/);
   assert.match(output, /"exactFenceReconciliationVerified":true/);
