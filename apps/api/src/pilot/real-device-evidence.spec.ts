@@ -10,7 +10,62 @@ const HEAD = '2184bad8d076604269fbf74a5e5e4d8d64730680';
 const BUILD = 'a'.repeat(64);
 const FILE_SHA = 'b'.repeat(64);
 
-function evidenceFile(name: string) {
+type EvidenceFileFixture = {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+};
+
+type ScenarioFixture = {
+  caseId: string;
+  kind: string;
+  outcome: string;
+  duplicateLogicalActionsObserved: number;
+  staleUnsafeActionsObserved: number;
+  privacyDataMinimized: boolean;
+  evidenceFiles: EvidenceFileFixture[];
+};
+
+type SessionFixture = {
+  sessionId: string;
+  candidateHeadSha: string;
+  environment: string;
+  device: {
+    platform: 'ANDROID' | 'IOS';
+    model: string;
+    osVersion: string;
+    appBuildSha256: string;
+    locale: string;
+    screenReader: 'TALKBACK' | 'VOICEOVER';
+  };
+  startedAt: string;
+  completedAt: string;
+  scenarios: ScenarioFixture[];
+};
+
+type BundleFixture = {
+  schema: string;
+  sessions: SessionFixture[];
+};
+
+function required<T>(value: T | undefined, label: string): T {
+  if (value === undefined) throw new Error(`test fixture missing ${label}`);
+  return value;
+}
+
+function sessionAt(bundle: BundleFixture, index: number): SessionFixture {
+  return required(bundle.sessions[index], `sessions[${index}]`);
+}
+
+function scenarioAt(session: SessionFixture, index: number): ScenarioFixture {
+  return required(session.scenarios[index], `scenario[${index}]`);
+}
+
+function evidenceAt(scenario: ScenarioFixture, index: number): EvidenceFileFixture {
+  return required(scenario.evidenceFiles[index], `evidenceFiles[${index}]`);
+}
+
+function evidenceFile(name: string): EvidenceFileFixture {
   return {
     path: `field/${name}.json`,
     sha256: FILE_SHA,
@@ -18,7 +73,7 @@ function evidenceFile(name: string) {
   };
 }
 
-function scenario(caseId: string, kind: string, overrides: Record<string, unknown> = {}) {
+function scenario(caseId: string, kind: string, overrides: Partial<ScenarioFixture> = {}): ScenarioFixture {
   return {
     caseId,
     kind,
@@ -35,9 +90,9 @@ function session(
   sessionId: string,
   platform: 'ANDROID' | 'IOS',
   screenReader: 'TALKBACK' | 'VOICEOVER',
-  scenarios: unknown[],
-  overrides: Record<string, unknown> = {}
-) {
+  scenarios: ScenarioFixture[],
+  overrides: Partial<SessionFixture> = {}
+): SessionFixture {
   return {
     sessionId,
     candidateHeadSha: HEAD,
@@ -57,7 +112,7 @@ function session(
   };
 }
 
-function completeBundle() {
+function completeBundle(): BundleFixture {
   return {
     schema: 'ros-real-device-evidence/v1',
     sessions: [
@@ -94,7 +149,7 @@ test('complete Android+iOS controlled-field evidence passes without authorizing 
 
 test('missing iOS critical-flow coverage remains NO_GO', () => {
   const bundle = completeBundle();
-  bundle.sessions[1].scenarios = [scenario('ios-voiceover', 'SCREEN_READER')];
+  sessionAt(bundle, 1).scenarios = [scenario('ios-voiceover', 'SCREEN_READER')];
   const result = evaluateRealDeviceEvidence(bundle);
   assert.equal(result.status, 'NO_GO');
   assert.equal(result.representativeRealDeviceCriticalFlowsPassed, false);
@@ -103,7 +158,7 @@ test('missing iOS critical-flow coverage remains NO_GO', () => {
 
 test('TalkBack and VoiceOver are both required for screen-reader completion', () => {
   const bundle = completeBundle();
-  bundle.sessions[1].scenarios = [scenario('ios-critical', 'CRITICAL_FLOW')];
+  sessionAt(bundle, 1).scenarios = [scenario('ios-critical', 'CRITICAL_FLOW')];
   const result = evaluateRealDeviceEvidence(bundle);
   assert.equal(result.status, 'NO_GO');
   assert.equal(result.screenReaderCriticalFlowsPassed, false);
@@ -112,7 +167,7 @@ test('TalkBack and VoiceOver are both required for screen-reader completion', ()
 
 test('duplicate logical action is a hard evidence failure', () => {
   const bundle = completeBundle();
-  bundle.sessions[0].scenarios[0] = scenario('android-critical', 'CRITICAL_FLOW', {
+  sessionAt(bundle, 0).scenarios[0] = scenario('android-critical', 'CRITICAL_FLOW', {
     duplicateLogicalActionsObserved: 1
   });
   const result = evaluateRealDeviceEvidence(bundle);
@@ -123,7 +178,7 @@ test('duplicate logical action is a hard evidence failure', () => {
 
 test('unsafe stale-state action is a hard evidence failure', () => {
   const bundle = completeBundle();
-  bundle.sessions[0].scenarios[2] = scenario('android-network', 'NETWORK_LOSS', {
+  sessionAt(bundle, 0).scenarios[2] = scenario('android-network', 'NETWORK_LOSS', {
     staleUnsafeActionsObserved: 1
   });
   const result = evaluateRealDeviceEvidence(bundle);
@@ -134,13 +189,13 @@ test('unsafe stale-state action is a hard evidence failure', () => {
 
 test('failed scenario and data-minimization violation remain NO_GO', () => {
   const failed = completeBundle();
-  failed.sessions[0].scenarios[1] = scenario('android-gps', 'GPS_DEGRADATION', { outcome: 'FAIL' });
+  sessionAt(failed, 0).scenarios[1] = scenario('android-gps', 'GPS_DEGRADATION', { outcome: 'FAIL' });
   const failedResult = evaluateRealDeviceEvidence(failed);
   assert.equal(failedResult.status, 'NO_GO');
   assert.match(failedResult.blockingReasons.join(' | '), /did not PASS/);
 
   const privacy = completeBundle();
-  privacy.sessions[0].scenarios[1] = scenario('android-gps', 'GPS_DEGRADATION', { privacyDataMinimized: false });
+  sessionAt(privacy, 0).scenarios[1] = scenario('android-gps', 'GPS_DEGRADATION', { privacyDataMinimized: false });
   const privacyResult = evaluateRealDeviceEvidence(privacy);
   assert.equal(privacyResult.status, 'NO_GO');
   assert.match(privacyResult.blockingReasons.join(' | '), /data minimization/);
@@ -148,34 +203,34 @@ test('failed scenario and data-minimization violation remain NO_GO', () => {
 
 test('duplicate session IDs, duplicate case IDs and mixed candidate heads are rejected', () => {
   const duplicateSession = completeBundle();
-  duplicateSession.sessions[1].sessionId = duplicateSession.sessions[0].sessionId;
+  sessionAt(duplicateSession, 1).sessionId = sessionAt(duplicateSession, 0).sessionId;
   assert.throws(() => parseRealDeviceEvidenceBundle(duplicateSession), /duplicate sessionId/);
 
   const duplicateCase = completeBundle();
-  duplicateCase.sessions[0].scenarios.push(scenario('android-critical', 'NETWORK_LOSS'));
+  sessionAt(duplicateCase, 0).scenarios.push(scenario('android-critical', 'NETWORK_LOSS'));
   assert.throws(() => parseRealDeviceEvidenceBundle(duplicateCase), /duplicate caseId/);
 
   const mixedHead = completeBundle();
-  mixedHead.sessions[1].candidateHeadSha = 'c'.repeat(40);
+  sessionAt(mixedHead, 1).candidateHeadSha = 'c'.repeat(40);
   assert.throws(() => parseRealDeviceEvidenceBundle(mixedHead), /same candidate head/);
 });
 
 test('unsafe evidence path, malformed digest and platform/screen-reader mismatch are rejected', () => {
   const unsafePath = completeBundle();
-  unsafePath.sessions[0].scenarios[0].evidenceFiles[0].path = '../escape.json';
+  evidenceAt(scenarioAt(sessionAt(unsafePath, 0), 0), 0).path = '../escape.json';
   assert.throws(() => parseRealDeviceEvidenceBundle(unsafePath), /safe relative evidence path/);
 
   const badDigest = completeBundle();
-  badDigest.sessions[0].scenarios[0].evidenceFiles[0].sha256 = 'not-a-digest';
+  evidenceAt(scenarioAt(sessionAt(badDigest, 0), 0), 0).sha256 = 'not-a-digest';
   assert.throws(() => parseRealDeviceEvidenceBundle(badDigest), /SHA-256/);
 
   const wrongReader = completeBundle();
-  wrongReader.sessions[0].device.screenReader = 'VOICEOVER' as 'TALKBACK';
+  sessionAt(wrongReader, 0).device.screenReader = 'VOICEOVER';
   assert.throws(() => parseRealDeviceEvidenceBundle(wrongReader), /invalid for Android/);
 });
 
 test('unknown fields are rejected rather than silently ignored', () => {
-  const bundle = completeBundle() as ReturnType<typeof completeBundle> & { selfAttestedApproval?: boolean };
+  const bundle = completeBundle() as BundleFixture & { selfAttestedApproval?: boolean };
   bundle.selfAttestedApproval = true;
   assert.throws(() => parseRealDeviceEvidenceBundle(bundle), /is not allowed/);
 });
