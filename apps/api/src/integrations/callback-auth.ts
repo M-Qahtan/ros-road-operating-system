@@ -13,10 +13,17 @@ export interface CallbackReplayStore {
   claim(profileId: string, nonce: string, expiresAtEpochSeconds: number): Promise<boolean>;
 }
 
-export interface VerifyCallbackInput {
-  /** Server-selected integration profile. Never derive this from callback request data. */
+/**
+ * Trusted integration profile selected by ROS routing/configuration before request verification.
+ * Never construct this object from callback request headers, query parameters or body fields.
+ */
+export interface TrustedCallbackProfile {
   readonly profileId: string;
-  /** Exact raw request body bytes decoded as UTF-8; do not parse/re-serialize before verification. */
+  readonly secret: string;
+}
+
+export interface VerifyCallbackInput {
+  /** Exact raw request body decoded as UTF-8; do not parse/re-serialize before verification. */
   readonly body: string;
   readonly timestampEpochSeconds: number;
   readonly nonce: string;
@@ -114,20 +121,20 @@ function canonicalSignedMaterial(
 }
 
 export function computeCallbackSignatureHex(
-  secret: string,
-  profileId: string,
+  profile: TrustedCallbackProfile,
   body: string,
   timestampEpochSeconds: number,
   nonce: string
 ): string {
-  return createHmac('sha256', requireSecret(secret))
+  const profileId = requireProfileId(profile.profileId);
+  return createHmac('sha256', requireSecret(profile.secret))
     .update(canonicalSignedMaterial(profileId, body, timestampEpochSeconds, nonce), 'utf8')
     .digest('hex');
 }
 
 export async function verifyCallbackHmac(
   input: VerifyCallbackInput,
-  secret: string,
+  profile: TrustedCallbackProfile,
   replayStore: CallbackReplayStore,
   options: VerifyCallbackOptions = {}
 ): Promise<void> {
@@ -141,7 +148,7 @@ export async function verifyCallbackHmac(
 
   if (!Number.isSafeInteger(now) || now <= 0) throw new CallbackAuthenticationError('Verifier clock is invalid');
   const timestamp = requireTimestamp(input.timestampEpochSeconds);
-  const profileId = requireProfileId(input.profileId);
+  const profileId = requireProfileId(profile.profileId);
   const nonce = requireNonce(input.nonce);
   const body = requireBody(input.body);
 
@@ -149,7 +156,7 @@ export async function verifyCallbackHmac(
   if (age > maxAge) throw new CallbackAuthenticationError('Callback timestamp is stale');
   if (age < -maxFutureSkew) throw new CallbackAuthenticationError('Callback timestamp is too far in the future');
 
-  const expected = normalizeHex(computeCallbackSignatureHex(secret, profileId, body, timestamp, nonce));
+  const expected = normalizeHex(computeCallbackSignatureHex(profile, body, timestamp, nonce));
   const supplied = normalizeHex(input.signatureHex);
   if (!timingSafeEqual(expected, supplied)) {
     throw new CallbackAuthenticationError('Callback signature verification failed');
