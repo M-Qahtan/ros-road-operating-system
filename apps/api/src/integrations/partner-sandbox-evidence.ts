@@ -22,6 +22,12 @@ export interface PartnerSandboxObservedProfile {
   readonly jwsKid: string;
 }
 
+/**
+ * Assertions emitted by the sandbox execution package. These values are intake
+ * claims, not independently derived semantic proof. The verifier authenticates
+ * the package context and bytes; safety/security/privacy/operations reviewers
+ * must inspect the receipts before accepting the asserted behavior.
+ */
 export interface PartnerSandboxEvidenceSummary {
   readonly networkCalls: number;
   readonly exactlyOneLogicalActionVerified: boolean;
@@ -67,15 +73,17 @@ export interface PartnerSandboxExpectedContext {
 }
 
 export interface PartnerSandboxEvidenceDecision {
-  readonly status: 'NO_GO' | 'VERIFIED_FOR_EXTERNAL_REVIEW';
+  readonly status: 'NO_GO' | 'PACKAGE_READY_FOR_EXTERNAL_REVIEW';
   readonly activationAuthorized: false;
+  readonly semanticClaimsIndependentlyVerified: false;
+  readonly summaryClaimsRequireExternalReview: true;
   readonly bundleSha256: string;
   readonly candidateHeadVerified: boolean;
   readonly trustedProfileBindingVerified: boolean;
   readonly approvedWindowVerified: boolean;
   readonly evidenceIntegrityVerified: boolean;
   readonly receiptFileCount: number;
-  readonly networkCalls: number;
+  readonly networkCallsClaimed: number;
   readonly blockingReasons: readonly string[];
 }
 
@@ -95,6 +103,14 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const GIT_SHA = /^[a-f0-9]{40}$/;
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
+const PARTNERS = ['EMERGENCY', 'TRAFFIC', 'ROAD_OPERATOR', 'INSURANCE', 'TOWING', 'ROUTING'] as const;
+const PURPOSES = [
+  'EMERGENCY_COORDINATION',
+  'TRAFFIC_COORDINATION',
+  'INSURANCE_COORDINATION',
+  'TOWING_COORDINATION',
+  'ROUTE_COORDINATION'
+] as const;
 const PURPOSE_BY_PARTNER: Readonly<Record<IntegrationPartner, IntegrationPurpose>> = {
   EMERGENCY: 'EMERGENCY_COORDINATION',
   TRAFFIC: 'TRAFFIC_COORDINATION',
@@ -188,6 +204,70 @@ function canonicalSandboxEndpoint(value: unknown, field: string): string {
   return parsed.toString().replace(/\/$/, '');
 }
 
+function parseCredentialPair(value: unknown, index: number): {
+  readonly certificateFingerprintSha256: string;
+  readonly jwsKid: string;
+} {
+  const field = `expected.allowedCredentialPairs[${index}]`;
+  const source = record(value, field);
+  exactKeys(source, field, ['certificateFingerprintSha256', 'jwsKid']);
+  return Object.freeze({
+    certificateFingerprintSha256: sha256(source.certificateFingerprintSha256, `${field}.certificateFingerprintSha256`),
+    jwsKid: token(source.jwsKid, `${field}.jwsKid`)
+  });
+}
+
+export function parsePartnerSandboxExpectedContext(value: unknown): PartnerSandboxExpectedContext {
+  const source = record(value, 'expected');
+  exactKeys(source, 'expected', [
+    'expectedCandidateHeadSha',
+    'profileId',
+    'partner',
+    'tenantId',
+    'purpose',
+    'sandboxEndpointBaseUrl',
+    'allowedCredentialPairs',
+    'approvalReference',
+    'approvedFrom',
+    'approvedUntil'
+  ]);
+
+  const partner = enumValue(source.partner, 'expected.partner', PARTNERS);
+  const purpose = enumValue(source.purpose, 'expected.purpose', PURPOSES);
+  if (purpose !== PURPOSE_BY_PARTNER[partner]) {
+    throw new TypeError(`expected context ${partner} requires purpose ${PURPOSE_BY_PARTNER[partner]}`);
+  }
+  if (!Array.isArray(source.allowedCredentialPairs) || source.allowedCredentialPairs.length < 1 || source.allowedCredentialPairs.length > 8) {
+    throw new TypeError('expected.allowedCredentialPairs must contain 1..8 pairs');
+  }
+  const allowedCredentialPairs = source.allowedCredentialPairs.map(parseCredentialPair);
+  const pairKeys = new Set<string>();
+  for (const pair of allowedCredentialPairs) {
+    const pairKey = `${pair.certificateFingerprintSha256}:${pair.jwsKid}`;
+    if (pairKeys.has(pairKey)) throw new TypeError('expected.allowedCredentialPairs contains a duplicate pair');
+    pairKeys.add(pairKey);
+  }
+
+  const approvedFrom = timestamp(source.approvedFrom, 'expected.approvedFrom');
+  const approvedUntil = timestamp(source.approvedUntil, 'expected.approvedUntil');
+  if (Date.parse(approvedUntil) <= Date.parse(approvedFrom)) {
+    throw new TypeError('expected approval window must end after it starts');
+  }
+
+  return Object.freeze({
+    expectedCandidateHeadSha: gitSha(source.expectedCandidateHeadSha, 'expected.expectedCandidateHeadSha'),
+    profileId: token(source.profileId, 'expected.profileId'),
+    partner,
+    tenantId: canonicalText(source.tenantId, 'expected.tenantId', 128),
+    purpose,
+    sandboxEndpointBaseUrl: canonicalSandboxEndpoint(source.sandboxEndpointBaseUrl, 'expected.sandboxEndpointBaseUrl'),
+    allowedCredentialPairs: Object.freeze(allowedCredentialPairs),
+    approvalReference: token(source.approvalReference, 'expected.approvalReference'),
+    approvedFrom,
+    approvedUntil
+  });
+}
+
 function parseFile(value: unknown, index: number): PartnerSandboxEvidenceFile {
   const field = `receiptFiles[${index}]`;
   const source = record(value, field);
@@ -213,16 +293,8 @@ function parseObservedProfile(value: unknown): PartnerSandboxObservedProfile {
     'certificateFingerprintSha256',
     'jwsKid'
   ]);
-  const partner = enumValue(source.partner, 'observedProfile.partner', [
-    'EMERGENCY', 'TRAFFIC', 'ROAD_OPERATOR', 'INSURANCE', 'TOWING', 'ROUTING'
-  ] as const);
-  const purpose = enumValue(source.purpose, 'observedProfile.purpose', [
-    'EMERGENCY_COORDINATION',
-    'TRAFFIC_COORDINATION',
-    'INSURANCE_COORDINATION',
-    'TOWING_COORDINATION',
-    'ROUTE_COORDINATION'
-  ] as const);
+  const partner = enumValue(source.partner, 'observedProfile.partner', PARTNERS);
+  const purpose = enumValue(source.purpose, 'observedProfile.purpose', PURPOSES);
   if (purpose !== PURPOSE_BY_PARTNER[partner]) {
     throw new TypeError(`${partner} requires purpose ${PURPOSE_BY_PARTNER[partner]}`);
   }
@@ -233,10 +305,7 @@ function parseObservedProfile(value: unknown): PartnerSandboxObservedProfile {
     purpose,
     environment: enumValue(source.environment, 'observedProfile.environment', ['SANDBOX'] as const),
     sandboxEndpointBaseUrl: canonicalSandboxEndpoint(source.sandboxEndpointBaseUrl, 'observedProfile.sandboxEndpointBaseUrl'),
-    certificateFingerprintSha256: sha256(
-      source.certificateFingerprintSha256,
-      'observedProfile.certificateFingerprintSha256'
-    ),
+    certificateFingerprintSha256: sha256(source.certificateFingerprintSha256, 'observedProfile.certificateFingerprintSha256'),
     jwsKid: token(source.jwsKid, 'observedProfile.jwsKid')
   });
 }
@@ -263,19 +332,13 @@ function parseSummary(value: unknown): PartnerSandboxEvidenceSummary {
   return Object.freeze({
     networkCalls: nonNegativeInteger(source.networkCalls, 'summary.networkCalls'),
     exactlyOneLogicalActionVerified: booleanValue(source.exactlyOneLogicalActionVerified, 'summary.exactlyOneLogicalActionVerified'),
-    duplicateLogicalActionsObserved: nonNegativeInteger(
-      source.duplicateLogicalActionsObserved,
-      'summary.duplicateLogicalActionsObserved'
-    ),
+    duplicateLogicalActionsObserved: nonNegativeInteger(source.duplicateLogicalActionsObserved, 'summary.duplicateLogicalActionsObserved'),
     callbackAuthenticationVerified: booleanValue(source.callbackAuthenticationVerified, 'summary.callbackAuthenticationVerified'),
     callbackReplayRejected: booleanValue(source.callbackReplayRejected, 'summary.callbackReplayRejected'),
     delayedCallbackRejected: booleanValue(source.delayedCallbackRejected, 'summary.delayedCallbackRejected'),
     outageRecoveryVerified: booleanValue(source.outageRecoveryVerified, 'summary.outageRecoveryVerified'),
     statusCancelSemanticsVerified: booleanValue(source.statusCancelSemanticsVerified, 'summary.statusCancelSemanticsVerified'),
-    minimumNecessaryProjectionVerified: booleanValue(
-      source.minimumNecessaryProjectionVerified,
-      'summary.minimumNecessaryProjectionVerified'
-    ),
+    minimumNecessaryProjectionVerified: booleanValue(source.minimumNecessaryProjectionVerified, 'summary.minimumNecessaryProjectionVerified'),
     dataMinimized: booleanValue(source.dataMinimized, 'summary.dataMinimized'),
     operationalAuthorityGranted: booleanValue(source.operationalAuthorityGranted, 'summary.operationalAuthorityGranted'),
     productionActivationEnabled: booleanValue(source.productionActivationEnabled, 'summary.productionActivationEnabled'),
@@ -332,40 +395,6 @@ export function partnerSandboxEvidenceBundleSha256(bundle: PartnerSandboxEvidenc
   return createHash('sha256').update(canonicalize(bundle), 'utf8').digest('hex');
 }
 
-function normalizeExpectedContext(input: PartnerSandboxExpectedContext): PartnerSandboxExpectedContext {
-  const partner = input.partner;
-  if (input.purpose !== PURPOSE_BY_PARTNER[partner]) {
-    throw new TypeError(`expected context ${partner} requires purpose ${PURPOSE_BY_PARTNER[partner]}`);
-  }
-  if (input.allowedCredentialPairs.length < 1 || input.allowedCredentialPairs.length > 8) {
-    throw new TypeError('expected context must contain 1..8 allowed credential pairs');
-  }
-  const pairs = input.allowedCredentialPairs.map((pair) => Object.freeze({
-    certificateFingerprintSha256: sha256(
-      pair.certificateFingerprintSha256,
-      'expected.allowedCredentialPairs.certificateFingerprintSha256'
-    ),
-    jwsKid: token(pair.jwsKid, 'expected.allowedCredentialPairs.jwsKid')
-  }));
-  const approvedFrom = timestamp(input.approvedFrom, 'expected.approvedFrom');
-  const approvedUntil = timestamp(input.approvedUntil, 'expected.approvedUntil');
-  if (Date.parse(approvedUntil) <= Date.parse(approvedFrom)) {
-    throw new TypeError('expected approval window must end after it starts');
-  }
-  return Object.freeze({
-    expectedCandidateHeadSha: gitSha(input.expectedCandidateHeadSha, 'expected.expectedCandidateHeadSha'),
-    profileId: token(input.profileId, 'expected.profileId'),
-    partner,
-    tenantId: canonicalText(input.tenantId, 'expected.tenantId', 128),
-    purpose: input.purpose,
-    sandboxEndpointBaseUrl: canonicalSandboxEndpoint(input.sandboxEndpointBaseUrl, 'expected.sandboxEndpointBaseUrl'),
-    allowedCredentialPairs: Object.freeze(pairs),
-    approvalReference: token(input.approvalReference, 'expected.approvalReference'),
-    approvedFrom,
-    approvedUntil
-  });
-}
-
 function sameProfile(bundle: PartnerSandboxEvidenceBundle, expected: PartnerSandboxExpectedContext): boolean {
   const observed = bundle.observedProfile;
   return observed.profileId === expected.profileId &&
@@ -374,8 +403,7 @@ function sameProfile(bundle: PartnerSandboxEvidenceBundle, expected: PartnerSand
     observed.purpose === expected.purpose &&
     observed.sandboxEndpointBaseUrl === expected.sandboxEndpointBaseUrl &&
     expected.allowedCredentialPairs.some((pair) =>
-      pair.certificateFingerprintSha256 === observed.certificateFingerprintSha256 &&
-      pair.jwsKid === observed.jwsKid
+      pair.certificateFingerprintSha256 === observed.certificateFingerprintSha256 && pair.jwsKid === observed.jwsKid
     );
 }
 
@@ -390,15 +418,12 @@ export async function verifyPartnerSandboxEvidence(
   evidenceRoot: string,
   expectedInput: PartnerSandboxExpectedContext
 ): Promise<VerifiedPartnerSandboxEvidence> {
-  const expected = normalizeExpectedContext(expectedInput);
+  const expected = parsePartnerSandboxExpectedContext(expectedInput);
   if (bundle.candidateHeadSha !== expected.expectedCandidateHeadSha) {
     throw new Error(`candidate head ${bundle.candidateHeadSha} does not match trusted expected head`);
   }
   if (!sameProfile(bundle, expected)) throw new Error('observed sandbox profile does not match trusted expected profile');
-  if (
-    Date.parse(bundle.startedAt) < Date.parse(expected.approvedFrom) ||
-    Date.parse(bundle.completedAt) > Date.parse(expected.approvedUntil)
-  ) {
+  if (Date.parse(bundle.startedAt) < Date.parse(expected.approvedFrom) || Date.parse(bundle.completedAt) > Date.parse(expected.approvedUntil)) {
     throw new Error('sandbox evidence session is outside the approved window');
   }
 
@@ -449,31 +474,33 @@ export function evaluatePartnerSandboxEvidence(
   if (!evidenceIntegrityVerified) blockingReasons.push('sandbox receipt bytes are not independently verified');
 
   const summary = bundle.summary;
-  if (summary.networkCalls < 1) blockingReasons.push('no actual approved sandbox network call is evidenced');
-  if (!summary.exactlyOneLogicalActionVerified) blockingReasons.push('exactly-one logical action was not verified');
-  if (summary.duplicateLogicalActionsObserved > 0) blockingReasons.push('duplicate logical actions were observed');
-  if (!summary.callbackAuthenticationVerified) blockingReasons.push('callback authentication was not verified');
-  if (!summary.callbackReplayRejected) blockingReasons.push('callback replay rejection was not verified');
-  if (!summary.delayedCallbackRejected) blockingReasons.push('delayed callback rejection was not verified');
-  if (!summary.outageRecoveryVerified) blockingReasons.push('sandbox outage/recovery behavior was not verified');
-  if (!summary.statusCancelSemanticsVerified) blockingReasons.push('status/cancel semantics were not verified');
-  if (!summary.minimumNecessaryProjectionVerified) blockingReasons.push('minimum-necessary projection was not verified');
-  if (!summary.dataMinimized) blockingReasons.push('sandbox evidence violates data minimization');
-  if (summary.operationalAuthorityGranted) blockingReasons.push('sandbox evidence indicates forbidden operational authority');
-  if (summary.productionActivationEnabled) blockingReasons.push('sandbox evidence indicates forbidden production activation');
-  if (summary.realEmergencyDispatchPerformed) blockingReasons.push('real emergency dispatch is forbidden in this evidence gate');
-  if (summary.publicRoadActionPerformed) blockingReasons.push('public-road action is forbidden in this evidence gate');
+  if (summary.networkCalls < 1) blockingReasons.push('bundle does not claim an actual approved sandbox network call');
+  if (!summary.exactlyOneLogicalActionVerified) blockingReasons.push('bundle does not claim exactly-one logical action verification');
+  if (summary.duplicateLogicalActionsObserved > 0) blockingReasons.push('bundle reports duplicate logical actions');
+  if (!summary.callbackAuthenticationVerified) blockingReasons.push('bundle does not claim callback authentication verification');
+  if (!summary.callbackReplayRejected) blockingReasons.push('bundle does not claim callback replay rejection');
+  if (!summary.delayedCallbackRejected) blockingReasons.push('bundle does not claim delayed callback rejection');
+  if (!summary.outageRecoveryVerified) blockingReasons.push('bundle does not claim sandbox outage/recovery verification');
+  if (!summary.statusCancelSemanticsVerified) blockingReasons.push('bundle does not claim status/cancel semantics verification');
+  if (!summary.minimumNecessaryProjectionVerified) blockingReasons.push('bundle does not claim minimum-necessary projection verification');
+  if (!summary.dataMinimized) blockingReasons.push('bundle reports data minimization was not maintained');
+  if (summary.operationalAuthorityGranted) blockingReasons.push('bundle reports forbidden operational authority');
+  if (summary.productionActivationEnabled) blockingReasons.push('bundle reports forbidden production activation');
+  if (summary.realEmergencyDispatchPerformed) blockingReasons.push('bundle reports forbidden real emergency dispatch');
+  if (summary.publicRoadActionPerformed) blockingReasons.push('bundle reports forbidden public-road action');
 
   return Object.freeze({
-    status: blockingReasons.length === 0 ? 'VERIFIED_FOR_EXTERNAL_REVIEW' : 'NO_GO',
+    status: blockingReasons.length === 0 ? 'PACKAGE_READY_FOR_EXTERNAL_REVIEW' : 'NO_GO',
     activationAuthorized: false,
+    semanticClaimsIndependentlyVerified: false,
+    summaryClaimsRequireExternalReview: true,
     bundleSha256,
     candidateHeadVerified,
     trustedProfileBindingVerified,
     approvedWindowVerified,
     evidenceIntegrityVerified,
     receiptFileCount: bundle.receiptFiles.length,
-    networkCalls: summary.networkCalls,
+    networkCallsClaimed: summary.networkCalls,
     blockingReasons: Object.freeze(blockingReasons)
   });
 }
