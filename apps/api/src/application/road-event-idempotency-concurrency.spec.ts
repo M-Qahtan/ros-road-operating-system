@@ -11,6 +11,7 @@ import {
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
+const SCOPE = { tenantId: 'riyadh-pilot', purpose: 'road-safety-response' } as const;
 
 class BlockingCreateRepository extends MemoryRoadEventRepository {
   private releaseCreate!: () => void;
@@ -33,7 +34,7 @@ test('concurrent requests with the same idempotency key cannot execute the comma
     repository,
     new RoleMatrixAuthorizationAdapter(),
     new MemoryIdempotencyAdapter(),
-    new MemorySignalAttachmentAdapter(),
+    new MemorySignalAttachmentAdapter(repository),
     repository
   );
   const command = {
@@ -43,7 +44,7 @@ test('concurrent requests with the same idempotency key cannot execute the comma
     longitude: 46.6753
   };
   const context = {
-    actor: { actorId: ACTOR_ID, roles: ['OPERATOR'] as const },
+    actor: { actorId: ACTOR_ID, roles: ['OPERATOR'] as const, ...SCOPE },
     traceId: 'trace-concurrency-001',
     idempotencyKey: 'same-request-0001'
   };
@@ -61,5 +62,5 @@ test('concurrent requests with the same idempotency key cannot execute the comma
   const replayResult = await service.create(command, context);
 
   assert.deepEqual(replayResult, firstResult);
-  assert.equal((await repository.list({ limit: 20, offset: 0 })).total, 1);
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, SCOPE)).total, 1);
 });

@@ -12,6 +12,8 @@ interface OutboxRow {
   readonly correlation_id: string;
   readonly causation_id: string | null;
   readonly trace_id: string | null;
+  readonly tenant_id: string | null;
+  readonly purpose: string | null;
   readonly occurred_at: Date | string;
   readonly retry_count: number;
 }
@@ -39,6 +41,9 @@ function requirePositiveInteger(value: number, field: string, maximum: number): 
 function mapMessage(row: OutboxRow): OutboxMessage {
   const occurredAt = row.occurred_at instanceof Date ? new Date(row.occurred_at.getTime()) : new Date(row.occurred_at);
   if (!Number.isFinite(occurredAt.getTime())) throw new TypeError('Outbox occurred_at is invalid');
+  if (row.aggregate_type === 'RoadEvent' && (row.tenant_id === null || row.purpose === null)) {
+    throw new Error(`RoadEvent outbox message ${row.id} is missing trusted access scope`);
+  }
   return {
     id: row.id,
     aggregateType: row.aggregate_type,
@@ -48,6 +53,8 @@ function mapMessage(row: OutboxRow): OutboxMessage {
     correlationId: row.correlation_id,
     ...(row.causation_id === null ? {} : { causationId: row.causation_id }),
     ...(row.trace_id === null ? {} : { traceId: row.trace_id }),
+    ...(row.tenant_id === null ? {} : { tenantId: row.tenant_id }),
+    ...(row.purpose === null ? {} : { purpose: row.purpose }),
     occurredAt,
     retryCount: row.retry_count
   };
@@ -70,6 +77,7 @@ export class PostgresOutboxRepository implements OutboxRepository {
              AND dead_lettered_at IS NULL
              AND next_attempt_at <= now()
              AND (locked_until IS NULL OR locked_until < now())
+             AND (aggregate_type <> 'RoadEvent' OR (tenant_id IS NOT NULL AND purpose IS NOT NULL))
            ORDER BY occurred_at, id
            FOR UPDATE SKIP LOCKED
            LIMIT $1
@@ -81,7 +89,7 @@ export class PostgresOutboxRepository implements OutboxRepository {
          WHERE event.id = candidates.id
          RETURNING event.id, event.aggregate_type, event.aggregate_id, event.event_type,
                    event.payload, event.correlation_id, event.causation_id, event.trace_id,
-                   event.occurred_at, event.retry_count`,
+                   event.tenant_id, event.purpose, event.occurred_at, event.retry_count`,
         [batchSize, owner, lockDurationMs]
       );
       return result.rows.map(mapMessage);

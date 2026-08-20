@@ -7,6 +7,8 @@ export interface OutboxMessage {
   readonly correlationId: string;
   readonly causationId?: string;
   readonly traceId?: string;
+  readonly tenantId?: string;
+  readonly purpose?: string;
   readonly occurredAt: Date;
   readonly retryCount: number;
 }

@@ -58,11 +58,15 @@ function stringArray(record: Record<string, unknown>, field: string): string[] {
 function parseActor(headers: Readonly<Record<string, string | undefined>>): AuthenticatedActor {
   const actorId = headers['x-actor-id'];
   const rawRoles = headers['x-ros-roles'];
-  if (actorId === undefined || rawRoles === undefined) throw new AuthorizationDeniedError('Missing actor identity headers');
+  const tenantId = headers['x-tenant-id'];
+  const purpose = headers['x-purpose'];
+  if (actorId === undefined || rawRoles === undefined || tenantId === undefined || purpose === undefined) {
+    throw new AuthorizationDeniedError('Missing actor identity or access-scope headers');
+  }
   const allowed = new Set<RosRole>(['OPERATOR', 'SUPERVISOR', 'AUDITOR', 'INTEGRATION_SERVICE']);
   const roles = rawRoles.split(',').map((role) => role.trim()).filter((role): role is RosRole => allowed.has(role as RosRole));
   if (roles.length === 0) throw new AuthorizationDeniedError('No recognized ROS role was supplied');
-  return { actorId, roles };
+  return { actorId, roles, tenantId, purpose };
 }
 
 function commandContext(request: HttpRequest) {

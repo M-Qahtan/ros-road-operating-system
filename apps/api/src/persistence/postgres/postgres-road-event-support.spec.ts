@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { RoadEventNotFoundError } from '@ros/domain';
 import { PostgresClient, PostgresPool, PostgresQueryResult } from './postgres-types.js';
 import {
   IdempotencyPersistenceConflictError,
@@ -33,6 +34,7 @@ const UUIDS = {
   actor: '33333333-3333-4333-8333-333333333333',
   trace: '44444444-4444-4444-8444-444444444444'
 };
+const SCOPE = { tenantId: 'riyadh-pilot', purpose: 'road-safety-response' } as const;
 const FINGERPRINT = 'a'.repeat(64);
 
 test('durable idempotency adapter replays a completed result', async () => {
@@ -42,7 +44,7 @@ test('durable idempotency adapter replays a completed result', async () => {
   }]);
   const adapter = new PostgresIdempotencyAdapter(new SingleClientPool(client));
 
-  assert.deepEqual(await adapter.get('road_event:transition', 'request-0001'), {
+  assert.deepEqual(await adapter.get('road_event:transition:riyadh-pilot:road-safety-response', 'request-0001'), {
     fingerprint: FINGERPRINT,
     value: { id: UUIDS.event, version: 2 }
   });
@@ -57,15 +59,16 @@ test('durable idempotency adapter rejects a conflicting completed fingerprint', 
   const adapter = new PostgresIdempotencyAdapter(new SingleClientPool(client));
 
   await assert.rejects(
-    adapter.put('road_event:create', 'request-0002', { fingerprint: FINGERPRINT, value: { ok: true } }),
+    adapter.put('road_event:create:riyadh-pilot:road-safety-response', 'request-0002', { fingerprint: FINGERPRINT, value: { ok: true } }),
     IdempotencyPersistenceConflictError
   );
   assert.equal(client.released, true);
 });
 
-test('signal attachment is transactional and audits only a new logical attachment', async () => {
+test('signal attachment checks persisted access scope before transactional attachment', async () => {
   const client = new ScriptedClient([
     { rows: [], rowCount: null },
+    { rows: [{ id: UUIDS.event }], rowCount: 1 },
     { rows: [{ road_event_id: UUIDS.event }], rowCount: 1 },
     { rows: [], rowCount: 1 },
     { rows: [], rowCount: 1 },
@@ -78,21 +81,46 @@ test('signal attachment is transactional and audits only a new logical attachmen
     signalId: UUIDS.signal,
     matchScore: 0.95,
     mergeReasons: ['spatial_temporal_match'],
-    actor: { actorId: UUIDS.actor, roles: ['OPERATOR'] },
+    actor: { actorId: UUIDS.actor, roles: ['OPERATOR'], ...SCOPE },
     traceId: UUIDS.trace
   });
 
   assert.match(client.queries[0]!.text, /BEGIN/);
-  assert.match(client.queries[1]!.text, /INSERT INTO road_event_signals/);
-  assert.match(client.queries[2]!.text, /INSERT INTO audit_logs/);
-  assert.match(client.queries[3]!.text, /INSERT INTO road_event_timeline/);
-  assert.match(client.queries[4]!.text, /COMMIT/);
+  assert.match(client.queries[1]!.text, /SELECT id FROM road_events/);
+  assert.match(client.queries[1]!.text, /tenant_id = \$2 AND purpose = \$3/);
+  assert.deepEqual(client.queries[1]!.values, [UUIDS.event, SCOPE.tenantId, SCOPE.purpose]);
+  assert.match(client.queries[2]!.text, /INSERT INTO road_event_signals/);
+  assert.match(client.queries[3]!.text, /INSERT INTO audit_logs/);
+  assert.match(client.queries[4]!.text, /INSERT INTO road_event_timeline/);
+  assert.match(client.queries[5]!.text, /COMMIT/);
   assert.equal(client.released, true);
 });
 
-test('duplicate signal attachment does not duplicate audit/timeline entries', async () => {
+test('signal attachment fails closed when RoadEvent is outside actor scope', async () => {
   const client = new ScriptedClient([
     { rows: [], rowCount: null },
+    { rows: [], rowCount: 0 },
+    { rows: [], rowCount: null }
+  ]);
+  const adapter = new PostgresSignalAttachmentAdapter(new SingleClientPool(client));
+
+  await assert.rejects(() => adapter.attach({
+    roadEventId: UUIDS.event,
+    signalId: UUIDS.signal,
+    matchScore: 0.95,
+    mergeReasons: ['spatial_temporal_match'],
+    actor: { actorId: UUIDS.actor, roles: ['OPERATOR'], tenantId: 'wrong-tenant', purpose: SCOPE.purpose },
+    traceId: UUIDS.trace
+  }), RoadEventNotFoundError);
+
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO road_event_signals')), false);
+  assert.match(client.queries.at(-1)!.text, /ROLLBACK/);
+});
+
+test('duplicate scoped signal attachment does not duplicate audit/timeline entries', async () => {
+  const client = new ScriptedClient([
+    { rows: [], rowCount: null },
+    { rows: [{ id: UUIDS.event }], rowCount: 1 },
     { rows: [], rowCount: 0 },
     { rows: [], rowCount: null }
   ]);
@@ -103,15 +131,15 @@ test('duplicate signal attachment does not duplicate audit/timeline entries', as
     signalId: UUIDS.signal,
     matchScore: 0.9,
     mergeReasons: ['duplicate_replay'],
-    actor: { actorId: UUIDS.actor, roles: ['INTEGRATION_SERVICE'] },
+    actor: { actorId: UUIDS.actor, roles: ['INTEGRATION_SERVICE'], ...SCOPE },
     traceId: UUIDS.trace
   });
 
-  assert.equal(client.queries.length, 3);
-  assert.match(client.queries[2]!.text, /COMMIT/);
+  assert.equal(client.queries.length, 4);
+  assert.match(client.queries[3]!.text, /COMMIT/);
 });
 
-test('audit timeline adapter returns ordered immutable audit projections', async () => {
+test('audit timeline adapter scopes the join before returning ordered projections', async () => {
   const client = new ScriptedClient([{
     rows: [{
       action: 'road_event.transitioned',
@@ -127,7 +155,7 @@ test('audit timeline adapter returns ordered immutable audit projections', async
   }]);
   const adapter = new PostgresAuditTimelineAdapter(new SingleClientPool(client));
 
-  assert.deepEqual(await adapter.listForRoadEvent(UUIDS.event), [{
+  assert.deepEqual(await adapter.listForRoadEvent(UUIDS.event, SCOPE), [{
     action: 'road_event.transitioned',
     actorType: 'SUPERVISOR',
     actorId: UUIDS.actor,
@@ -137,5 +165,9 @@ test('audit timeline adapter returns ordered immutable audit projections', async
     traceId: UUIDS.trace,
     occurredAt: '2026-08-19T10:00:00.000Z'
   }]);
-  assert.match(client.queries[0]!.text, /ORDER BY occurred_at ASC, id ASC/);
+  assert.match(client.queries[0]!.text, /JOIN road_events r ON r.id = a.resource_id/);
+  assert.match(client.queries[0]!.text, /r.tenant_id = \$2/);
+  assert.match(client.queries[0]!.text, /r.purpose = \$3/);
+  assert.deepEqual(client.queries[0]!.values, [UUIDS.event, SCOPE.tenantId, SCOPE.purpose]);
+  assert.match(client.queries[0]!.text, /ORDER BY a.occurred_at ASC, a.id ASC/);
 });

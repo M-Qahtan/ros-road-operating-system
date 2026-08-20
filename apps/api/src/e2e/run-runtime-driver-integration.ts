@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict';
 import { createClient } from 'redis';
+import { RoadEventNotFoundError, SeverityLevel } from '@ros/domain';
 import { createNodeRedisStreamClient } from '../messaging/node-redis-stream-client.js';
 import { createNodePostgresPool } from '../persistence/postgres/pg-postgres-pool.js';
+import { createPersistentRoadEventApplication } from '../runtime/runtime-composition.js';
 import { createOutboxWorkerRuntime } from '../runtime/outbox-worker-runtime.js';
 
 const OUTBOX_ID = '81111111-1111-4111-8111-111111111111';
 const AGGREGATE_ID = '82222222-2222-4222-8222-222222222222';
 const CORRELATION_ID = '83333333-3333-4333-8333-333333333333';
+const RUNTIME_OUTBOX_SCOPE = { tenantId: 'runtime-proof-tenant', purpose: 'road-safety-response' } as const;
+const ABAC_EVENT_ID = '84444444-4444-4444-8444-444444444444';
+const ABAC_ACTOR_ID = '85555555-5555-4555-8555-555555555555';
+const ABAC_SIGNAL_ID = '86666666-6666-4666-8666-666666666666';
+const ABAC_TRACE_ID = '87777777-7777-4777-8777-777777777777';
+const ABAC_SCOPE = { tenantId: 'abac-proof-tenant-a', purpose: 'road-safety-response' } as const;
 const STREAM = process.env.ROS_OUTBOX_STREAM ?? 'ros:integration-events';
 
 interface PublishedRow {
@@ -21,6 +29,92 @@ function requiredRedisUrl(): string {
   const value = process.env.REDIS_URL?.trim();
   if (!value) throw new Error('REDIS_URL is required for runtime driver integration');
   return value;
+}
+
+async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgresPool>): Promise<void> {
+  const application = createPersistentRoadEventApplication(postgres);
+  const operator = { actorId: ABAC_ACTOR_ID, roles: ['OPERATOR'] as const, ...ABAC_SCOPE };
+  const auditor = { actorId: ABAC_ACTOR_ID, roles: ['AUDITOR'] as const, ...ABAC_SCOPE };
+
+  const created = await application.create({
+    id: ABAC_EVENT_ID,
+    occurredAt: '2026-08-19T23:00:00.000Z',
+    latitude: 24.7136,
+    longitude: 46.6753
+  }, {
+    actor: operator,
+    traceId: ABAC_TRACE_ID,
+    idempotencyKey: 'abac-create-0001'
+  });
+  assert.equal(created.id, ABAC_EVENT_ID);
+
+  const sameScope = await application.getById(ABAC_EVENT_ID, operator);
+  assert.equal(sameScope.id, ABAC_EVENT_ID);
+
+  const correctPage = await application.list({ limit: 20, offset: 0 }, operator);
+  assert.equal(correctPage.total, 1);
+  assert.equal(correctPage.items[0]?.id, ABAC_EVENT_ID);
+
+  const wrongTenant = { ...operator, tenantId: 'abac-proof-tenant-b' };
+  const wrongPurpose = { ...operator, purpose: 'analytics-only' };
+  const wrongPurposeAuditor = { ...auditor, purpose: 'analytics-only' };
+
+  await assert.rejects(
+    application.getById(ABAC_EVENT_ID, wrongTenant),
+    RoadEventNotFoundError
+  );
+  await assert.rejects(
+    application.getById(ABAC_EVENT_ID, wrongPurpose),
+    RoadEventNotFoundError
+  );
+
+  const wrongTenantPage = await application.list({ limit: 20, offset: 0 }, wrongTenant);
+  const wrongPurposePage = await application.list({ limit: 20, offset: 0 }, wrongPurpose);
+  assert.equal(wrongTenantPage.total, 0);
+  assert.equal(wrongPurposePage.total, 0);
+
+  await assert.rejects(
+    application.reassessSeverity({
+      roadEventId: ABAC_EVENT_ID,
+      expectedVersion: 1,
+      assessment: {
+        level: SeverityLevel.Moderate,
+        score: 45,
+        confidence: 0.8,
+        reasonCodes: ['abac_negative_probe'],
+        requiresHumanReview: true
+      },
+      reason: 'cross-tenant update must be hidden'
+    }, {
+      actor: wrongTenant,
+      traceId: ABAC_TRACE_ID,
+      idempotencyKey: 'abac-update-0001'
+    }),
+    RoadEventNotFoundError
+  );
+
+  await assert.rejects(
+    application.timeline(ABAC_EVENT_ID, wrongPurposeAuditor),
+    RoadEventNotFoundError
+  );
+
+  await assert.rejects(
+    application.attachSignal({
+      roadEventId: ABAC_EVENT_ID,
+      signalId: ABAC_SIGNAL_ID,
+      matchScore: 0.9,
+      mergeReasons: ['abac_negative_probe']
+    }, {
+      actor: wrongTenant,
+      traceId: ABAC_TRACE_ID,
+      idempotencyKey: 'abac-signal-0001'
+    }),
+    RoadEventNotFoundError
+  );
+
+  const finalState = await application.getById(ABAC_EVENT_ID, operator);
+  assert.equal(finalState.version, 1);
+  assert.equal(finalState.severity.level, SeverityLevel.Informational);
 }
 
 async function run(): Promise<void> {
@@ -47,10 +141,17 @@ async function run(): Promise<void> {
       await client.query(
         `INSERT INTO outbox_events (
            id, aggregate_type, aggregate_id, event_type, payload,
-           correlation_id, occurred_at
+           correlation_id, tenant_id, purpose, occurred_at
          ) VALUES ($1::uuid, 'RoadEvent', $2::uuid, 'RoadEventCreated',
-                   $3::jsonb, $4::uuid, now())`,
-        [OUTBOX_ID, AGGREGATE_ID, { source: 'runtime-driver-integration' }, CORRELATION_ID]
+                   $3::jsonb, $4::uuid, $5, $6, now())`,
+        [
+          OUTBOX_ID,
+          AGGREGATE_ID,
+          { source: 'runtime-driver-integration' },
+          CORRELATION_ID,
+          RUNTIME_OUTBOX_SCOPE.tenantId,
+          RUNTIME_OUTBOX_SCOPE.purpose
+        ]
       );
     } finally {
       client.release();
@@ -85,6 +186,10 @@ async function run(): Promise<void> {
     assert.equal(entry?.message.eventId, OUTBOX_ID);
     assert.equal(entry?.message.simulationMode, 'false');
     assert.equal(entry?.message.deliveryMode, 'runtime');
+    assert.equal(entry?.message.tenantId, RUNTIME_OUTBOX_SCOPE.tenantId);
+    assert.equal(entry?.message.purpose, RUNTIME_OUTBOX_SCOPE.purpose);
+
+    await assertRoadEventAbac(postgres);
 
     process.stdout.write(JSON.stringify({
       status: 'PASS',
@@ -92,7 +197,12 @@ async function run(): Promise<void> {
       published: result.published,
       redisStreamEntries: entries.length,
       outboxPublished: true,
-      runtimeDeliveryMode: entry?.message.deliveryMode
+      runtimeDeliveryMode: entry?.message.deliveryMode,
+      outboxScopeVerified: true,
+      outboxScope: RUNTIME_OUTBOX_SCOPE,
+      abacIsolationVerified: true,
+      abacDimensions: ['tenant', 'purpose'],
+      abacNegativePaths: ['detail', 'list', 'update', 'timeline', 'signal']
     }) + '\n');
   } finally {
     if (redisVerifier.isOpen) redisVerifier.destroy();

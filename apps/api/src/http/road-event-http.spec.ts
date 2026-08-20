@@ -11,6 +11,8 @@ import { createRoadEventHttpHandler, HttpRequest } from './road-event-http.js';
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
+const TENANT = 'riyadh-pilot';
+const PURPOSE = 'road-safety-response';
 
 function fixture() {
   const repository = new MemoryRoadEventRepository();
@@ -18,10 +20,19 @@ function fixture() {
     repository,
     new RoleMatrixAuthorizationAdapter(),
     new MemoryIdempotencyAdapter(),
-    new MemorySignalAttachmentAdapter(),
+    new MemorySignalAttachmentAdapter(repository),
     repository
   );
   return createRoadEventHttpHandler(application);
+}
+
+function actorHeaders(role = 'OPERATOR', tenantId = TENANT, purpose = PURPOSE) {
+  return {
+    'x-actor-id': ACTOR_ID,
+    'x-ros-roles': role,
+    'x-tenant-id': tenantId,
+    'x-purpose': purpose
+  };
 }
 
 function request(overrides: Partial<HttpRequest>): HttpRequest {
@@ -29,7 +40,7 @@ function request(overrides: Partial<HttpRequest>): HttpRequest {
     method: 'GET',
     path: '/api/v1/road-events',
     query: {},
-    headers: { 'x-actor-id': ACTOR_ID, 'x-ros-roles': 'OPERATOR', 'idempotency-key': 'request-key-0001' },
+    headers: { ...actorHeaders(), 'idempotency-key': 'request-key-0001' },
     body: null,
     traceId: 'trace-http-001',
     ...overrides
@@ -57,7 +68,7 @@ test('HTTP create and detail endpoints return stable envelopes', async () => {
 test('HTTP authorization, validation, conflict and not-found errors are explicit', async () => {
   const handle = fixture();
   const forbidden = await handle(request({
-    headers: { 'x-actor-id': ACTOR_ID, 'x-ros-roles': 'AUDITOR', 'idempotency-key': 'forbidden-key-0001' },
+    headers: { ...actorHeaders('AUDITOR'), 'idempotency-key': 'forbidden-key-0001' },
     method: 'POST',
     body: validCreateBody
   }));
@@ -74,7 +85,26 @@ test('HTTP authorization, validation, conflict and not-found errors are explicit
   assert.equal(conflict.status, 409);
 });
 
-test('timeline requires auditor or supervisor permission', async () => {
+test('cross-tenant and cross-purpose reads fail closed as not-found', async () => {
+  const handle = fixture();
+  await handle(request({ method: 'POST', body: validCreateBody }));
+
+  const wrongTenant = await handle(request({
+    method: 'GET',
+    path: `/api/v1/road-events/${EVENT_ID}`,
+    headers: actorHeaders('OPERATOR', 'another-tenant', PURPOSE)
+  }));
+  assert.equal(wrongTenant.status, 404);
+
+  const wrongPurpose = await handle(request({
+    method: 'GET',
+    path: `/api/v1/road-events/${EVENT_ID}`,
+    headers: actorHeaders('OPERATOR', TENANT, 'analytics-only')
+  }));
+  assert.equal(wrongPurpose.status, 404);
+});
+
+test('timeline requires auditor or supervisor permission and matching scope', async () => {
   const handle = fixture();
   await handle(request({ method: 'POST', body: validCreateBody }));
 
@@ -84,7 +114,14 @@ test('timeline requires auditor or supervisor permission', async () => {
   const allowed = await handle(request({
     method: 'GET',
     path: `/api/v1/road-events/${EVENT_ID}/timeline`,
-    headers: { 'x-actor-id': ACTOR_ID, 'x-ros-roles': 'AUDITOR' }
+    headers: actorHeaders('AUDITOR')
   }));
   assert.equal(allowed.status, 200);
+
+  const wrongPurpose = await handle(request({
+    method: 'GET',
+    path: `/api/v1/road-events/${EVENT_ID}/timeline`,
+    headers: actorHeaders('AUDITOR', TENANT, 'analytics-only')
+  }));
+  assert.equal(wrongPurpose.status, 404);
 });
