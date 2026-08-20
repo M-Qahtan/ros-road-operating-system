@@ -52,6 +52,22 @@ function proveRuntimeResilience(): void {
   process.stdout.write(output);
 }
 
+function proveCallbackReplay(): void {
+  const script = fileURLToPath(new URL('./run-callback-replay-integration.js', import.meta.url));
+  const output = execFileSync(process.execPath, [script], {
+    env: process.env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit']
+  });
+  assert.match(output, /"status":"PASS"/);
+  assert.match(output, /"callbackSignatureVerified":true/);
+  assert.match(output, /"sameProfileReplayRejected":true/);
+  assert.match(output, /"crossProfileSignatureBindingVerified":true/);
+  assert.match(output, /"profileScopedNonceReuseVerified":true/);
+  assert.match(output, /"nonceImmutabilityVerified":true/);
+  process.stdout.write(output);
+}
+
 async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgresPool>): Promise<void> {
   const application = createPersistentRoadEventApplication(postgres);
   const operator = { actorId: ABAC_ACTOR_ID, roles: ['OPERATOR'] as const, ...ABAC_SCOPE };
@@ -80,14 +96,8 @@ async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgre
   const wrongPurpose = { ...operator, purpose: 'analytics-only' };
   const wrongPurposeAuditor = { ...auditor, purpose: 'analytics-only' };
 
-  await assert.rejects(
-    application.getById(ABAC_EVENT_ID, wrongTenant),
-    RoadEventNotFoundError
-  );
-  await assert.rejects(
-    application.getById(ABAC_EVENT_ID, wrongPurpose),
-    RoadEventNotFoundError
-  );
+  await assert.rejects(application.getById(ABAC_EVENT_ID, wrongTenant), RoadEventNotFoundError);
+  await assert.rejects(application.getById(ABAC_EVENT_ID, wrongPurpose), RoadEventNotFoundError);
 
   const wrongTenantPage = await application.list({ limit: 20, offset: 0 }, wrongTenant);
   const wrongPurposePage = await application.list({ limit: 20, offset: 0 }, wrongPurpose);
@@ -114,10 +124,7 @@ async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgre
     RoadEventNotFoundError
   );
 
-  await assert.rejects(
-    application.timeline(ABAC_EVENT_ID, wrongPurposeAuditor),
-    RoadEventNotFoundError
-  );
+  await assert.rejects(application.timeline(ABAC_EVENT_ID, wrongPurposeAuditor), RoadEventNotFoundError);
 
   await assert.rejects(
     application.attachSignal({
@@ -155,10 +162,7 @@ async function run(): Promise<void> {
 
     const client = await postgres.connect();
     try {
-      await client.query(
-        `DELETE FROM outbox_events WHERE id = $1::uuid`,
-        [OUTBOX_ID]
-      );
+      await client.query(`DELETE FROM outbox_events WHERE id = $1::uuid`, [OUTBOX_ID]);
       await client.query(
         `INSERT INTO outbox_events (
            id, aggregate_type, aggregate_id, event_type, payload,
@@ -211,6 +215,7 @@ async function run(): Promise<void> {
     assert.equal(entry?.message.purpose, RUNTIME_OUTBOX_SCOPE.purpose);
 
     proveRuntimeResilience();
+    proveCallbackReplay();
     await assertRoadEventAbac(postgres);
 
     process.stdout.write(JSON.stringify({
@@ -223,6 +228,7 @@ async function run(): Promise<void> {
       outboxScopeVerified: true,
       outboxScope: RUNTIME_OUTBOX_SCOPE,
       runtimeResilienceVerified: true,
+      callbackReplayVerified: true,
       abacIsolationVerified: true,
       abacDimensions: ['tenant', 'purpose'],
       abacNegativePaths: ['detail', 'list', 'update', 'timeline', 'signal']
