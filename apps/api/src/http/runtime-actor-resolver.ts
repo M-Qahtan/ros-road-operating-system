@@ -3,7 +3,11 @@ import {
   createActorResolverForEnvironment,
   createOidcIntegrationActorResolver
 } from './actor-resolver.js';
-import { IntegrationPrincipalPolicy, IntegrationPurpose } from '../integrations/integration-principal.js';
+import {
+  IntegrationPrincipalBinding,
+  IntegrationPrincipalPolicy,
+  IntegrationPurpose
+} from '../integrations/integration-principal.js';
 import { HttpsJwksDocumentFetcher, JwksHttpFetchPort } from '../integrations/jwks-https-fetcher.js';
 import { CachedJwksRs256KeyProvider } from '../integrations/jwks-key-provider.js';
 import { Rs256OidcTokenVerifier } from '../integrations/oidc-rs256-verifier.js';
@@ -16,6 +20,7 @@ const PURPOSES = new Set<IntegrationPurpose>([
   'TOWING_COORDINATION',
   'ROUTE_COORDINATION'
 ]);
+const MAX_BINDINGS = 64;
 
 export interface RuntimeActorResolverDependencies { readonly jwksFetch?: JwksHttpFetchPort; }
 
@@ -25,20 +30,42 @@ function required(environment: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
-function csv(environment: NodeJS.ProcessEnv, name: string): readonly string[] {
-  const values = required(environment, name).split(',').map((value) => value.trim()).filter(Boolean);
-  if (values.length === 0 || new Set(values).size !== values.length) {
-    throw new Error(`${name} must contain unique comma-separated values`);
-  }
-  return values;
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function purposes(environment: NodeJS.ProcessEnv): readonly IntegrationPurpose[] {
-  const values = csv(environment, 'OIDC_ALLOWED_PURPOSES');
-  if (values.some((value) => !PURPOSES.has(value as IntegrationPurpose))) {
-    throw new Error('OIDC_ALLOWED_PURPOSES contains an unsupported purpose');
+function requiredBindingString(record: Readonly<Record<string, unknown>>, field: string): string {
+  const value = record[field];
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`OIDC_ALLOWED_BINDINGS ${field} must be a non-empty string`);
   }
-  return values as readonly IntegrationPurpose[];
+  return value.trim();
+}
+
+function principalBindings(environment: NodeJS.ProcessEnv): readonly IntegrationPrincipalBinding[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(required(environment, 'OIDC_ALLOWED_BINDINGS')) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error('OIDC_ALLOWED_BINDINGS must be valid JSON');
+    throw error;
+  }
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_BINDINGS) {
+    throw new Error(`OIDC_ALLOWED_BINDINGS must contain between 1 and ${MAX_BINDINGS} bindings`);
+  }
+
+  const seen = new Set<string>();
+  return raw.map((value): IntegrationPrincipalBinding => {
+    if (!isRecord(value)) throw new Error('OIDC_ALLOWED_BINDINGS entries must be objects');
+    const clientId = requiredBindingString(value, 'clientId');
+    const tenantId = requiredBindingString(value, 'tenantId');
+    const purpose = requiredBindingString(value, 'purpose') as IntegrationPurpose;
+    if (!PURPOSES.has(purpose)) throw new Error('OIDC_ALLOWED_BINDINGS contains an unsupported purpose');
+    const identity = JSON.stringify([clientId, tenantId, purpose]);
+    if (seen.has(identity)) throw new Error('OIDC_ALLOWED_BINDINGS contains a duplicate binding');
+    seen.add(identity);
+    return Object.freeze({ clientId, tenantId, purpose });
+  });
 }
 
 function integer(environment: NodeJS.ProcessEnv, name: string, fallback: number, minimum: number): number {
@@ -83,9 +110,7 @@ export function createRuntimeActorResolver(
   const policy: IntegrationPrincipalPolicy = {
     issuer: httpsIssuer(required(environment, 'OIDC_ISSUER')),
     audience: required(environment, 'OIDC_AUDIENCE'),
-    allowedClientIds: csv(environment, 'OIDC_ALLOWED_CLIENT_IDS'),
-    allowedTenantIds: csv(environment, 'OIDC_ALLOWED_TENANT_IDS'),
-    allowedPurposes: purposes(environment),
+    allowedBindings: principalBindings(environment),
     requireMfa: true,
     maxTokenAgeSeconds: integer(environment, 'OIDC_MAX_TOKEN_AGE_SECONDS', 600, 1),
     maxClockSkewSeconds: integer(environment, 'OIDC_MAX_CLOCK_SKEW_SECONDS', 30, 1)
