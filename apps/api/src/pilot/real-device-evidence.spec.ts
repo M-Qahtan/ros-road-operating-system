@@ -1,22 +1,28 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import {
   evaluateRealDeviceEvidence,
   parseRealDeviceEvidenceBundle,
-  realDeviceEvidenceBundleSha256
+  realDeviceEvidenceBundleSha256,
+  verifyRealDeviceEvidenceFiles
 } from './real-device-evidence.js';
 
 const HEAD = '2184bad8d076604269fbf74a5e5e4d8d64730680';
 const BUILD = 'a'.repeat(64);
-const FILE_SHA = 'b'.repeat(64);
+const FILE_CONTENT = Buffer.from('ros controlled real-device evidence fixture\n', 'utf8');
+const FILE_SHA = createHash('sha256').update(FILE_CONTENT).digest('hex');
 
-type EvidenceFileFixture = {
+interface EvidenceFileFixture {
   path: string;
   sha256: string;
   sizeBytes: number;
-};
+}
 
-type ScenarioFixture = {
+interface ScenarioFixture {
   caseId: string;
   kind: string;
   outcome: string;
@@ -24,9 +30,9 @@ type ScenarioFixture = {
   staleUnsafeActionsObserved: number;
   privacyDataMinimized: boolean;
   evidenceFiles: EvidenceFileFixture[];
-};
+}
 
-type SessionFixture = {
+interface SessionFixture {
   sessionId: string;
   candidateHeadSha: string;
   environment: string;
@@ -41,12 +47,12 @@ type SessionFixture = {
   startedAt: string;
   completedAt: string;
   scenarios: ScenarioFixture[];
-};
+}
 
-type BundleFixture = {
+interface BundleFixture {
   schema: string;
   sessions: SessionFixture[];
-};
+}
 
 function required<T>(value: T | undefined, label: string): T {
   if (value === undefined) throw new Error(`test fixture missing ${label}`);
@@ -69,7 +75,7 @@ function evidenceFile(name: string): EvidenceFileFixture {
   return {
     path: `field/${name}.json`,
     sha256: FILE_SHA,
-    sizeBytes: 128
+    sizeBytes: FILE_CONTENT.byteLength
   };
 }
 
@@ -131,20 +137,83 @@ function completeBundle(): BundleFixture {
   };
 }
 
-test('complete Android+iOS controlled-field evidence passes without authorizing a pilot', () => {
+async function materializeEvidence(bundle: BundleFixture, root: string): Promise<void> {
+  const written = new Set<string>();
+  for (const currentSession of bundle.sessions) {
+    for (const currentScenario of currentSession.scenarios) {
+      for (const file of currentScenario.evidenceFiles) {
+        if (written.has(file.path)) continue;
+        written.add(file.path);
+        const absolute = join(root, file.path);
+        await mkdir(dirname(absolute), { recursive: true });
+        await writeFile(absolute, FILE_CONTENT);
+      }
+    }
+  }
+}
+
+async function withEvidenceRoot<T>(bundle: BundleFixture, run: (root: string) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(join(tmpdir(), 'ros-real-device-evidence-'));
+  try {
+    await materializeEvidence(bundle, root);
+    return await run(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test('complete byte-verified Android+iOS evidence passes the evidence subset only', async () => {
+  const raw = completeBundle();
+  const bundle = parseRealDeviceEvidenceBundle(raw);
+  await withEvidenceRoot(raw, async (root) => {
+    const verification = await verifyRealDeviceEvidenceFiles(bundle, root, HEAD);
+    const result = evaluateRealDeviceEvidence(bundle, verification);
+    assert.equal(result.status, 'PASS');
+    assert.equal(result.candidateHeadVerified, true);
+    assert.equal(result.evidenceIntegrityVerified, true);
+    assert.equal(result.representativeRealDeviceCriticalFlowsPassed, true);
+    assert.equal(result.gpsDegradationSafeStateVerified, true);
+    assert.equal(result.networkLossSafeStateVerified, true);
+    assert.equal(result.restartReconnectSafeStateVerified, true);
+    assert.equal(result.screenReaderCriticalFlowsPassed, true);
+    assert.equal(result.duplicateLogicalActionsObserved, 0);
+    assert.equal(result.staleStateUnsafeActionsObserved, 0);
+    assert.deepEqual(result.missingCoverage, []);
+    assert.deepEqual(result.blockingReasons, []);
+    assert.match(result.bundleSha256, /^[a-f0-9]{64}$/);
+  });
+});
+
+test('well-formed metadata alone can never become PASS', () => {
   const result = evaluateRealDeviceEvidence(completeBundle());
-  assert.equal(result.status, 'PASS');
-  assert.equal(result.evidenceIntegrityVerified, true);
-  assert.equal(result.representativeRealDeviceCriticalFlowsPassed, true);
-  assert.equal(result.gpsDegradationSafeStateVerified, true);
-  assert.equal(result.networkLossSafeStateVerified, true);
-  assert.equal(result.restartReconnectSafeStateVerified, true);
-  assert.equal(result.screenReaderCriticalFlowsPassed, true);
-  assert.equal(result.duplicateLogicalActionsObserved, 0);
-  assert.equal(result.staleStateUnsafeActionsObserved, 0);
-  assert.deepEqual(result.missingCoverage, []);
-  assert.deepEqual(result.blockingReasons, []);
-  assert.match(result.bundleSha256, /^[a-f0-9]{64}$/);
+  assert.equal(result.status, 'NO_GO');
+  assert.equal(result.candidateHeadVerified, false);
+  assert.equal(result.evidenceIntegrityVerified, false);
+  assert.match(result.blockingReasons.join(' | '), /independently verified/);
+});
+
+test('trusted expected candidate head must match the bundle', async () => {
+  const raw = completeBundle();
+  const bundle = parseRealDeviceEvidenceBundle(raw);
+  await withEvidenceRoot(raw, async (root) => {
+    await assert.rejects(
+      verifyRealDeviceEvidenceFiles(bundle, root, 'c'.repeat(40)),
+      /expected/
+    );
+  });
+});
+
+test('actual evidence bytes must match declared size and SHA-256', async () => {
+  const raw = completeBundle();
+  const bundle = parseRealDeviceEvidenceBundle(raw);
+  await withEvidenceRoot(raw, async (root) => {
+    const first = evidenceAt(scenarioAt(sessionAt(raw, 0), 0), 0);
+    await writeFile(join(root, first.path), Buffer.from('tampered evidence bytes\n', 'utf8'));
+    await assert.rejects(
+      verifyRealDeviceEvidenceFiles(bundle, root, HEAD),
+      /size mismatch|SHA-256 mismatch/
+    );
+  });
 });
 
 test('missing iOS critical-flow coverage remains NO_GO', () => {
@@ -215,7 +284,7 @@ test('duplicate session IDs, duplicate case IDs and mixed candidate heads are re
   assert.throws(() => parseRealDeviceEvidenceBundle(mixedHead), /same candidate head/);
 });
 
-test('unsafe evidence path, malformed digest and platform/screen-reader mismatch are rejected', () => {
+test('unsafe path, malformed or non-canonical digest, and platform/screen-reader mismatch are rejected', () => {
   const unsafePath = completeBundle();
   evidenceAt(scenarioAt(sessionAt(unsafePath, 0), 0), 0).path = '../escape.json';
   assert.throws(() => parseRealDeviceEvidenceBundle(unsafePath), /safe relative evidence path/);
@@ -223,6 +292,10 @@ test('unsafe evidence path, malformed digest and platform/screen-reader mismatch
   const badDigest = completeBundle();
   evidenceAt(scenarioAt(sessionAt(badDigest, 0), 0), 0).sha256 = 'not-a-digest';
   assert.throws(() => parseRealDeviceEvidenceBundle(badDigest), /SHA-256/);
+
+  const uppercaseDigest = completeBundle();
+  evidenceAt(scenarioAt(sessionAt(uppercaseDigest, 0), 0), 0).sha256 = FILE_SHA.toUpperCase();
+  assert.throws(() => parseRealDeviceEvidenceBundle(uppercaseDigest), /lowercase SHA-256/);
 
   const wrongReader = completeBundle();
   sessionAt(wrongReader, 0).device.screenReader = 'VOICEOVER';
