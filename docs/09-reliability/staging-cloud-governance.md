@@ -32,20 +32,24 @@ These remain internal engineering targets, not public service commitments. The s
 The review command accepts the actual Terraform binary plan file. It:
 
 1. verifies the plan path is a regular non-symbolic-link file;
-2. hashes the exact plan bytes with SHA-256;
+2. hashes the exact plan bytes with SHA-256 before analysis;
 3. invokes `terraform show -json <plan>` with `execFile` and no shell;
-4. parses the output in memory;
-5. derives create/update/read/no-op/delete/unknown-action counts from that exact plan;
-6. treats resource drift delete actions as review-blocking until dispositioned;
-7. rejects incomplete/deferred or errored plans;
-8. rejects unknown future Terraform action types rather than guessing their effect;
-9. rejects plans that expose sensitive outputs on the review surface.
+4. hashes the exact plan bytes again after `terraform show` and rejects the review if the bytes changed during analysis;
+5. parses the JSON output in memory only;
+6. accepts Terraform plan JSON format major **1.x** and fails closed on an unsupported major format;
+7. requires the plan to report `applyable=true`, `complete=true`, and `errored=false` before it can become review-ready;
+8. derives create/update/read/no-op/delete/unknown-action counts from that exact plan;
+9. treats resource-drift delete actions as review-blocking until dispositioned;
+10. rejects unknown future Terraform action types rather than guessing their effect;
+11. reads output sensitivity from `planned_values.outputs[*].sensitive` and rejects plans that expose sensitive planned outputs on the review surface.
 
 The raw `terraform show -json` output must **not** be committed, uploaded as a general CI artifact, pasted into tickets, or archived as ordinary evidence. Terraform JSON can expose sensitive values even when Terraform marks them as sensitive. The review output retains only the binary plan digest and bounded derived summary.
 
+`applyable=true` is necessary only to establish that Terraform regards the reviewed plan as a coherent apply candidate. It does **not** authorize `terraform apply`; this ROS governance layer still hard-codes `terraformApplyAuthorized=false` until a separate founder authorization names the exact reviewed plan digest and scope.
+
 ## Non-destructive review gate
 
-Any action containing `delete` is a hard `NO_GO`, including replacement plans such as `delete + create`. This is intentionally stricter than generic Terraform behavior because the current authority is plan preparation only.
+Any action containing `delete` is a hard `NO_GO`, including replacement plans such as `delete + create` or `create + delete`. This is intentionally stricter than generic Terraform behavior because the current authority is plan preparation only.
 
 A future decision to accept a destructive replacement requires a new explicit founder-authorized review scope. It must not be obtained by weakening this validator.
 
@@ -112,7 +116,7 @@ The command independently binds:
 
 - the exact package;
 - the trusted candidate head;
-- the exact Terraform binary plan digest and semantics;
+- the exact Terraform binary plan digest and the semantics emitted by `terraform show -json` for that same file;
 - all required evidence file bytes.
 
 It exits non-zero unless the package reaches `STAGING_PLAN_PACKAGE_READY_FOR_FOUNDER_REVIEW`.
@@ -124,15 +128,17 @@ When a real staging plan is eventually generated under an authorized PLAN_ONLY s
 - candidate head SHA;
 - Terraform plan SHA-256;
 - cloud account reference and region;
+- Terraform JSON format and Terraform version;
+- `applyable/complete/errored` state;
 - create/update/read/no-op counts;
-- confirmation of zero delete/unknown actions and zero sensitive outputs;
+- confirmation of zero delete/unknown actions and zero sensitive planned outputs;
 - RPO/RTO targets and evidence;
 - rollback trigger/owner;
 - on-call/reliability owner;
 - observability/security posture;
 - outstanding risks and external dependencies.
 
-If the founder later chooses to authorize an apply, the authorization must name the **exact reviewed plan digest, account/region and scope**. Any plan regeneration or digest change invalidates that authorization and requires re-review.
+If the founder later chooses to authorize an apply, the authorization must name the **exact reviewed plan digest, account/region and scope**. Any plan regeneration, mutation, or digest change invalidates that authorization and requires re-review.
 
 ## Current boundary
 
