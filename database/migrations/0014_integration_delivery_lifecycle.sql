@@ -14,6 +14,7 @@ CREATE TABLE integration_deliveries (
   provider_request_id TEXT,
   attempt_count INTEGER NOT NULL DEFAULT 0,
   prepared_at TIMESTAMPTZ NOT NULL,
+  accepted_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL,
   reason TEXT,
   CONSTRAINT integration_deliveries_profile_length CHECK (length(profile_id) BETWEEN 1 AND 128),
@@ -29,11 +30,13 @@ CREATE TABLE integration_deliveries (
   CONSTRAINT integration_deliveries_state CHECK (state IN ('PREPARED','ACCEPTED','ACKNOWLEDGED','COMPLETED','FAILED','CANCELLED')),
   CONSTRAINT integration_deliveries_attempt_count CHECK (attempt_count >= 0),
   CONSTRAINT integration_deliveries_transport_shape CHECK (
-    (state = 'PREPARED' AND provider_request_id IS NULL AND attempt_count = 0)
+    (state = 'PREPARED' AND provider_request_id IS NULL AND accepted_at IS NULL AND attempt_count = 0)
     OR
-    (state <> 'PREPARED' AND provider_request_id IS NOT NULL AND attempt_count >= 1)
+    (state <> 'PREPARED' AND provider_request_id IS NOT NULL AND accepted_at IS NOT NULL AND attempt_count >= 1)
   ),
-  CONSTRAINT integration_deliveries_time_order CHECK (updated_at >= prepared_at),
+  CONSTRAINT integration_deliveries_time_order CHECK (
+    updated_at >= prepared_at AND (accepted_at IS NULL OR accepted_at >= prepared_at)
+  ),
   UNIQUE (profile_id, idempotency_key),
   UNIQUE (profile_id, provider_request_id),
   UNIQUE (logical_operation_id, profile_id)
@@ -67,6 +70,10 @@ BEGIN
   IF OLD.provider_request_id IS NOT NULL
      AND NEW.provider_request_id IS DISTINCT FROM OLD.provider_request_id THEN
     RAISE EXCEPTION 'integration provider request identity is immutable once assigned';
+  END IF;
+
+  IF OLD.accepted_at IS NOT NULL AND NEW.accepted_at IS DISTINCT FROM OLD.accepted_at THEN
+    RAISE EXCEPTION 'integration delivery accepted_at is immutable once assigned';
   END IF;
 
   IF NEW.attempt_count < OLD.attempt_count THEN
