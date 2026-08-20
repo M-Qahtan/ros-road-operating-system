@@ -12,6 +12,8 @@ export interface SimulatedAgencyNotification {
   readonly roadEventId: string;
   readonly eventType: string;
   readonly correlationId: string;
+  readonly tenantId: string;
+  readonly purpose: string;
   readonly traceId?: string;
   readonly simulation: true;
 }
@@ -40,6 +42,9 @@ export class SimulatedAgencyConsumer implements IntegrationConsumer {
 
   async consume(message: OutboxMessage): Promise<'processed' | 'duplicate'> {
     if (!ROUTES[this.agency].includes(message.eventType)) return 'processed';
+    if (message.aggregateType !== 'RoadEvent' || message.tenantId === undefined || message.purpose === undefined) {
+      throw new Error('Agency-routed RoadEvent message is missing trusted tenant/purpose scope');
+    }
     const acquired = await this.idempotency.tryBegin(this.name, message.id, this.leaseDurationMs);
     if (!acquired) return 'duplicate';
 
@@ -50,6 +55,8 @@ export class SimulatedAgencyConsumer implements IntegrationConsumer {
         roadEventId: message.aggregateId,
         eventType: message.eventType,
         correlationId: message.correlationId,
+        tenantId: message.tenantId,
+        purpose: message.purpose,
         ...(message.traceId === undefined ? {} : { traceId: message.traceId }),
         simulation: true
       });
