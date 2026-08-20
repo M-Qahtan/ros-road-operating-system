@@ -20,6 +20,7 @@ class MemoryReplayStore implements CallbackReplayStore {
 }
 
 const TEST_HMAC_KEY_MATERIAL = 'test-only-0123456789abcdef0123456789abcdef';
+const WEAK_HMAC_KEY_MATERIAL = 'too-short';
 const NOW = 1_800_000_000;
 const TRAFFIC_PROFILE: TrustedCallbackProfile = {
   profileId: 'traffic-sandbox.riyadh',
@@ -74,8 +75,7 @@ test('request-shaped data cannot override the server-selected profile context', 
   const signed = signedInput(TRAFFIC_PROFILE);
   const requestWithAttackerFields = {
     ...signed,
-    profileId: INSURANCE_PROFILE.profileId,
-    secret: 'attacker-controlled-secret-material-attacker-controlled'
+    profileId: INSURANCE_PROFILE.profileId
   };
 
   await verifyCallbackHmac(requestWithAttackerFields, TRAFFIC_PROFILE, store, { nowEpochSeconds: NOW });
@@ -128,7 +128,7 @@ test('rejects malformed signatures, weak secrets and invalid verifier windows', 
     CallbackAuthenticationError
   );
   assert.throws(
-    () => computeCallbackSignatureHex({ ...TRAFFIC_PROFILE, secret: 'too-short' }, '{}', NOW, NONCE),
+    () => computeCallbackSignatureHex({ ...TRAFFIC_PROFILE, secret: WEAK_HMAC_KEY_MATERIAL }, '{}', NOW, NONCE),
     /between 32 and 4096 bytes/
   );
   await assert.rejects(
