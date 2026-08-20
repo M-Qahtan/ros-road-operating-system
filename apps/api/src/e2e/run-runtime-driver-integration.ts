@@ -33,13 +33,17 @@ function requiredRedisUrl(): string {
   return value;
 }
 
-function proveRuntimeResilience(): void {
-  const script = fileURLToPath(new URL('./run-runtime-resilience-integration.js', import.meta.url));
-  const output = execFileSync(process.execPath, [script], {
+function runChildProof(scriptName: string): string {
+  const script = fileURLToPath(new URL(`./${scriptName}`, import.meta.url));
+  return execFileSync(process.execPath, [script], {
     env: process.env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit']
   });
+}
+
+function proveRuntimeResilience(): void {
+  const output = runChildProof('run-runtime-resilience-integration.js');
   assert.match(output, /"status":"PASS"/);
   assert.match(output, /"outboxUniqueDeliveryVerified":true/);
   assert.match(output, /"workerRestartRecoveryVerified":true/);
@@ -49,6 +53,19 @@ function proveRuntimeResilience(): void {
   assert.match(output, /"reconciliationAlertVerified":true/);
   assert.match(output, /"completedReplaySurvivesRestart":true/);
   assert.match(output, /"exactFenceReconciliationVerified":true/);
+  process.stdout.write(output);
+}
+
+function proveCallbackAuthentication(): void {
+  const output = runChildProof('run-callback-auth-integration.js');
+  assert.match(output, /"status":"PASS"/);
+  assert.match(output, /"signatureBoundToPrincipal":true/);
+  assert.match(output, /"bodyHashBound":true/);
+  assert.match(output, /"delimiterReinterpretationRejected":true/);
+  assert.match(output, /"postgresReplayExactlyOnce":true/);
+  assert.match(output, /"replayBlockedAcrossKeyRotation":true/);
+  assert.match(output, /"crossPrincipalNonceIsolation":true/);
+  assert.match(output, /"tamperDoesNotConsumeNonce":true/);
   process.stdout.write(output);
 }
 
@@ -80,14 +97,8 @@ async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgre
   const wrongPurpose = { ...operator, purpose: 'analytics-only' };
   const wrongPurposeAuditor = { ...auditor, purpose: 'analytics-only' };
 
-  await assert.rejects(
-    application.getById(ABAC_EVENT_ID, wrongTenant),
-    RoadEventNotFoundError
-  );
-  await assert.rejects(
-    application.getById(ABAC_EVENT_ID, wrongPurpose),
-    RoadEventNotFoundError
-  );
+  await assert.rejects(application.getById(ABAC_EVENT_ID, wrongTenant), RoadEventNotFoundError);
+  await assert.rejects(application.getById(ABAC_EVENT_ID, wrongPurpose), RoadEventNotFoundError);
 
   const wrongTenantPage = await application.list({ limit: 20, offset: 0 }, wrongTenant);
   const wrongPurposePage = await application.list({ limit: 20, offset: 0 }, wrongPurpose);
@@ -114,10 +125,7 @@ async function assertRoadEventAbac(postgres: ReturnType<typeof createNodePostgre
     RoadEventNotFoundError
   );
 
-  await assert.rejects(
-    application.timeline(ABAC_EVENT_ID, wrongPurposeAuditor),
-    RoadEventNotFoundError
-  );
+  await assert.rejects(application.timeline(ABAC_EVENT_ID, wrongPurposeAuditor), RoadEventNotFoundError);
 
   await assert.rejects(
     application.attachSignal({
@@ -155,24 +163,15 @@ async function run(): Promise<void> {
 
     const client = await postgres.connect();
     try {
-      await client.query(
-        `DELETE FROM outbox_events WHERE id = $1::uuid`,
-        [OUTBOX_ID]
-      );
+      await client.query(`DELETE FROM outbox_events WHERE id = $1::uuid`, [OUTBOX_ID]);
       await client.query(
         `INSERT INTO outbox_events (
            id, aggregate_type, aggregate_id, event_type, payload,
            correlation_id, tenant_id, purpose, occurred_at
          ) VALUES ($1::uuid, 'RoadEvent', $2::uuid, 'RoadEventCreated',
                    $3::jsonb, $4::uuid, $5, $6, now())`,
-        [
-          OUTBOX_ID,
-          AGGREGATE_ID,
-          { source: 'runtime-driver-integration' },
-          CORRELATION_ID,
-          RUNTIME_OUTBOX_SCOPE.tenantId,
-          RUNTIME_OUTBOX_SCOPE.purpose
-        ]
+        [OUTBOX_ID, AGGREGATE_ID, { source: 'runtime-driver-integration' }, CORRELATION_ID,
+         RUNTIME_OUTBOX_SCOPE.tenantId, RUNTIME_OUTBOX_SCOPE.purpose]
       );
     } finally {
       client.release();
@@ -211,6 +210,7 @@ async function run(): Promise<void> {
     assert.equal(entry?.message.purpose, RUNTIME_OUTBOX_SCOPE.purpose);
 
     proveRuntimeResilience();
+    proveCallbackAuthentication();
     await assertRoadEventAbac(postgres);
 
     process.stdout.write(JSON.stringify({
@@ -223,6 +223,7 @@ async function run(): Promise<void> {
       outboxScopeVerified: true,
       outboxScope: RUNTIME_OUTBOX_SCOPE,
       runtimeResilienceVerified: true,
+      callbackAuthenticationVerified: true,
       abacIsolationVerified: true,
       abacDimensions: ['tenant', 'purpose'],
       abacNegativePaths: ['detail', 'list', 'update', 'timeline', 'signal']
