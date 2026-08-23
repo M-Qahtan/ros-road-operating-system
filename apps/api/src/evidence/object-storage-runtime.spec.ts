@@ -29,7 +29,7 @@ function ecsCredentialResponse(overrides: Record<string, unknown> = {}): Record<
   return {
     AccessKeyId: 'ecs-temporary-access-key',
     SecretAccessKey: 'ecs-temporary-secret-material',
-    Token: 'ecs-temporary-session-token-material',
+    Token: 'test-only-ecs-session-token-material',
     Expiration: '2026-08-19T22:00:00.000Z',
     RoleArn: 'arn:aws:iam::123456789012:role/ros-staging-task',
     ...overrides
@@ -83,7 +83,7 @@ test('ECS task-role provider uses only the fixed link-local relative credential 
   assert.deepEqual(await provider.resolve(), {
     accessKeyId: 'ecs-temporary-access-key',
     secretAccessKey: 'ecs-temporary-secret-material',
-    sessionToken: 'ecs-temporary-session-token-material',
+    sessionToken: 'test-only-ecs-session-token-material',
     expiresAt: new Date('2026-08-19T22:00:00.000Z')
   });
   assert.equal(observedUrl, 'http://169.254.170.2/v2/credentials/abc123');
