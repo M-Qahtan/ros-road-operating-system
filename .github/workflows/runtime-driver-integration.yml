@@ -1,0 +1,136 @@
+name: Runtime Driver Integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-driver-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI_EVIDENCE_SCHEMA: ros-ci-evidence/v3
+  CI_EVIDENCE_RETENTION_DAYS: '365'
+  CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+  TESTED_MERGE_SHA: ${{ github.sha }}
+
+jobs:
+  runtime-driver-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://ros:runtime-integration-only@localhost:5432/ros
+      POSTGRES_PASSWORD: runtime-integration-only
+      REDIS_URL: redis://localhost:6379/0
+      ROS_OUTBOX_WORKER_ID: runtime-integration-worker
+      ROS_OUTBOX_STREAM: ros:integration-events
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: ros
+          POSTGRES_PASSWORD: runtime-integration-only
+          POSTGRES_DB: ros
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ros -d ros"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Check out tested candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Enable package manager
+        run: corepack enable
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Provide PostgreSQL client from pinned service image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime-ci-bin
+          cat > .runtime-ci-bin/psql <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm --network host \
+            -v "$PWD:/workspace:ro" \
+            -w /workspace \
+            -e PGPASSWORD="${PGPASSWORD:-}" \
+            postgis/postgis:16-3.4 \
+            psql "$@"
+          EOF
+          chmod +x .runtime-ci-bin/psql
+          echo "$PWD/.runtime-ci-bin" >> "$GITHUB_PATH"
+      - name: Apply migrations and database invariants
+        run: bash scripts/run-postgres-integration.sh
+      - name: Build API and dependencies
+        run: pnpm --filter @ros/api... build
+      - name: Prove PostgreSQL runtime delivery, outbox scope propagation and RoadEvent ABAC isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/api/dist/e2e/run-runtime-driver-integration.js 2>&1 | tee runtime-driver-integration.log
+          grep -q '"status":"PASS"' runtime-driver-integration.log
+          grep -q '"runtimeDeliveryMode":"runtime"' runtime-driver-integration.log
+          grep -q '"outboxScopeVerified":true' runtime-driver-integration.log
+          grep -q '"abacIsolationVerified":true' runtime-driver-integration.log
+      - name: Write runtime driver evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          cat > runtime-driver-integration-evidence.json <<EOF
+          {
+            "schema": "${CI_EVIDENCE_SCHEMA}",
+            "job": "runtime-driver-integration",
+            "repository": "${GITHUB_REPOSITORY}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "candidate_head_sha": "${CANDIDATE_HEAD_SHA}",
+            "candidate_base_sha": "${CANDIDATE_BASE_SHA}",
+            "tested_merge_sha": "${TESTED_MERGE_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "retention_days": "${CI_EVIDENCE_RETENTION_DAYS}"
+          }
+          EOF
+      - name: Validate runtime driver evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s runtime-driver-integration.log
+          node scripts/validate-ci-evidence.mjs runtime-driver-integration-evidence.json runtime-driver-integration
+      - name: Upload runtime driver evidence
+        if: always()
+        id: upload-evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-driver-integration-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            runtime-driver-integration.log
+            runtime-driver-integration-evidence.json
+          if-no-files-found: error
+          retention-days: 90

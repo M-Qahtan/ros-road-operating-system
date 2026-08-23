@@ -1,6 +1,12 @@
 export type EvidenceStatus = 'PENDING_UPLOAD' | 'SCANNING' | 'PRESERVED' | 'QUARANTINED';
 export type EvidenceAccessAction = 'UPLOAD' | 'DOWNLOAD';
 
+export interface EvidenceAccessPrincipal {
+  readonly actorId: string;
+  readonly tenantId: string;
+  readonly purpose: string;
+}
+
 export interface EvidenceRetentionPolicy {
   readonly retainUntil: Date;
   readonly legalHold: boolean;
@@ -47,7 +53,11 @@ export interface EvidenceRepository {
 }
 
 export interface RoadEventEvidenceAuthorization {
-  canAccess(actorId: string, roadEventId: string, action: EvidenceAccessAction): Promise<boolean>;
+  canAccess(
+    principal: EvidenceAccessPrincipal,
+    roadEventId: string,
+    action: EvidenceAccessAction
+  ): Promise<boolean>;
 }
 
 export interface StoredObjectMetadata {

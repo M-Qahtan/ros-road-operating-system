@@ -4,6 +4,7 @@ export interface LogContext {
   readonly operation?: string;
   readonly durationMs?: number;
   readonly errorCode?: string;
+  readonly runtimeMode?: 'simulation' | 'persistent';
 }
 
 export function structuredLog(

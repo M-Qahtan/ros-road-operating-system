@@ -1,28 +1,17 @@
 import { createServer, IncomingMessage } from 'node:http';
-import { RoadEventApplicationService } from './application/road-event-application.js';
-import {
-  MemoryIdempotencyAdapter,
-  MemoryRoadEventRepository,
-  MemorySignalAttachmentAdapter,
-  RoleMatrixAuthorizationAdapter
-} from './application/local-adapters.js';
 import { parsePort } from './config.js';
 import { createRoadEventHttpHandler } from './http/road-event-http.js';
+import { createRuntimeActorResolver } from './http/runtime-actor-resolver.js';
 import { applySecurityHeaders, resolveTraceId } from './request-security.js';
-import { evaluateReadiness, validateRuntimeEnvironment } from './runtime/operational-readiness.js';
+import { bootstrapRoadEventRuntime } from './runtime/runtime-bootstrap.js';
+import { validateRuntimeEnvironment } from './runtime/operational-readiness.js';
 import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
 
 validateRuntimeEnvironment(process.env);
 const port = parsePort(process.env.PORT);
-const repository = new MemoryRoadEventRepository();
-const application = new RoadEventApplicationService(
-  repository,
-  new RoleMatrixAuthorizationAdapter(),
-  new MemoryIdempotencyAdapter(),
-  new MemorySignalAttachmentAdapter(),
-  repository
-);
-const handleRoadEvent = createRoadEventHttpHandler(application);
+const actorResolver = createRuntimeActorResolver(process.env);
+const runtime = await bootstrapRoadEventRuntime(process.env);
+const handleRoadEvent = createRoadEventHttpHandler(runtime.application, actorResolver);
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -49,7 +38,7 @@ const server = createServer({ maxHeaderSize: 16 * 1024 }, async (request, respon
   }
 
   if (request.url === '/ready' && request.method === 'GET') {
-    const readiness = await evaluateReadiness(process.env);
+    const readiness = await runtime.readiness();
     response.writeHead(readiness.status === 'ready' ? 200 : 503);
     response.end(JSON.stringify({ ...readiness, service: 'ros-api', traceId }));
     return;
@@ -87,8 +76,23 @@ server.headersTimeout = 5_000;
 server.keepAliveTimeout = 5_000;
 server.maxRequestsPerSocket = 100;
 
+let shuttingDown = false;
+async function shutdown(signal: 'SIGTERM' | 'SIGINT'): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(structuredLog('info', 'ROS API shutdown requested', { operation: signal }));
+  await new Promise<void>((resolve) => { server.close(() => resolve()); });
+  try {
+    await runtime.close();
+  } catch {
+    process.exitCode = 1;
+    console.error(structuredLog('error', 'ROS runtime resource shutdown failed', { operation: 'runtime.close' }));
+  }
+}
+
+process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.once('SIGINT', () => { void shutdown('SIGINT'); });
+
 server.listen(port, () => {
-  console.log(structuredLog('info', 'ROS API listening', {
-    operation: `listen:${port}`
-  }));
+  console.log(structuredLog('info', 'ROS API listening', { operation: `listen:${port}`, runtimeMode: runtime.mode }));
 });

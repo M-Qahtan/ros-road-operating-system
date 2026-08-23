@@ -1,8 +1,10 @@
 import {
   RoadEvent,
+  RoadEventAccessScope,
   RoadEventAlreadyExistsError,
   RoadEventConcurrencyError,
   RoadEventListQuery,
+  RoadEventNotFoundError,
   RoadEventPage,
   RoadEventRepository,
   RoadEventWriteContext
@@ -12,6 +14,7 @@ import {
   AuditTimelinePort,
   AuthenticatedActor,
   AuthorizationPort,
+  IdempotencyInFlightError,
   IdempotencyPort,
   IdempotencyRecord,
   RoadEventPermission,
@@ -36,6 +39,10 @@ const ROLE_PERMISSIONS: Readonly<Record<RosRole, readonly RoadEventPermission[]>
   INTEGRATION_SERVICE: ['road_event:create', 'road_event:read', 'road_event:attach_signal']
 };
 
+function sameScope(left: RoadEventAccessScope, right: RoadEventAccessScope): boolean {
+  return left.tenantId === right.tenantId && left.purpose === right.purpose;
+}
+
 export class RoleMatrixAuthorizationAdapter implements AuthorizationPort {
   assertAllowed(actor: AuthenticatedActor, permission: RoadEventPermission): void {
     if (!actor.roles.some((role) => ROLE_PERMISSIONS[role]?.includes(permission) === true)) {
@@ -46,6 +53,21 @@ export class RoleMatrixAuthorizationAdapter implements AuthorizationPort {
 
 export class MemoryIdempotencyAdapter implements IdempotencyPort {
   private readonly records = new Map<string, IdempotencyRecord<unknown>>();
+  private readonly inFlight = new Set<string>();
+
+  async executeExclusively<T>(scope: string, key: string, operation: () => Promise<T>): Promise<T> {
+    const composite = `${scope}:${key}`;
+    if (this.inFlight.has(composite)) {
+      throw new IdempotencyInFlightError('Equivalent idempotent request is already in progress');
+    }
+    this.inFlight.add(composite);
+    try {
+      return await operation();
+    } finally {
+      this.inFlight.delete(composite);
+    }
+  }
+
   async get<T>(scope: string, key: string): Promise<IdempotencyRecord<T> | undefined> {
     return this.records.get(`${scope}:${key}`) as IdempotencyRecord<T> | undefined;
   }
@@ -58,8 +80,14 @@ export class MemoryIdempotencyAdapter implements IdempotencyPort {
 export class MemorySignalAttachmentAdapter implements SignalAttachmentPort {
   readonly attachments: SignalAttachmentInput[] = [];
   private readonly keys = new Set<string>();
+  constructor(private readonly repository?: RoadEventRepository) {}
+
   async attach(input: SignalAttachmentInput): Promise<void> {
-    const key = `${input.roadEventId}:${input.signalId}`;
+    if (this.repository !== undefined) {
+      const event = await this.repository.findById(input.roadEventId, input.actor);
+      if (event === undefined) throw new RoadEventNotFoundError(`RoadEvent ${input.roadEventId} was not found`);
+    }
+    const key = `${input.actor.tenantId}:${input.actor.purpose}:${input.roadEventId}:${input.signalId}`;
     if (this.keys.has(key)) return;
     this.keys.add(key);
     this.attachments.push({ ...input, mergeReasons: [...input.mergeReasons], actor: { ...input.actor, roles: [...input.actor.roles] } });
@@ -92,30 +120,42 @@ function eventSnapshot(event: RoadEvent): Readonly<Record<string, unknown>> {
 
 export class MemoryRoadEventRepository implements RoadEventRepository, AuditTimelinePort {
   private readonly events = new Map<string, RoadEvent>();
+  private readonly scopes = new Map<string, RoadEventAccessScope>();
   private readonly audit = new Map<string, AuditTimelineEntry[]>();
 
   async create(event: RoadEvent, context: RoadEventWriteContext): Promise<void> {
     if (this.events.has(event.id)) throw new RoadEventAlreadyExistsError(`RoadEvent ${event.id} already exists`);
     this.events.set(event.id, cloneEvent(event));
+    this.scopes.set(event.id, { tenantId: context.tenantId, purpose: context.purpose });
     this.appendAudit(event.id, context, null, eventSnapshot(event));
   }
 
   async update(event: RoadEvent, expectedVersion: number, context: RoadEventWriteContext): Promise<void> {
     const current = this.events.get(event.id);
-    if (current === undefined || current.version !== expectedVersion) {
+    const scope = this.scopes.get(event.id);
+    if (current === undefined || scope === undefined || !sameScope(scope, context)) {
+      throw new RoadEventNotFoundError(`RoadEvent ${event.id} was not found`);
+    }
+    if (current.version !== expectedVersion) {
       throw new RoadEventConcurrencyError(`RoadEvent ${event.id} expected version ${expectedVersion}`);
     }
     this.events.set(event.id, cloneEvent(event));
     this.appendAudit(event.id, context, eventSnapshot(current), eventSnapshot(event));
   }
 
-  async findById(id: string): Promise<RoadEvent | undefined> {
+  async findById(id: string, scope: RoadEventAccessScope): Promise<RoadEvent | undefined> {
     const event = this.events.get(id);
-    return event === undefined ? undefined : cloneEvent(event);
+    const eventScope = this.scopes.get(id);
+    return event === undefined || eventScope === undefined || !sameScope(eventScope, scope) ? undefined : cloneEvent(event);
   }
 
-  async list(query: RoadEventListQuery): Promise<RoadEventPage> {
-    const items = [...this.events.values()]
+  async list(query: RoadEventListQuery, scope: RoadEventAccessScope): Promise<RoadEventPage> {
+    const items = [...this.events.entries()]
+      .filter(([id]) => {
+        const eventScope = this.scopes.get(id);
+        return eventScope !== undefined && sameScope(eventScope, scope);
+      })
+      .map(([, event]) => event)
       .filter((event) => query.statuses === undefined || query.statuses.includes(event.status))
       .filter((event) => query.severities === undefined || query.severities.includes(event.severity.level))
       .filter((event) => query.occurredFrom === undefined || event.occurredAt >= query.occurredFrom)
@@ -129,7 +169,9 @@ export class MemoryRoadEventRepository implements RoadEventRepository, AuditTime
     };
   }
 
-  async listForRoadEvent(roadEventId: string): Promise<readonly AuditTimelineEntry[]> {
+  async listForRoadEvent(roadEventId: string, scope: RoadEventAccessScope): Promise<readonly AuditTimelineEntry[]> {
+    const eventScope = this.scopes.get(roadEventId);
+    if (eventScope === undefined || !sameScope(eventScope, scope)) return [];
     return [...(this.audit.get(roadEventId) ?? [])];
   }
 

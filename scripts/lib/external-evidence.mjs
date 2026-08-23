@@ -6,9 +6,11 @@ export const RETENTION_CLOCK_TOLERANCE_MS = 5 * 60 * 1_000;
 export const RETENTION_SAFETY_DAYS = 1;
 export const ARCHIVABLE_WORKFLOWS = Object.freeze([
   'CI',
+  'Object Storage Integration',
   'Operational Readiness',
   'Riyadh Failure-Mode Safety',
   'ROS Eye Pilot Readiness',
+  'Runtime Driver Integration',
   'Safety Fusion Evidence',
   'Security'
 ]);

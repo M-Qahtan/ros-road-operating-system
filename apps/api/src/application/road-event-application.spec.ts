@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { RoadEvent, RoadEventClosureRequiresHumanAuthorizationError, RoadEventStatus, SeverityLevel } from '@ros/domain';
-import { RoadEventApplicationService } from './road-event-application.js';
+import { deriveRoadEventIdempotencyScope, RoadEventApplicationService } from './road-event-application.js';
 import {
   AuthorizationDeniedError,
   MemoryIdempotencyAdapter,
@@ -14,10 +14,11 @@ import { AuthenticatedActor } from './ports.js';
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
 const TRACE_ID = 'trace-api-001';
+const SCOPE = { tenantId: 'riyadh-pilot', purpose: 'road-safety-response' } as const;
 
 function createFixture() {
   const repository = new MemoryRoadEventRepository();
-  const signals = new MemorySignalAttachmentAdapter();
+  const signals = new MemorySignalAttachmentAdapter(repository);
   const service = new RoadEventApplicationService(
     repository,
     new RoleMatrixAuthorizationAdapter(),
@@ -28,8 +29,8 @@ function createFixture() {
   return { repository, signals, service };
 }
 
-const operator: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'] };
-const supervisor: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['SUPERVISOR'] };
+const operator: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'], ...SCOPE };
+const supervisor: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['SUPERVISOR'], ...SCOPE };
 
 function context(key: string, actor: AuthenticatedActor = operator) {
   return { actor, traceId: TRACE_ID, idempotencyKey: key };
@@ -46,8 +47,45 @@ test('idempotent create retries return the same result without duplicate reposit
   const first = await service.create(command, context('create-event-0001'));
   const second = await service.create(command, context('create-event-0001'));
   assert.deepEqual(second, first);
-  assert.equal((await repository.list({ limit: 20, offset: 0 })).total, 1);
-  assert.equal((await repository.listForRoadEvent(EVENT_ID)).length, 1);
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, SCOPE)).total, 1);
+  assert.equal((await repository.listForRoadEvent(EVENT_ID, SCOPE)).length, 1);
+});
+
+test('idempotency scope derivation is unambiguous and bounded for valid access scopes', () => {
+  const first = deriveRoadEventIdempotencyScope('road_event:create', { tenantId: 'a:b', purpose: 'c' });
+  const second = deriveRoadEventIdempotencyScope('road_event:create', { tenantId: 'a', purpose: 'b:c' });
+  assert.notEqual(first, second);
+  assert.match(first, /^road-event:[0-9a-f]{64}$/);
+  assert.ok(first.length <= 128);
+
+  const maximum = deriveRoadEventIdempotencyScope('road_event:authorize_closure', {
+    tenantId: `t${'a'.repeat(127)}`,
+    purpose: `p${'b'.repeat(127)}`
+  });
+  assert.match(maximum, /^road-event:[0-9a-f]{64}$/);
+  assert.ok(maximum.length <= 128);
+});
+
+test('delimiter-equivalent tenant and purpose pairs do not share idempotency records', async () => {
+  const { repository, service } = createFixture();
+  const actorA: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'], tenantId: 'a:b', purpose: 'c' };
+  const actorB: AuthenticatedActor = { actorId: ACTOR_ID, roles: ['OPERATOR'], tenantId: 'a', purpose: 'b:c' };
+
+  await service.create({
+    id: EVENT_ID,
+    occurredAt: '2026-07-25T03:00:00.000Z',
+    latitude: 24.7136,
+    longitude: 46.6753
+  }, context('shared-key-0001', actorA));
+  await service.create({
+    id: '66666666-6666-4666-8666-666666666666',
+    occurredAt: '2026-07-25T03:01:00.000Z',
+    latitude: 24.7137,
+    longitude: 46.6754
+  }, context('shared-key-0001', actorB));
+
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, actorA)).total, 1);
+  assert.equal((await repository.list({ limit: 20, offset: 0 }, actorB)).total, 1);
 });
 
 test('operator cannot grant supervisor-only closure authorization', async () => {
@@ -59,6 +97,7 @@ test('operator cannot grant supervisor-only closure authorization', async () => 
     longitude: 46.6753,
     status: RoadEventStatus.Recovery
   }), {
+    ...SCOPE,
     actorType: 'SYSTEM',
     action: 'fixture.created',
     traceId: '33333333-3333-4333-8333-333333333333',
@@ -90,6 +129,7 @@ test('S3 closure remains blocked until supervisor authorization is persisted', a
     }
   });
   await repository.create(event, {
+    ...SCOPE,
     actorType: 'SYSTEM', action: 'fixture.created', traceId: '33333333-3333-4333-8333-333333333333',
     eventType: 'FixtureCreated', correlationId: '44444444-4444-4444-8444-444444444444'
   });

@@ -1,8 +1,8 @@
-import { RoadEvent } from '@ros/domain';
+import { RoadEvent, RoadEventAccessScope } from '@ros/domain';
 
 export type RosRole = 'OPERATOR' | 'SUPERVISOR' | 'AUDITOR' | 'INTEGRATION_SERVICE';
 
-export interface AuthenticatedActor {
+export interface AuthenticatedActor extends RoadEventAccessScope {
   readonly actorId: string;
   readonly roles: readonly RosRole[];
 }
@@ -27,7 +27,16 @@ export interface IdempotencyRecord<T> {
   readonly value: T;
 }
 
+export class IdempotencyInFlightError extends Error {
+  override readonly name = 'IdempotencyInFlightError';
+}
+
 export interface IdempotencyPort {
+  /**
+   * Ensures only one operation for a scope/key can cross the get -> operation -> put
+   * boundary at a time. Production implementations must coordinate across processes.
+   */
+  executeExclusively<T>(scope: string, key: string, operation: () => Promise<T>): Promise<T>;
   get<T>(scope: string, key: string): Promise<IdempotencyRecord<T> | undefined>;
   put<T>(scope: string, key: string, record: IdempotencyRecord<T>): Promise<void>;
 }
@@ -57,7 +66,7 @@ export interface AuditTimelineEntry {
 }
 
 export interface AuditTimelinePort {
-  listForRoadEvent(roadEventId: string): Promise<readonly AuditTimelineEntry[]>;
+  listForRoadEvent(roadEventId: string, scope: RoadEventAccessScope): Promise<readonly AuditTimelineEntry[]>;
 }
 
 export interface RoadEventReadModel {

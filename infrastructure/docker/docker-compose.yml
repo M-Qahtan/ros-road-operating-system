@@ -15,6 +15,7 @@ services:
       retries: 20
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ../../database/migrations:/docker-entrypoint-initdb.d:ro
 
   redis:
     image: redis:7-alpine
@@ -52,14 +53,11 @@ services:
       dockerfile: infrastructure/docker/api.Dockerfile
     environment:
       NODE_ENV: ${NODE_ENV:-staging}
+      ROS_RUNTIME_PROFILE: persistent
+      ROS_AUTH_PROFILE: simulation
       PORT: 3000
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL}
-      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?set OBJECT_STORAGE_ENDPOINT}
-      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?set OBJECT_STORAGE_ACCESS_KEY}
-      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?set OBJECT_STORAGE_SECRET_KEY}
-      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?set OBJECT_STORAGE_BUCKET}
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       OTEL_SERVICE_NAME: ros-api
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
@@ -69,10 +67,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)})"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/ready').then(r=>{if(!r.ok)process.exit(1)})"]
       interval: 10s
       timeout: 5s
       retries: 12

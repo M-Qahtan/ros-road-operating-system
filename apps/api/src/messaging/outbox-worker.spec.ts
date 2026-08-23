@@ -10,6 +10,7 @@ import {
 import { SimulatedAgencyConsumer, SimulatedAgencyNotification } from './simulated-agency-consumer.js';
 
 const MESSAGE_ID = '11111111-1111-4111-8111-111111111111';
+const MESSAGE_SCOPE = { tenantId: 'riyadh-pilot', purpose: 'road-safety-response' } as const;
 
 function message(retryCount = 0): OutboxMessage {
   return {
@@ -20,6 +21,7 @@ function message(retryCount = 0): OutboxMessage {
     payload: { severity: 'S4' },
     correlationId: '33333333-3333-4333-8333-333333333333',
     traceId: '44444444-4444-4444-8444-444444444444',
+    ...MESSAGE_SCOPE,
     occurredAt: new Date('2026-07-25T03:00:00.000Z'),
     retryCount
   };
@@ -92,7 +94,7 @@ test('retry delay is capped and jitter remains bounded', () => {
   assert.equal(calculateRetryDelayMs(20, 1_000, 10_000, () => 1), 10_000);
 });
 
-test('simulated agency consumer tolerates duplicate delivery', async () => {
+test('simulated agency consumer tolerates duplicate delivery and preserves trusted scope', async () => {
   const notifications: SimulatedAgencyNotification[] = [];
   const consumer = new SimulatedAgencyConsumer('AMBULANCE', new MemoryIdempotency(), {
     record: async (notification) => { notifications.push(notification); }
@@ -101,4 +103,18 @@ test('simulated agency consumer tolerates duplicate delivery', async () => {
   assert.equal(await consumer.consume(message()), 'duplicate');
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.simulation, true);
+  assert.equal(notifications[0]?.tenantId, MESSAGE_SCOPE.tenantId);
+  assert.equal(notifications[0]?.purpose, MESSAGE_SCOPE.purpose);
+});
+
+test('simulated agency consumer fails closed for routed RoadEvent without scope', async () => {
+  const consumer = new SimulatedAgencyConsumer('AMBULANCE', new MemoryIdempotency(), {
+    record: async () => undefined
+  });
+  const { tenantId: _tenantId, purpose: _purpose, ...unscoped } = message();
+
+  await assert.rejects(
+    () => consumer.consume(unscoped),
+    /missing trusted tenant\/purpose scope/
+  );
 });
