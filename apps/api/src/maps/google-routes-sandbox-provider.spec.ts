@@ -9,7 +9,7 @@ const REQUEST: AdvisoryRouteRequest = {
   destination: { latitude: 24.7743, longitude: 46.7386 },
   routingPreference: 'TRAFFIC_AWARE'
 };
-const API_KEY = 'AIzaSandboxOnlyExampleKey1234567890';
+const API_KEY = 'test-only-google-maps-key-0000001';
 
 test('Google adapter sends only minimum route inputs and an explicit narrow field mask', async () => {
   const calls: Array<{ readonly url: string; readonly init?: RequestInit }> = [];
