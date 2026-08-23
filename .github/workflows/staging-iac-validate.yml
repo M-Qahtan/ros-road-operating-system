@@ -1,0 +1,46 @@
+name: Staging IaC Validate
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/staging/aws/**'
+      - '.github/workflows/staging-iac-validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'infrastructure/staging/aws/**'
+      - '.github/workflows/staging-iac-validate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  staging-iac-validate:
+    name: staging-iac-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository without write credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform -chdir=infrastructure/staging/aws fmt -check -recursive
+
+      - name: Initialize Terraform without backend or cloud credentials
+        env:
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: terraform -chdir=infrastructure/staging/aws init -backend=false -input=false -no-color
+
+      - name: Validate Terraform configuration
+        env:
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: terraform -chdir=infrastructure/staging/aws validate -no-color
