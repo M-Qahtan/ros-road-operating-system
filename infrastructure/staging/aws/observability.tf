@@ -129,7 +129,7 @@ resource "aws_cloudwatch_metric_alarm" "postgres_free_storage" {
 
 resource "aws_cloudwatch_metric_alarm" "redis_cpu" {
   alarm_name          = "${var.name_prefix}-redis-cpu-high"
-  alarm_description   = "ROS staging Redis primary-node CPU utilization is high."
+  alarm_description   = "ROS staging Redis primary-node engine CPU utilization is high."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 5
   metric_name         = "EngineCPUUtilization"
@@ -141,6 +141,7 @@ resource "aws_cloudwatch_metric_alarm" "redis_cpu" {
 
   dimensions = {
     ReplicationGroupId = aws_elasticache_replication_group.redis.replication_group_id
+    Role               = "Primary"
   }
 
   alarm_actions = [aws_sns_topic.safety_alerts.arn]
