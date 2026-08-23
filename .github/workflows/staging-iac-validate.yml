@@ -33,7 +33,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Check Terraform formatting
-        run: terraform -chdir=infrastructure/staging/aws fmt -check -recursive
+        run: terraform -chdir=infrastructure/staging/aws fmt -check -diff -recursive
 
       - name: Initialize Terraform without backend or cloud credentials
         env:
