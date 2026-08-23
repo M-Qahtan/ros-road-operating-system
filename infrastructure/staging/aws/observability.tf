@@ -1,7 +1,7 @@
 resource "aws_sns_topic" "safety_alerts" {
   name              = "${var.name_prefix}-safety-alerts"
   display_name      = "ROS Staging Safety Alerts"
-  kms_master_key_id = "alias/aws/sns"
+  kms_master_key_id = aws_kms_key.alerts.arn
 
   tags = {
     OnCallOwner = var.oncall_owner
