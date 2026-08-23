@@ -193,6 +193,17 @@ variable "evidence_retention_days" {
   }
 }
 
+variable "audit_retention_days" {
+  description = "CloudTrail audit-log Object Lock COMPLIANCE retention."
+  type        = number
+  default     = 365
+
+  validation {
+    condition     = var.audit_retention_days >= 365
+    error_message = "Audit Object Lock COMPLIANCE retention must be at least 365 days."
+  }
+}
+
 variable "log_retention_days" {
   type    = number
   default = 365
