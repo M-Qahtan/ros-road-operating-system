@@ -145,8 +145,10 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
       throw new Error('Object quarantine verification failed; original object was retained');
     }
 
-    const remove = await this.fetchImpl(this.presign('DELETE', objectKey, expiresAt, {}), { method: 'DELETE' });
-    if (!remove.ok && remove.status !== 404) throw new Error(`Object quarantine delete failed with status ${remove.status}`);
+    // Quarantine is intentionally copy-and-retain. EvidenceService marks the
+    // record QUARANTINED, so normal downloads are blocked by domain state.
+    // Deleting the source would create a delete marker in versioned WORM/S3
+    // stores and could obscure retained evidence even though its version remains.
   }
 
   private presign(method: string, objectKey: string, expiresAt: Date, headers: Readonly<Record<string, string>>): string {
