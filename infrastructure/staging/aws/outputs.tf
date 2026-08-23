@@ -23,6 +23,16 @@ output "evidence_bucket_name" {
   value       = aws_s3_bucket.evidence.id
 }
 
+output "audit_bucket_name" {
+  description = "Private immutable CloudTrail audit bucket name."
+  value       = aws_s3_bucket.audit.id
+}
+
+output "cloudtrail_arn" {
+  description = "ROS staging CloudTrail ARN used for management and evidence-object data events."
+  value       = aws_cloudtrail.staging.arn
+}
+
 output "runtime_kms_key_arn" {
   description = "Runtime KMS key ARN."
   value       = aws_kms_key.runtime.arn
@@ -31,6 +41,11 @@ output "runtime_kms_key_arn" {
 output "evidence_kms_key_arn" {
   description = "Evidence KMS key ARN."
   value       = aws_kms_key.evidence.arn
+}
+
+output "audit_kms_key_arn" {
+  description = "CloudTrail audit-log KMS key ARN."
+  value       = aws_kms_key.audit.arn
 }
 
 output "database_secret_arn" {
