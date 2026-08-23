@@ -1,3 +1,4 @@
+import { createHash, createHmac } from 'node:crypto';
 import {
   EvidenceObjectStorage,
   SignedObjectRequest,
@@ -6,6 +7,11 @@ import {
 import { MinioEvidenceStorageAdapter } from './minio-storage-adapter.js';
 
 const MIN_CREDENTIAL_MARGIN_MS = 30_000;
+const ECS_TASK_CREDENTIALS_ORIGIN = 'http://169.254.170.2';
+const ECS_TASK_CREDENTIALS_PATH_PREFIX = '/v2/credentials/';
+const ECS_TASK_CREDENTIALS_TIMEOUT_MS = 2_000;
+const MAX_ECS_TASK_CREDENTIAL_RESPONSE_BYTES = 16 * 1024;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 
 export interface ObjectStorageCredentials {
   readonly accessKeyId: string;
@@ -76,6 +82,29 @@ function parseExpiry(raw: string | undefined): Date | undefined {
   return expiry;
 }
 
+function requireFreshTemporaryCredentials(
+  accessKeyId: string,
+  secretAccessKey: string,
+  sessionToken: string | undefined,
+  expiresAt: Date | undefined,
+  now: Date
+): ObjectStorageCredentials {
+  if (sessionToken === undefined || expiresAt === undefined) {
+    throw new ObjectStorageRuntimeConfigurationError(
+      'Production object storage requires temporary session credentials with an explicit expiry'
+    );
+  }
+  if (expiresAt.getTime() <= now.getTime() + MIN_CREDENTIAL_MARGIN_MS) {
+    throw new ObjectStorageRuntimeConfigurationError('Object-storage credentials are expired or too close to expiry');
+  }
+  return {
+    accessKeyId,
+    secretAccessKey,
+    sessionToken,
+    expiresAt: new Date(expiresAt)
+  };
+}
+
 export class EnvironmentObjectStorageCredentialProvider implements ObjectStorageCredentialProviderPort {
   constructor(
     private readonly environment: NodeJS.ProcessEnv,
@@ -100,9 +129,13 @@ export class EnvironmentObjectStorageCredentialProvider implements ObjectStorage
       : validCredentialText(sessionTokenRaw, 'OBJECT_STORAGE_SESSION_TOKEN', 8);
     const expiresAt = parseExpiry(this.environment.OBJECT_STORAGE_CREDENTIAL_EXPIRES_AT);
 
-    if (this.production && (sessionToken === undefined || expiresAt === undefined)) {
-      throw new ObjectStorageRuntimeConfigurationError(
-        'Production object storage requires temporary session credentials with an explicit expiry'
+    if (this.production) {
+      return requireFreshTemporaryCredentials(
+        accessKeyId,
+        secretAccessKey,
+        sessionToken,
+        expiresAt,
+        this.now()
       );
     }
     if (expiresAt !== undefined && expiresAt.getTime() <= this.now().getTime() + MIN_CREDENTIAL_MARGIN_MS) {
@@ -118,10 +151,148 @@ export class EnvironmentObjectStorageCredentialProvider implements ObjectStorage
   }
 }
 
+function ecsTaskCredentialEndpoint(environment: NodeJS.ProcessEnv): string {
+  const relativeUri = required(environment, 'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI');
+  if (
+    CONTROL_CHARACTER_PATTERN.test(relativeUri) ||
+    !relativeUri.startsWith(ECS_TASK_CREDENTIALS_PATH_PREFIX) ||
+    relativeUri.includes('\\') ||
+    relativeUri.includes('?') ||
+    relativeUri.includes('#') ||
+    relativeUri.split('/').some((segment) => segment === '.' || segment === '..')
+  ) {
+    throw new ObjectStorageRuntimeConfigurationError(
+      'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI is outside the approved ECS task-role credential path'
+    );
+  }
+
+  const endpoint = new URL(relativeUri, ECS_TASK_CREDENTIALS_ORIGIN);
+  if (
+    endpoint.origin !== ECS_TASK_CREDENTIALS_ORIGIN ||
+    !endpoint.pathname.startsWith(ECS_TASK_CREDENTIALS_PATH_PREFIX) ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash
+  ) {
+    throw new ObjectStorageRuntimeConfigurationError(
+      'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI resolved outside the approved ECS task-role endpoint'
+    );
+  }
+  return endpoint.toString();
+}
+
+function credentialResponseObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new ObjectStorageRuntimeConfigurationError('ECS task-role credential response is malformed');
+  }
+  return value as Record<string, unknown>;
+}
+
+function credentialResponseField(record: Record<string, unknown>, field: string, minimum: number): string {
+  const value = record[field];
+  if (typeof value !== 'string') {
+    throw new ObjectStorageRuntimeConfigurationError(`ECS task-role credential response is missing ${field}`);
+  }
+  return validCredentialText(value, `ECS_${field}`, minimum);
+}
+
+/**
+ * Resolves automatically rotated ECS/Fargate task-role credentials from the
+ * link-local container credential endpoint. Only the ECS relative-URI contract
+ * is accepted; caller-controlled full credential URLs are deliberately rejected.
+ */
+export class EcsTaskRoleObjectStorageCredentialProvider implements ObjectStorageCredentialProviderPort {
+  constructor(
+    private readonly environment: NodeJS.ProcessEnv,
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly now: () => Date = () => new Date()
+  ) {}
+
+  async resolve(): Promise<ObjectStorageCredentials> {
+    const endpoint = ecsTaskCredentialEndpoint(this.environment);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ECS_TASK_CREDENTIALS_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await this.fetchImpl(endpoint, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        redirect: 'error',
+        cache: 'no-store',
+        signal: controller.signal
+      });
+    } catch {
+      throw new ObjectStorageRuntimeConfigurationError('ECS task-role credential request failed');
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      throw new ObjectStorageRuntimeConfigurationError(
+        `ECS task-role credential endpoint returned status ${response.status}`
+      );
+    }
+
+    const contentLength = response.headers.get('content-length');
+    if (contentLength !== null) {
+      const declaredBytes = Number(contentLength);
+      if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0 || declaredBytes > MAX_ECS_TASK_CREDENTIAL_RESPONSE_BYTES) {
+        throw new ObjectStorageRuntimeConfigurationError('ECS task-role credential response is oversized');
+      }
+    }
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > MAX_ECS_TASK_CREDENTIAL_RESPONSE_BYTES) {
+      throw new ObjectStorageRuntimeConfigurationError('ECS task-role credential response is oversized');
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new ObjectStorageRuntimeConfigurationError('ECS task-role credential response is not valid JSON');
+    }
+    const record = credentialResponseObject(parsed);
+    const accessKeyId = credentialResponseField(record, 'AccessKeyId', 1);
+    const secretAccessKey = credentialResponseField(record, 'SecretAccessKey', 8);
+    const sessionToken = credentialResponseField(record, 'Token', 8);
+    const expiration = credentialResponseField(record, 'Expiration', 1);
+    const expiresAt = parseExpiry(expiration);
+
+    return requireFreshTemporaryCredentials(
+      accessKeyId,
+      secretAccessKey,
+      sessionToken,
+      expiresAt,
+      this.now()
+    );
+  }
+}
+
+function defaultCredentialProvider(
+  environment: NodeJS.ProcessEnv,
+  production: boolean,
+  credentialFetchImpl?: typeof fetch
+): ObjectStorageCredentialProviderPort {
+  const relativeUri = environment.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI?.trim();
+  if (relativeUri !== undefined && relativeUri !== '') {
+    return new EcsTaskRoleObjectStorageCredentialProvider(
+      environment,
+      credentialFetchImpl ?? fetch
+    );
+  }
+  if ((environment.AWS_CONTAINER_CREDENTIALS_FULL_URI ?? '').trim() !== '') {
+    throw new ObjectStorageRuntimeConfigurationError(
+      'AWS_CONTAINER_CREDENTIALS_FULL_URI is not accepted by ROS; use ECS relative task-role credentials or inject a trusted provider'
+    );
+  }
+  return new EnvironmentObjectStorageCredentialProvider(environment, production);
+}
+
 /**
  * Resolves credentials for every signed operation. This keeps EvidenceService
- * independent from the credential source and allows a future IAM/STS metadata
- * provider without changing evidence domain logic.
+ * independent from the credential source and allows IAM/STS rotation without
+ * changing evidence domain logic.
  */
 export class RotatingMinioEvidenceStorageAdapter implements EvidenceObjectStorage {
   private readonly now: () => Date;
@@ -188,14 +359,18 @@ export class RotatingMinioEvidenceStorageAdapter implements EvidenceObjectStorag
 
 export function createEvidenceObjectStorageForRuntime(
   environment: NodeJS.ProcessEnv,
-  dependencies: { readonly credentialProvider?: ObjectStorageCredentialProviderPort; readonly fetchImpl?: typeof fetch } = {}
+  dependencies: {
+    readonly credentialProvider?: ObjectStorageCredentialProviderPort;
+    readonly fetchImpl?: typeof fetch;
+    readonly credentialFetchImpl?: typeof fetch;
+  } = {}
 ): EvidenceObjectStorage {
   const production = (environment.NODE_ENV ?? 'development').trim().toLowerCase() === 'production';
   const now = () => new Date();
-  const provider = dependencies.credentialProvider ?? new EnvironmentObjectStorageCredentialProvider(
+  const provider = dependencies.credentialProvider ?? defaultCredentialProvider(
     environment,
     production,
-    now
+    dependencies.credentialFetchImpl
   );
   return new RotatingMinioEvidenceStorageAdapter({
     endpoint: requireEndpoint(required(environment, 'OBJECT_STORAGE_ENDPOINT'), production),
