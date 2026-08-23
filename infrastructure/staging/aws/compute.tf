@@ -1,7 +1,7 @@
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/ros/staging/api"
   retention_in_days = var.log_retention_days
-  kms_key_id        = aws_kms_key.runtime.arn
+  kms_key_id        = aws_kms_key.logs.arn
 
   lifecycle {
     prevent_destroy = true
@@ -11,7 +11,7 @@ resource "aws_cloudwatch_log_group" "api" {
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/ros/staging/worker"
   retention_in_days = var.log_retention_days
-  kms_key_id        = aws_kms_key.runtime.arn
+  kms_key_id        = aws_kms_key.logs.arn
 
   lifecycle {
     prevent_destroy = true
