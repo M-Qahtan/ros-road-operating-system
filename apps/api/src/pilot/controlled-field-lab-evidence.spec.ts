@@ -3,7 +3,7 @@ import test from 'node:test';
 import { RealDeviceEvidenceBundle } from './real-device-evidence.js';
 import { evaluateRequiredLocaleCoverage } from './controlled-field-lab-evidence.js';
 
-const HEAD = '6f7263e9ec878d2bec3c84f6651fe8b1a1da5292';
+const HEAD = 'c'.repeat(40);
 const BUILD = 'a'.repeat(64);
 const FILE_SHA = 'b'.repeat(64);
 
