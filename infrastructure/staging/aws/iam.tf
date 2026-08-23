@@ -62,17 +62,7 @@ resource "aws_iam_role" "worker_task" {
 
 data "aws_iam_policy_document" "api_evidence_access" {
   statement {
-    sid    = "ListEvidenceBucket"
-    effect = "Allow"
-    actions = [
-      "s3:GetBucketLocation",
-      "s3:ListBucket"
-    ]
-    resources = [aws_s3_bucket.evidence.arn]
-  }
-
-  statement {
-    sid    = "ReadWriteEvidenceObjectsWithoutDelete"
+    sid    = "ReadWriteEvidenceObjectsWithoutDeleteOrEnumeration"
     effect = "Allow"
     actions = [
       "s3:GetObject",
