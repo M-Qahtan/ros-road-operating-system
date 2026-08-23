@@ -35,13 +35,13 @@ jobs:
       - name: Check Terraform formatting
         run: terraform -chdir=infrastructure/staging/aws fmt -check -diff -recursive
 
-      - name: Initialize Terraform without backend or cloud credentials
+      - name: Initialize Terraform with reviewed provider lock
         env:
           AWS_EC2_METADATA_DISABLED: 'true'
-        run: terraform -chdir=infrastructure/staging/aws init -backend=false -input=false -no-color
+        run: terraform -chdir=infrastructure/staging/aws init -backend=false -input=false -lockfile=readonly -no-color
 
-      - name: Emit generated provider lock for controlled review
-        run: cat infrastructure/staging/aws/.terraform.lock.hcl
+      - name: Verify provider lock remains unchanged
+        run: git diff --exit-code -- infrastructure/staging/aws/.terraform.lock.hcl
 
       - name: Validate Terraform configuration
         env:
