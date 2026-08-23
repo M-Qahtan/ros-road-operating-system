@@ -40,6 +40,9 @@ jobs:
           AWS_EC2_METADATA_DISABLED: 'true'
         run: terraform -chdir=infrastructure/staging/aws init -backend=false -input=false -no-color
 
+      - name: Emit generated provider lock for controlled review
+        run: cat infrastructure/staging/aws/.terraform.lock.hcl
+
       - name: Validate Terraform configuration
         env:
           AWS_EC2_METADATA_DISABLED: 'true'
