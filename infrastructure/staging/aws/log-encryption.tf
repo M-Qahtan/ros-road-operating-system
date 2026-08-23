@@ -40,7 +40,7 @@ data "aws_iam_policy_document" "logs_kms" {
     condition {
       test     = "ArnLike"
       variable = "kms:EncryptionContext:aws:logs:arn"
-      values   = [for arn in local.staging_log_group_arns : "${arn}:*"]
+      values   = local.staging_log_group_arns
     }
   }
 }
