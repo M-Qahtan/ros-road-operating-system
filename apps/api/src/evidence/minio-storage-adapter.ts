@@ -96,6 +96,7 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
     const requiredHeaders = {
       'content-length': String(sizeBytes),
       'content-type': contentType,
+      'x-amz-sdk-checksum-algorithm': 'SHA256',
       'x-amz-checksum-sha256': Buffer.from(checksumSha256, 'hex').toString('base64')
     };
     return {
