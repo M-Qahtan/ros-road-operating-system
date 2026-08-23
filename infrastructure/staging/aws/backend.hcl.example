@@ -1,0 +1,9 @@
+# Example only. Copy outside Git and fill with the already-approved Terraform state boundary.
+# Never commit live account-specific backend configuration or credentials.
+
+bucket         = "REPLACE_WITH_APPROVED_TERRAFORM_STATE_BUCKET"
+key            = "ros/staging/runtime/terraform.tfstate"
+region         = "me-central-1"
+encrypt        = true
+kms_key_id     = "REPLACE_WITH_APPROVED_STATE_KMS_KEY_ARN"
+dynamodb_table = "REPLACE_IF_APPROVED_LOCK_TABLE_IS_USED"
