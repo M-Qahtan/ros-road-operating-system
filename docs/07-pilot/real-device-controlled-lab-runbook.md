@@ -2,11 +2,15 @@
 
 ## Mission
 
-Produce byte-verified Android and iOS evidence for ROS MVP RC1 under a controlled field-lab boundary. This procedure validates device behavior and accessibility; it does not authorize public-road operation or external emergency action.
+Produce byte-verified Android and iOS evidence for the exact ROS candidate under test within a controlled field-lab boundary. This procedure validates device behavior and accessibility; it does not authorize public-road operation or external emergency action.
 
-**Authoritative RC1 main SHA:** `6f7263e9ec878d2bec3c84f6651fe8b1a1da5292`
+## Exact candidate binding
 
-Any executed build must be bound to the exact reviewed Git head under test. If that head changes, all code-bound field evidence is stale and must be recollected.
+There is deliberately no hard-coded moving `main` SHA in this runbook.
+
+Every executed build and every evidence bundle must be bound to the exact reviewed Git head supplied to the validator as `<expected-candidate-head-sha>`. The trusted expected SHA must come from the approved review/release record outside the evidence bundle. The bundle cannot choose its own trusted candidate identity.
+
+If the reviewed candidate head changes for any reason, all code-bound field evidence for the prior head is stale and must be recollected or explicitly dispositioned by the review authority. Never relabel old device evidence as belonging to a newer candidate.
 
 ## Mandatory device and language matrix
 
@@ -51,7 +55,7 @@ Every session must use the existing `ros-real-device-evidence/v1` contract and i
 - scenario result and counters;
 - evidence file path, byte size and lowercase SHA-256.
 
-The verifier independently reads every evidence file under the supplied evidence root, rejects symlinks/path escape, verifies byte size + SHA-256 and compares every session to the trusted expected Git SHA.
+The verifier independently reads every evidence file under the supplied evidence root, rejects symlinks/path escape, verifies byte size + SHA-256 and compares every session to the trusted expected Git SHA supplied outside the bundle.
 
 ## Privacy boundary
 
@@ -87,6 +91,7 @@ Any of the following is a hard NO-GO:
 - mismatched/unverified candidate head;
 - evidence byte/hash mismatch;
 - mixed candidate heads across sessions;
+- evidence collected for a superseded code head and relabeled without recollection;
 - any real emergency dispatch, public-road autonomous intervention, live camera program or vehicle actuation.
 
 ## Handoff
