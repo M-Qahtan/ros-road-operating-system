@@ -136,8 +136,8 @@ resource "aws_ecs_task_definition" "api" {
         protocol      = "tcp"
         name          = "http"
       }]
-      environment = local.api_environment
-      secrets     = local.runtime_secrets
+      environment            = local.api_environment
+      secrets                = local.runtime_secrets
       readonlyRootFilesystem = true
       linuxParameters = {
         initProcessEnabled = true
@@ -187,7 +187,7 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "REDIS_CONNECT_TIMEOUT_MS", value = "2000" },
         { name = "REDIS_MAX_RECONNECT_ATTEMPTS", value = "5" }
       ]
-      secrets = local.runtime_secrets
+      secrets                = local.runtime_secrets
       readonlyRootFilesystem = true
       linuxParameters = {
         initProcessEnabled = true
