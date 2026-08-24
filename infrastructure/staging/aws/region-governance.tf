@@ -1,6 +1,10 @@
 # Hosting and pilot geography are deliberately separate concepts.
 # The current cloud staging slice is pinned to AWS Middle East (UAE), me-central-1.
 # Riyadh is the pilot geography, not the AWS hosting region.
+#
+# Each variable below is locked to its approved value with Terraform variable
+# validation. Attempts to widen or relabel this boundary therefore fail during
+# Terraform input validation rather than becoming review-only warnings.
 
 variable "pilot_geography" {
   description = "Operational pilot geography. This does not make the cloud environment Saudi-hosted."
@@ -54,19 +58,5 @@ variable "real_incident_data_allowed" {
   validation {
     condition     = var.real_incident_data_allowed == false
     error_message = "Real incident/evidence/medical/legal data is forbidden in the temporary UAE staging slice."
-  }
-}
-
-check "staging_region_governance" {
-  assert {
-    condition = (
-      var.aws_region == "me-central-1" &&
-      var.pilot_geography == "Riyadh, Saudi Arabia" &&
-      var.cloud_jurisdiction == "United Arab Emirates" &&
-      var.saudi_hosted == false &&
-      var.staging_data_classification == "SYNTHETIC_NON_SENSITIVE_ONLY" &&
-      var.real_incident_data_allowed == false
-    )
-    error_message = "ROS staging governance mismatch: Riyadh is the pilot geography; me-central-1 is UAE cloud staging and may contain synthetic/non-sensitive data only."
   }
 }
