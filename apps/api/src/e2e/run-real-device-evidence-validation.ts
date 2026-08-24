@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { evaluateControlledFieldLabEvidence } from '../pilot/controlled-field-lab-evidence.js';
 import {
-  evaluateRealDeviceEvidence,
   parseRealDeviceEvidenceBundle,
   verifyRealDeviceEvidenceFiles
 } from '../pilot/real-device-evidence.js';
@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const parsed: unknown = JSON.parse(source);
   const bundle = parseRealDeviceEvidenceBundle(parsed);
   const verification = await verifyRealDeviceEvidenceFiles(bundle, evidenceRoot, expectedCandidateHeadSha);
-  const result = evaluateRealDeviceEvidence(bundle, verification);
+  const result = evaluateControlledFieldLabEvidence(bundle, verification);
 
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (result.status !== 'PASS') process.exitCode = 2;
