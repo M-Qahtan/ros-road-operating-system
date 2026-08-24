@@ -10,6 +10,7 @@ import {
   EvidenceRecord,
   EvidenceRepository,
   EvidenceUnavailableError,
+  EvidenceValidationError,
   MalwareScanner,
   RoadEventEvidenceAuthorization,
   SignedObjectRequest,
@@ -23,6 +24,7 @@ const EVENT_B = '33333333-3333-4333-8333-333333333333';
 const TRACE_ID = 'trace-evidence-1';
 const CHECKSUM = 'a'.repeat(64);
 const NOW = new Date('2026-07-25T04:00:00.000Z');
+const DAY_MS = 24 * 60 * 60 * 1000;
 const PRINCIPAL_A: EvidenceAccessPrincipal = {
   actorId: 'operator-a',
   tenantId: 'riyadh-ops',
@@ -142,6 +144,64 @@ test('upload intent sanitizes filename, binds RoadEvent and returns a short-live
   assert.equal(result.evidence.originalFilename, 'camera_frame.jpg');
   assert.match(result.evidence.objectKey, new RegExp(`road-events/${EVENT_A}/evidence/${EVIDENCE_ID}/camera_frame.jpg$`));
   assert.equal(result.upload.expiresAt.toISOString(), '2026-07-25T04:02:00.000Z');
+  assert.deepEqual(harness.repository.audits, ['evidence.upload_intent_created']);
+});
+
+test('MVP bounded retention rejects legal hold before storage or repository side effects', async () => {
+  const harness = createHarness();
+  await assert.rejects(
+    harness.service.createUploadIntent({
+      roadEventId: EVENT_A,
+      principal: PRINCIPAL_A,
+      traceId: TRACE_ID,
+      filename: 'frame.jpg',
+      contentType: 'image/jpeg',
+      sizeBytes: 1024,
+      checksumSha256: CHECKSUM,
+      retention: { retainUntil: new Date(NOW.getTime() + 30 * DAY_MS), legalHold: true }
+    }),
+    (error: unknown) => error instanceof EvidenceValidationError && /legalHold/.test(error.message)
+  );
+  assert.deepEqual(harness.storage.uploadRequests, []);
+  assert.deepEqual(harness.repository.audits, []);
+  assert.equal(harness.repository.records.size, 0);
+});
+
+test('MVP bounded retention rejects a deadline beyond the 365-day storage guarantee without side effects', async () => {
+  const harness = createHarness();
+  await assert.rejects(
+    harness.service.createUploadIntent({
+      roadEventId: EVENT_A,
+      principal: PRINCIPAL_A,
+      traceId: TRACE_ID,
+      filename: 'frame.jpg',
+      contentType: 'image/jpeg',
+      sizeBytes: 1024,
+      checksumSha256: CHECKSUM,
+      retention: { retainUntil: new Date(NOW.getTime() + 365 * DAY_MS + 1), legalHold: false }
+    }),
+    (error: unknown) => error instanceof EvidenceValidationError && /365-day MVP storage guarantee/.test(error.message)
+  );
+  assert.deepEqual(harness.storage.uploadRequests, []);
+  assert.deepEqual(harness.repository.audits, []);
+  assert.equal(harness.repository.records.size, 0);
+});
+
+test('MVP bounded retention accepts the exact 365-day boundary', async () => {
+  const harness = createHarness();
+  const result = await harness.service.createUploadIntent({
+    roadEventId: EVENT_A,
+    principal: PRINCIPAL_A,
+    traceId: TRACE_ID,
+    filename: 'frame.jpg',
+    contentType: 'image/jpeg',
+    sizeBytes: 1024,
+    checksumSha256: CHECKSUM,
+    retention: { retainUntil: new Date(NOW.getTime() + 365 * DAY_MS), legalHold: false }
+  });
+  assert.equal(result.evidence.retention.retainUntil.toISOString(), new Date(NOW.getTime() + 365 * DAY_MS).toISOString());
+  assert.equal(result.evidence.retention.legalHold, false);
+  assert.equal(harness.storage.uploadRequests.length, 1);
   assert.deepEqual(harness.repository.audits, ['evidence.upload_intent_created']);
 });
 
