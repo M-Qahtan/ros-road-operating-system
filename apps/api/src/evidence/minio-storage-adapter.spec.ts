@@ -28,7 +28,7 @@ function metadataHeaders(checksumHex: string) {
   };
 }
 
-test('upload request signs required content metadata with a short expiry', async () => {
+test('upload request signs Object Lock compatible SHA256 integrity headers with a short expiry', async () => {
   const request = await adapter().createUploadRequest(
     'road-events/event/evidence/id/frame.jpg',
     'image/jpeg',
@@ -40,9 +40,13 @@ test('upload request signs required content metadata with a short expiry', async
   assert.equal(url.hostname, '127.0.0.1');
   assert.equal(url.searchParams.get('X-Amz-Expires'), '120');
   assert.equal(url.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
-  assert.match(url.searchParams.get('X-Amz-SignedHeaders') ?? '', /content-length;content-type;host;x-amz-checksum-sha256/);
+  assert.match(
+    url.searchParams.get('X-Amz-SignedHeaders') ?? '',
+    /content-length;content-type;host;x-amz-checksum-sha256;x-amz-sdk-checksum-algorithm/
+  );
   assert.equal(request.requiredHeaders['content-length'], '1024');
   assert.equal(request.requiredHeaders['content-type'], 'image/jpeg');
+  assert.equal(request.requiredHeaders['x-amz-sdk-checksum-algorithm'], 'SHA256');
   assert.equal(request.requiredHeaders['x-amz-checksum-sha256'], Buffer.from('a'.repeat(64), 'hex').toString('base64'));
 });
 
