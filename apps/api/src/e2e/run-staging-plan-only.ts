@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -69,6 +69,26 @@ async function ensureCleanExactGitHead(repoRoot: string, expectedHead: string): 
   if (status.trim().length !== 0) throw new Error('repository working tree must be clean before PLAN_ONLY execution');
 }
 
+async function runSilent(
+  executable: string,
+  args: readonly string[],
+  options: { readonly env?: NodeJS.ProcessEnv; readonly timeoutMs: number },
+  label: string
+): Promise<void> {
+  try {
+    await execFileAsync(executable, [...args], {
+      encoding: 'utf8',
+      timeout: options.timeoutMs,
+      maxBuffer: 16 * 1024 * 1024,
+      windowsHide: true,
+      env: options.env
+    });
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error(`${label} executable is unavailable`);
+    throw new Error(`${label} failed; captured command output was suppressed to protect sensitive plan/input data`);
+  }
+}
+
 async function ensureOutputNamesAvailable(outputDir: string): Promise<{ planPath: string; packagePath: string; decisionPath: string; digestPath: string }> {
   const paths = {
     planPath: join(outputDir, 'ros-staging.tfplan'),
@@ -116,7 +136,7 @@ async function main(): Promise<void> {
     { timeoutMs: 60_000 }
   );
   const temporaryCredentials = parseShortLivedCredentialExport(credentialExport);
-  const terraformAwsEnv: NodeJS.ProcessEnv = {
+  const temporaryAwsEnv: NodeJS.ProcessEnv = {
     ...process.env,
     AWS_ACCESS_KEY_ID: temporaryCredentials.accessKeyId,
     AWS_SECRET_ACCESS_KEY: temporaryCredentials.secretAccessKey,
@@ -125,19 +145,21 @@ async function main(): Promise<void> {
     AWS_DEFAULT_REGION: ROS_STAGING_REGION,
     AWS_EC2_METADATA_DISABLED: 'true'
   };
-  delete terraformAwsEnv.AWS_PROFILE;
-  delete terraformAwsEnv.AWS_DEFAULT_PROFILE;
+  delete temporaryAwsEnv.AWS_PROFILE;
+  delete temporaryAwsEnv.AWS_DEFAULT_PROFILE;
 
+  // All account/region checks and Terraform planning use the exact temporary
+  // credential export validated above. The profile is not consulted again.
   const stsIdentity = await executeJson(
     'aws',
-    [...profileArgs(profile), 'sts', 'get-caller-identity', '--region', ROS_STAGING_REGION, '--output', 'json'],
-    { timeoutMs: 60_000 }
+    ['sts', 'get-caller-identity', '--region', ROS_STAGING_REGION, '--output', 'json'],
+    { timeoutMs: 60_000, env: temporaryAwsEnv }
   );
   const account = accountId(stsIdentity);
   const regionState = await executeJson(
     'aws',
-    [...profileArgs(profile), 'ec2', 'describe-regions', '--region', ROS_STAGING_REGION, '--region-names', ROS_STAGING_REGION, '--all-regions', '--output', 'json'],
-    { timeoutMs: 60_000 }
+    ['ec2', 'describe-regions', '--region', ROS_STAGING_REGION, '--region-names', ROS_STAGING_REGION, '--all-regions', '--output', 'json'],
+    { timeoutMs: 60_000, env: temporaryAwsEnv }
   );
   if (!regionEnabled(regionState)) throw new Error(`${ROS_STAGING_REGION} is not enabled for the authenticated AWS account`);
 
@@ -145,30 +167,36 @@ async function main(): Promise<void> {
   const workDir = join(workParent, 'aws');
   const sourceIac = resolve(repoRoot, 'infrastructure/staging/aws');
   try {
-    await mkdir(workDir, { recursive: true });
+    // Copy into an isolated disposable workspace so init never mutates the Git checkout.
     await cp(sourceIac, workDir, { recursive: true, force: false, errorOnExist: true });
 
-    await execFileAsync('terraform', ['-chdir=' + workDir, 'init', '-backend=false', '-input=false', '-lockfile=readonly', '-no-color'], {
-      encoding: 'utf8', timeout: 180_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true, env: terraformAwsEnv
-    });
-    await execFileAsync('terraform', [
-      '-chdir=' + workDir,
-      'plan',
-      '-input=false',
-      '-lock-timeout=60s',
-      '-no-color',
-      '-out=' + outputs.planPath,
-      '-var-file=' + tfvarsPath
-    ], {
-      encoding: 'utf8', timeout: 300_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true, env: terraformAwsEnv
-    });
+    await runSilent(
+      'terraform',
+      ['-chdir=' + workDir, 'init', '-backend=false', '-input=false', '-lockfile=readonly', '-no-color'],
+      { env: temporaryAwsEnv, timeoutMs: 180_000 },
+      'Terraform init'
+    );
+    await runSilent(
+      'terraform',
+      [
+        '-chdir=' + workDir,
+        'plan',
+        '-input=false',
+        '-lock-timeout=60s',
+        '-no-color',
+        '-out=' + outputs.planPath,
+        '-var-file=' + tfvarsPath
+      ],
+      { env: temporaryAwsEnv, timeoutMs: 300_000 },
+      'Terraform plan'
+    );
 
     const verifiedPlan = await verifyTerraformPlanFile(outputs.planPath);
     const evidenceFiles = [];
     for (const input of runnerManifest.evidenceFiles) {
       const fullPath = resolve(evidenceRoot, input.path);
-      const rel = fullPath.slice(evidenceRoot.length);
-      if (!(fullPath === evidenceRoot || rel.startsWith('/') || rel.startsWith('\\'))) {
+      const suffix = fullPath.slice(evidenceRoot.length);
+      if (!(fullPath === evidenceRoot || suffix.startsWith('/') || suffix.startsWith('\\'))) {
         throw new Error(`evidence path escapes evidence root: ${input.path}`);
       }
       const digest = await sha256File(fullPath);
