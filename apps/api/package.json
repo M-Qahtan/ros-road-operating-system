@@ -15,7 +15,8 @@
     "evaluate:safety-fusion": "pnpm build && node dist/e2e/run-safety-fusion-evaluation.js",
     "validate:real-device-evidence": "pnpm build && node dist/e2e/run-real-device-evidence-validation.js",
     "validate:partner-sandbox-evidence": "pnpm build && node dist/e2e/run-partner-sandbox-evidence-validation.js",
-    "validate:staging-cloud-review": "pnpm build && node dist/e2e/run-staging-cloud-review.js"
+    "validate:staging-cloud-review": "pnpm build && node dist/e2e/run-staging-cloud-review.js",
+    "plan:staging-review": "pnpm build && node dist/e2e/run-staging-plan-only.js"
   },
   "dependencies": {
     "@ros/contracts": "workspace:*",
