@@ -9,6 +9,7 @@ import {
   parseAwsProfile,
   parseShortLivedCredentialExport,
   parseStagingPlanOnlyRunnerManifest,
+  parseTerraformVersion,
   sanitizedAccountReference
 } from './staging-plan-only-runner.js';
 
@@ -55,6 +56,15 @@ function manifest() {
     ]
   };
 }
+
+test('Terraform tooling must match the exact reviewed version', () => {
+  assert.equal(parseTerraformVersion({ terraform_version: '1.15.8' }), '1.15.8');
+  assert.throws(
+    () => parseTerraformVersion({ terraform_version: '1.15.9' }),
+    /Terraform 1\.15\.8 is required/
+  );
+  assert.throws(() => parseTerraformVersion({}), /terraform_version/);
+});
 
 test('valid temporary credential export is accepted without relaxing expiry boundaries', () => {
   const now = Date.parse('2026-08-24T17:00:00.000Z');
