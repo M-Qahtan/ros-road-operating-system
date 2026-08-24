@@ -86,18 +86,26 @@ variable "worker_image_uri" {
 }
 
 variable "tls_certificate_arn" {
-  description = "ACM certificate ARN for the internal staging ALB HTTPS listener."
+  description = "ACM certificate ARN for the internal staging ALB HTTPS listener. It must belong to the approved account and Riyadh region."
   type        = string
 
   validation {
-    condition     = can(regex("^arn:[^:]+:acm:[^:]+:[0-9]{12}:certificate/[0-9a-f-]+$", var.tls_certificate_arn))
-    error_message = "tls_certificate_arn must be a valid ACM certificate ARN."
+    condition = can(regex(
+      "^arn:aws:acm:${var.aws_region}:${var.expected_aws_account_id}:certificate/[0-9a-f-]+$",
+      var.tls_certificate_arn
+    ))
+    error_message = "tls_certificate_arn must be an ACM certificate ARN in the approved AWS account and me-central-1."
   }
 }
 
 variable "container_port" {
   type    = number
   default = 3000
+
+  validation {
+    condition     = var.container_port >= 1 && var.container_port <= 65535
+    error_message = "container_port must be between 1 and 65535."
+  }
 }
 
 variable "api_desired_count" {
@@ -143,6 +151,11 @@ variable "fargate_platform_version" {
 variable "postgres_engine_version" {
   description = "Exact PostgreSQL engine version approved for me-central-1 during the real PLAN_ONLY session."
   type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$", var.postgres_engine_version))
+    error_message = "postgres_engine_version must be an explicit numeric version such as 16.14; aliases such as latest are forbidden."
+  }
 }
 
 variable "postgres_instance_class" {
@@ -194,6 +207,11 @@ variable "database_ssl_ca_pem" {
 variable "redis_engine_version" {
   description = "Exact Redis/Valkey-compatible engine version approved during the real PLAN_ONLY session."
   type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$", var.redis_engine_version))
+    error_message = "redis_engine_version must be an explicit numeric version; aliases such as latest are forbidden."
+  }
 }
 
 variable "redis_node_type" {
