@@ -24,6 +24,7 @@ The only current cloud execution authority is **PLAN_ONLY**. A future apply requ
 - private AWS endpoints for ECR, CloudWatch Logs, Secrets Manager, KMS, STS and S3;
 - internal HTTPS ALB only;
 - ECS/Fargate API and outbox-worker services, minimum two tasks each;
+- exact reviewed Fargate platform version; `LATEST` is forbidden;
 - immutable account-local ECR images pinned with `@sha256:` digests;
 - PostgreSQL Multi-AZ with encryption, TLS enforcement, backups and deletion protection;
 - Redis replication group with Multi-AZ failover, TLS, authentication and encryption;
@@ -39,7 +40,9 @@ The only current cloud execution authority is **PLAN_ONLY**. A future apply requ
 
 PR #114 is merged into `main` and provides automatically rotated ECS/Fargate task-role credentials through the fixed ECS relative credential endpoint. Staging must inherit that merged runtime; long-lived object-storage access keys are not an approved substitute.
 
-PR #117 is the remaining WORM-semantics prerequisite for this topology. It changes evidence quarantine from copy-then-delete to **copy, verify, and retain source**, while the Evidence repository marks the record `QUARANTINED`. Do not claim the no-delete staging IAM policy operationally compatible until #117 is merged and the staging branch is rebuilt from that resulting `main`.
+PR #117 is merged into `main` and makes evidence quarantine **copy, verify, and retain source** while the Evidence repository marks the record `QUARANTINED`. The runtime therefore no longer requires S3 delete authority for quarantine.
+
+PR #118 is the remaining Object Lock upload-integrity prerequisite. It binds the explicit SHA-256 checksum algorithm declaration into the presigned upload contract so S3 Object Lock default retention can accept evidence uploads without weakening integrity verification. Do not claim the staging evidence path operationally complete until #118 is merged and this IaC is rebuilt/reverified from the resulting `main`.
 
 The core API currently treats object storage as an external release gate. This Terraform proposal creates the evidence storage boundary but does not claim that the Evidence HTTP/API surface is activated in the running API.
 
@@ -84,16 +87,17 @@ The CI workflow performs only these non-mutating checks and verifies the reviewe
 
 Before generating a real plan, freeze and independently review:
 
-1. exact merged ROS candidate SHA, including the WORM-safe quarantine behavior;
+1. exact merged ROS candidate SHA, including the WORM-safe quarantine and Object Lock upload-integrity behavior;
 2. exact API and worker ECR image digests;
-3. approved AWS account and `me-central-1` access using short-lived SSO/OIDC credentials;
-4. ACM certificate ARN for the internal endpoint;
-5. exact supported PostgreSQL and Redis engine versions in-region;
-6. approved RDS CA PEM;
-7. approved OIDC issuer/JWKS/audience/client/tenant/purpose bindings;
-8. approved private identity connectivity reference;
-9. on-call and rollback owners;
-10. evidence and audit retention >=365 days with CloudTrail S3 data events and log validation represented in the exact plan;
-11. zero unresolved P0/P1 findings for the staging slice.
+3. exact supported Fargate platform version in `me-central-1`;
+4. approved AWS account and `me-central-1` access using short-lived SSO/OIDC credentials;
+5. ACM certificate ARN for the internal endpoint;
+6. exact supported PostgreSQL and Redis engine versions in-region;
+7. approved RDS CA PEM;
+8. approved OIDC issuer/JWKS/audience/client/tenant/purpose bindings;
+9. approved private identity connectivity reference;
+10. on-call and rollback owners;
+11. evidence and audit retention >=365 days with CloudTrail S3 data events and log validation represented in the exact plan;
+12. zero unresolved P0/P1 findings for the staging slice.
 
 A successful static validation is **not** a real Terraform plan and is **not** deployment readiness.
