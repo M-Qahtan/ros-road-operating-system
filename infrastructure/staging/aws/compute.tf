@@ -218,7 +218,7 @@ resource "aws_ecs_service" "api" {
   desired_count   = var.api_desired_count
   launch_type     = "FARGATE"
 
-  platform_version = "LATEST"
+  platform_version = var.fargate_platform_version
 
   network_configuration {
     subnets          = [for subnet in aws_subnet.app : subnet.id]
@@ -253,7 +253,7 @@ resource "aws_ecs_service" "worker" {
   desired_count   = var.worker_desired_count
   launch_type     = "FARGATE"
 
-  platform_version = "LATEST"
+  platform_version = var.fargate_platform_version
 
   network_configuration {
     subnets          = [for subnet in aws_subnet.app : subnet.id]
