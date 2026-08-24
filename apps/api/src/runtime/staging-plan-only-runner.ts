@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import type { StagingCloudReviewClaims, StagingEvidenceKind } from './staging-cloud-governance.js';
 
 export const ROS_STAGING_REGION = 'me-central-1';
+export const ROS_TERRAFORM_VERSION = '1.15.8';
 export const MAX_TEMPORARY_CREDENTIAL_LIFETIME_MS = 13 * 60 * 60 * 1000;
 export const MIN_TEMPORARY_CREDENTIAL_REMAINING_MS = 5 * 60 * 1000;
 
@@ -66,6 +67,15 @@ function nonNegativeInteger(value: unknown, field: string): number {
     throw new TypeError(`${field} must be a non-negative safe integer`);
   }
   return value as number;
+}
+
+export function parseTerraformVersion(value: unknown): string {
+  const source = object(value, 'terraformVersion');
+  const version = canonicalText(source.terraform_version, 'terraformVersion.terraform_version', 32);
+  if (version !== ROS_TERRAFORM_VERSION) {
+    throw new Error(`Terraform ${ROS_TERRAFORM_VERSION} is required; received ${version}`);
+  }
+  return version;
 }
 
 export function parseShortLivedCredentialExport(
