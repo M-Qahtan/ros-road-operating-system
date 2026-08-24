@@ -32,6 +32,7 @@ Any future real Terraform plan is a separate **PLAN_ONLY** operation. A later ap
 - runtime evidence IAM limited to direct object read/write operations; no object delete, bucket enumeration, per-object retention or legal-hold authority;
 - Secrets Manager boundary for database URL, RDS CA bundle and Redis URL;
 - CloudWatch/Container Insights and an SNS alarm channel encrypted with a dedicated customer-managed KMS key;
+- VPC Flow Logs for **ALL** VPC traffic at a 60-second aggregation interval, delivered to a dedicated KMS-encrypted CloudWatch log group through a scoped service role;
 - dedicated CloudTrail audit bucket, separate from evidence storage, with KMS + Versioning + Object Lock COMPLIANCE >=365 days;
 - CloudTrail log-file validation plus management events and S3 object data events for the evidence bucket;
 - ECS task roles rather than long-lived AWS credentials.
@@ -58,9 +59,11 @@ For the MVP, the only storage guarantee claimed by ROS is the bucket-level S3 Ob
 
 This prevents ROS from claiming an evidence-retention capability that the current storage/IAM boundary cannot prove.
 
-## Evidence and audit boundary
+## Evidence, network-forensics and audit boundary
 
 The evidence bucket and CloudTrail destination bucket are deliberately separate. The trail records management activity and object-level S3 data events for the evidence bucket. CloudTrail delivery goes to the dedicated immutable audit bucket, avoiding recursive evidence-bucket audit design.
+
+VPC Flow Logs provide a distinct network-forensics plane for accepted and rejected IP traffic. They are delivered to a KMS-encrypted CloudWatch Logs group through a role assumable only by the VPC Flow Logs service under the expected account/flow-log ARN boundary. Flow Logs are observational only and do not alter packet handling.
 
 Both evidence and audit retention use Object Lock **COMPLIANCE** mode with a minimum of 365 days. CloudTrail log-file validation is enabled. A successful Terraform validation proves configuration validity only; a later real PLAN_ONLY plan must still prove the exact in-region resource graph, service availability, IAM/KMS policies and plan digest.
 
@@ -110,7 +113,7 @@ Before a real plan can be generated, freeze and independently review:
 8. approved OIDC issuer/JWKS/audience/client/tenant/purpose bindings;
 9. approved private identity connectivity review reference;
 10. on-call and rollback owners;
-11. evidence and audit retention >=365 days with CloudTrail S3 data events and log validation represented in the exact plan;
+11. VPC Flow Logs plus evidence/audit retention >=365 days, CloudTrail S3 data events and log-file validation represented in the exact plan;
 12. zero unresolved P0/P1 findings for the staging slice.
 
 A successful static validation is **not** a real Terraform plan, **not** deployment readiness and **not** production authorization.
