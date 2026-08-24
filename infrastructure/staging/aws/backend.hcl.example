@@ -1,5 +1,6 @@
 # Example only. Copy outside Git and fill with the already-approved Terraform state boundary.
 # Never commit live account-specific backend configuration or credentials.
+# me-central-1 is AWS Middle East (UAE); this backend example is not a Saudi-hosting claim.
 
 bucket         = "REPLACE_WITH_APPROVED_TERRAFORM_STATE_BUCKET"
 key            = "ros/staging/runtime/terraform.tfstate"
