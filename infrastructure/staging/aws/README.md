@@ -10,7 +10,7 @@ This directory defines a reviewable ROS staging topology in AWS `me-central-1`.
 - It must not contain real incident evidence, medical/legal payloads, production personal data, or other sensitive operational data.
 - It must never be described as Saudi-hosted or as satisfying Saudi data-residency requirements.
 
-The distinction between **pilot geography** and **cloud hosting jurisdiction** is a hard governance invariant. `region-governance.tf` fails closed if the temporary UAE staging slice is configured as Saudi-hosted, permits real incident data, or weakens the synthetic/non-sensitive boundary.
+The distinction between **pilot geography** and **cloud hosting jurisdiction** is a hard governance invariant. `region-governance.tf` uses Terraform variable validations that fail input validation if the temporary UAE staging slice is configured as Saudi-hosted, permits real incident data, or weakens the synthetic/non-sensitive boundary.
 
 ## Authority boundary
 
@@ -61,7 +61,7 @@ The current proposal remains intentionally conservative:
 - `staging_data_classification = "SYNTHETIC_NON_SENSITIVE_ONLY"`;
 - `real_incident_data_allowed = false`.
 
-These values are not documentation hints; they are Terraform validations plus a configuration-level check. An operator cannot change this slice to `saudi_hosted=true`, widen the data class, or permit real incident data without causing configuration validation/plan failure.
+These values are not documentation hints; each is locked by Terraform variable validation. An operator cannot change this slice to `saudi_hosted=true`, widen the data class, or permit real incident data without causing Terraform input validation/plan failure.
 
 A future Saudi-hosted environment is a **separate deployment target and governance decision**. It must use an actually available and independently verified Saudi hosting region/provider boundary, with its own account/region, data-residency review, service-availability checks, threat model, exact plan digest and founder approval. No migration or equivalence is implied by this temporary UAE slice.
 
