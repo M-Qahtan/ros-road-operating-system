@@ -41,9 +41,17 @@ variable "name_prefix" {
 }
 
 variable "vpc_cidr" {
-  description = "Isolated staging VPC CIDR."
+  description = "Isolated RFC1918 staging VPC CIDR. Prefix /16 through /20 keeps derived app/data subnets operationally sized."
   type        = string
   default     = "10.70.0.0/16"
+
+  validation {
+    condition = (
+      can(cidrhost(var.vpc_cidr, 0)) &&
+      can(regex("^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.).*/(1[6-9]|20)$", var.vpc_cidr))
+    )
+    error_message = "vpc_cidr must be a valid RFC1918 IPv4 CIDR with prefix length /16 through /20."
+  }
 }
 
 variable "availability_zone_count" {
