@@ -93,6 +93,7 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
     checksumSha256: string,
     expiresAt: Date
   ): Promise<SignedObjectRequest> {
+    // S3 Object Lock retention requires an explicit upload-integrity algorithm declaration.
     const requiredHeaders = {
       'content-length': String(sizeBytes),
       'content-type': contentType,
