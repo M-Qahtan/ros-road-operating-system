@@ -1,10 +1,20 @@
-# ROS AWS Staging Runtime — Riyadh PLAN_ONLY Proposal (R2)
+# ROS AWS Temporary Cloud Staging — UAE Region / Riyadh Pilot Geography (R3)
 
-This directory defines the reviewable ROS runtime staging topology for Riyadh (`me-central-1`). It is an **infrastructure proposal only**. It is not a deployment authorization and it does not itself create or modify AWS resources.
+This directory defines a reviewable ROS staging topology in AWS `me-central-1`.
+
+**Critical geography boundary:**
+
+- `me-central-1` is **AWS Middle East (UAE)**. It is not Riyadh and it is not a Saudi Arabia hosting region.
+- **Riyadh, Saudi Arabia** remains the intended pilot geography for controlled ROS validation.
+- The current `me-central-1` slice, if ever separately authorized beyond PLAN_ONLY, is limited to **synthetic/non-sensitive staging data only**.
+- It must not contain real incident evidence, medical/legal payloads, production personal data, or other sensitive operational data.
+- It must never be described as Saudi-hosted or as satisfying Saudi data-residency requirements.
+
+The distinction between **pilot geography** and **cloud hosting jurisdiction** is a hard governance invariant. `region-governance.tf` fails closed if the temporary UAE staging slice is configured as Saudi-hosted, permits real incident data, or weakens the synthetic/non-sensitive boundary.
 
 ## Authority boundary
 
-This module does not authorize or perform:
+This module is an **infrastructure proposal only**. It does not authorize or perform:
 
 - `terraform apply`;
 - production deployment;
@@ -13,11 +23,15 @@ This module does not authorize or perform:
 - real partner activation;
 - live camera ingestion;
 - vehicle actuation;
-- autonomous S3/S4 authority.
+- autonomous S3/S4 authority;
+- use of real incident/evidence/medical/legal data in the temporary UAE staging slice;
+- any claim that `me-central-1` is Saudi-hosted.
 
-Any future real Terraform plan is a separate **PLAN_ONLY** operation. A later apply, if ever approved, requires a new founder authorization bound to the exact reviewed binary `tfplan` SHA-256, AWS account, region, scope and evidence package. Regenerating or changing the plan invalidates that authorization.
+Any future real Terraform plan is a separate **PLAN_ONLY** operation. A later apply, if ever approved, requires a new founder authorization bound to the exact reviewed binary `tfplan` SHA-256, AWS account, region, scope, hosting/data boundary and evidence package. Regenerating or changing the plan invalidates that authorization.
 
 ## Proposed topology
+
+The current proposal remains intentionally conservative:
 
 - isolated VPC in `me-central-1` across at least two AZs;
 - private application and data subnets; no Internet Gateway and no NAT Gateway in this slice;
@@ -37,6 +51,20 @@ Any future real Terraform plan is a separate **PLAN_ONLY** operation. A later ap
 - CloudTrail log-file validation plus management events and S3 object data events for the evidence bucket;
 - ECS task roles rather than long-lived AWS credentials.
 
+## Region and data-residency governance
+
+`region-governance.tf` fixes the temporary staging contract to:
+
+- `pilot_geography = "Riyadh, Saudi Arabia"`;
+- `cloud_jurisdiction = "United Arab Emirates"`;
+- `saudi_hosted = false`;
+- `staging_data_classification = "SYNTHETIC_NON_SENSITIVE_ONLY"`;
+- `real_incident_data_allowed = false`.
+
+These values are not documentation hints; they are Terraform validations plus a configuration-level check. An operator cannot change this slice to `saudi_hosted=true`, widen the data class, or permit real incident data without causing configuration validation/plan failure.
+
+A future Saudi-hosted environment is a **separate deployment target and governance decision**. It must use an actually available and independently verified Saudi hosting region/provider boundary, with its own account/region, data-residency review, service-availability checks, threat model, exact plan digest and founder approval. No migration or equivalence is implied by this temporary UAE slice.
+
 ## Required runtime/evidence contracts
 
 The staging proposal assumes the reviewed runtime line containing these prerequisites:
@@ -46,7 +74,7 @@ The staging proposal assumes the reviewed runtime line containing these prerequi
 3. presigned evidence uploads bind the explicit SHA-256 checksum algorithm required by the Object Lock upload contract;
 4. `MVP_BOUNDED_RETENTION` fails closed before an upload intent is issued when `legalHold=true` or `retainUntil` exceeds the 365-day MVP guarantee.
 
-`MVP_BOUNDED_RETENTION` was independently approved and merged through PR #120 into `main` at merge commit `38f46b7f931037b137790e2f38bd88318383bd5b`. The merged `main` tree SHA and the reviewed prerequisite head tree SHA are identical (`d74696217e44ef41b1dea04bd9104db0ea9a27d9`), proving that the intervening merge commit changed history topology only and introduced no content drift. This IaC PR is therefore reviewed against `main` directly, and all final workflow/review evidence must come from the post-retarget exact head rather than from the earlier stacked-validation cycle.
+The proposal must not broaden those contracts merely to make a staging plan pass.
 
 ## MVP retention contract
 
@@ -63,9 +91,11 @@ This prevents ROS from claiming an evidence-retention capability that the curren
 
 The evidence bucket and CloudTrail destination bucket are deliberately separate. The trail records management activity and object-level S3 data events for the evidence bucket. CloudTrail delivery goes to the dedicated immutable audit bucket, avoiding recursive evidence-bucket audit design.
 
-VPC Flow Logs provide a distinct network-forensics plane for accepted and rejected IP traffic. They are delivered to a KMS-encrypted CloudWatch Logs group through a role assumable only by the VPC Flow Logs service under the expected account/flow-log ARN boundary. Flow Logs are observational only and do not alter packet handling.
+VPC Flow Logs provide a distinct network-forensics plane for accepted and rejected IP traffic. They are observational only and do not alter packet handling.
 
 Both evidence and audit retention use Object Lock **COMPLIANCE** mode with a minimum of 365 days. CloudTrail log-file validation is enabled. A successful Terraform validation proves configuration validity only; a later real PLAN_ONLY plan must still prove the exact in-region resource graph, service availability, IAM/KMS policies and plan digest.
+
+Because the temporary UAE slice is synthetic/non-sensitive only, no real-world incident evidence should ever enter these stores under this staging contract.
 
 ## Identity boundary
 
@@ -97,23 +127,25 @@ terraform -chdir=infrastructure/staging/aws init -backend=false -input=false -lo
 terraform -chdir=infrastructure/staging/aws validate -no-color
 ```
 
-The CI workflow performs only these non-mutating checks and verifies that the reviewed provider lock remains unchanged.
+The CI workflow performs only non-mutating checks and verifies that the reviewed provider lock remains unchanged.
 
 ## Real PLAN_ONLY prerequisites
 
-Before a real plan can be generated, freeze and independently review:
+Before any real plan can be considered reviewable, freeze and independently review:
 
-1. exact merged ROS candidate SHA containing the WORM-safe quarantine, Object Lock upload-integrity and MVP bounded-retention behavior;
+1. exact merged ROS candidate SHA;
 2. exact API and worker ECR image digests;
-3. exact supported Fargate platform version in `me-central-1`;
+3. exact supported Fargate platform version in the selected cloud region;
 4. approved AWS account and `me-central-1` access using short-lived SSO/OIDC credentials;
-5. ACM certificate ARN for the internal endpoint;
-6. exact supported PostgreSQL and Redis engine versions in-region;
-7. approved RDS CA PEM;
-8. approved OIDC issuer/JWKS/audience/client/tenant/purpose bindings;
-9. approved private identity connectivity review reference;
-10. on-call and rollback owners plus proof that the human on-call delivery path is operational;
-11. VPC Flow Logs plus evidence/audit retention >=365 days, CloudTrail S3 data events and log-file validation represented in the exact plan;
-12. zero unresolved P0/P1 findings for the staging slice.
+5. explicit proof that `me-central-1` is treated as **UAE temporary staging**, not Saudi hosting;
+6. explicit proof that the input/evidence population is **synthetic/non-sensitive only**;
+7. ACM certificate ARN for the internal endpoint;
+8. exact supported PostgreSQL and Redis engine versions in-region;
+9. approved RDS CA PEM;
+10. approved OIDC issuer/JWKS/audience/client/tenant/purpose bindings;
+11. approved private identity connectivity review reference;
+12. on-call and rollback owners plus proof that the human on-call delivery path is operational;
+13. VPC Flow Logs plus evidence/audit retention >=365 days, CloudTrail S3 data events and log-file validation represented in the exact plan;
+14. zero unresolved P0/P1 findings for the staging slice.
 
-A successful static validation is **not** a real Terraform plan, **not** deployment readiness and **not** production authorization.
+A successful static validation is **not** a real Terraform plan, **not** deployment readiness, **not** Saudi data-residency evidence and **not** production authorization.
