@@ -78,7 +78,7 @@ test('inspect normalizes object metadata and checksum', async () => {
   assert.deepEqual(metadata, { sizeBytes: 2048, contentType: 'video/mp4', checksumSha256: 'b'.repeat(64) });
 });
 
-test('quarantine verifies destination metadata and checksum before deleting the original object', async () => {
+test('quarantine verifies destination metadata and retains the original for WORM evidence', async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const checksum = 'c'.repeat(64);
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -90,11 +90,11 @@ test('quarantine verifies destination metadata and checksum before deleting the 
 
   await adapter(fetchImpl).quarantine('road-events/event/evidence/id/file', 'quarantine/id');
 
-  assert.deepEqual(requests.map((request) => request.method), ['HEAD', 'PUT', 'HEAD', 'DELETE']);
+  assert.deepEqual(requests.map((request) => request.method), ['HEAD', 'PUT', 'HEAD']);
   assert.match(requests[0]!.url, /road-events\/event\/evidence\/id\/file/);
   assert.match(requests[1]!.url, /quarantine\/id/);
   assert.match(requests[2]!.url, /quarantine\/id/);
-  assert.match(requests[3]!.url, /road-events\/event\/evidence\/id\/file/);
+  assert.equal(requests.some((request) => request.method === 'DELETE'), false);
 });
 
 test('quarantine retains the original when copied evidence metadata does not match', async () => {
