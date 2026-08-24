@@ -4,7 +4,7 @@ import { createReadStream } from 'node:fs';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { StagingCloudReviewClaims, StagingEvidenceKind } from './staging-cloud-governance.js';
+import type { StagingCloudReviewClaims, StagingEvidenceKind } from './staging-cloud-governance.js';
 
 export const ROS_STAGING_REGION = 'me-central-1';
 export const MAX_TEMPORARY_CREDENTIAL_LIFETIME_MS = 13 * 60 * 60 * 1000;
@@ -184,27 +184,34 @@ export function parseStagingPlanOnlyRunnerManifest(value: unknown): StagingPlanO
   return Object.freeze({ schema: 'ros-staging-plan-only-runner/v1', expectedCandidateHeadSha, claims, evidenceFiles: Object.freeze(evidenceFiles) });
 }
 
-export async function assertExternalRegularFile(repoRoot: string, inputPath: string, field: string): Promise<string> {
-  const repo = await realpath(resolve(repoRoot));
-  const target = await realpath(resolve(inputPath));
-  const info = await lstat(target);
-  if (info.isSymbolicLink() || !info.isFile()) throw new Error(`${field} must be a regular non-symbolic-link file`);
+function outsideRepository(repo: string, target: string): boolean {
   const rel = relative(repo, target);
-  if (rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))) {
+  return rel !== '' && (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel));
+}
+
+export async function assertExternalRegularFile(repoRoot: string, inputPath: string, field: string): Promise<string> {
+  const unresolved = resolve(inputPath);
+  const unresolvedInfo = await lstat(unresolved);
+  if (unresolvedInfo.isSymbolicLink() || !unresolvedInfo.isFile()) {
+    throw new Error(`${field} must be a regular non-symbolic-link file`);
+  }
+  const repo = await realpath(resolve(repoRoot));
+  const target = await realpath(unresolved);
+  if (!outsideRepository(repo, target)) {
     throw new Error(`${field} must be outside the repository because it may contain sensitive material`);
   }
   return target;
 }
 
 export async function assertExternalDirectory(repoRoot: string, inputPath: string, field: string): Promise<string> {
-  const repo = await realpath(resolve(repoRoot));
-  const target = await realpath(resolve(inputPath));
-  const info = await lstat(target);
-  if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(`${field} must be a regular non-symbolic-link directory`);
-  const rel = relative(repo, target);
-  if (rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))) {
-    throw new Error(`${field} must be outside the repository`);
+  const unresolved = resolve(inputPath);
+  const unresolvedInfo = await lstat(unresolved);
+  if (unresolvedInfo.isSymbolicLink() || !unresolvedInfo.isDirectory()) {
+    throw new Error(`${field} must be a regular non-symbolic-link directory`);
   }
+  const repo = await realpath(resolve(repoRoot));
+  const target = await realpath(unresolved);
+  if (!outsideRepository(repo, target)) throw new Error(`${field} must be outside the repository`);
   return target;
 }
 
@@ -221,13 +228,20 @@ export async function executeJson(
   args: readonly string[],
   options: { readonly env?: NodeJS.ProcessEnv; readonly timeoutMs?: number } = {}
 ): Promise<unknown> {
-  const { stdout } = await execFileAsync(executable, [...args], {
-    encoding: 'utf8',
-    timeout: options.timeoutMs ?? 60_000,
-    maxBuffer: 4 * 1024 * 1024,
-    windowsHide: true,
-    env: options.env
-  });
+  let stdout: string;
+  try {
+    const result = await execFileAsync(executable, [...args], {
+      encoding: 'utf8',
+      timeout: options.timeoutMs ?? 60_000,
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true,
+      env: options.env
+    });
+    stdout = result.stdout;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error(`${executable} executable is unavailable`);
+    throw new Error(`${executable} command failed; captured output was suppressed`);
+  }
   try {
     return JSON.parse(stdout);
   } catch {
