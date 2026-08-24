@@ -122,6 +122,16 @@ variable "task_memory" {
   default = 1024
 }
 
+variable "fargate_platform_version" {
+  description = "Exact Linux Fargate platform version approved in me-central-1 during the real PLAN_ONLY session. LATEST is forbidden."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.fargate_platform_version))
+    error_message = "fargate_platform_version must be an exact semantic platform version such as 1.4.0; LATEST is not allowed."
+  }
+}
+
 variable "postgres_engine_version" {
   description = "Exact PostgreSQL engine version approved for me-central-1 during the real PLAN_ONLY session."
   type        = string
