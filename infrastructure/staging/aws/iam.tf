@@ -7,6 +7,18 @@ data "aws_iam_policy_document" "ecs_task_assume" {
       type        = "Service"
       identifiers = ["ecs-tasks.amazonaws.com"]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.expected_aws_account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:ecs:${var.aws_region}:${var.expected_aws_account_id}:*"]
+    }
   }
 }
 
