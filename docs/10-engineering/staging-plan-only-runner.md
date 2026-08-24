@@ -19,6 +19,7 @@ This runbook does **not** authorize Terraform apply, deployment, public-road ope
 - `saudi_hosted` must remain `false`.
 - `staging_data_classification` must remain `SYNTHETIC_NON_SENSITIVE_ONLY`.
 - `real_incident_data_allowed` must remain `false`.
+- Each geography/data value above is locked by Terraform variable validation; a widening or false hosting claim must fail input validation before a reviewable plan can be produced.
 - AWS credentials must be temporary. The runner uses `aws configure export-credentials --format process` and rejects exports without both `SessionToken` and `Expiration`, credentials with less than five minutes remaining, and credentials whose remaining lifetime exceeds the ROS short-lived boundary.
 - The exported credentials are kept in memory and passed directly to AWS read calls and Terraform. They are never printed or written by the runner.
 - The authenticated AWS Region is fixed to `me-central-1`; the runner performs read-only STS identity and EC2 Region checks before Terraform planning.
@@ -98,7 +99,7 @@ staging_data_classification    = "SYNTHETIC_NON_SENSITIVE_ONLY"
 real_incident_data_allowed     = false
 ```
 
-Any attempt to set `saudi_hosted=true`, widen the data classification, enable real incident data, relabel `me-central-1` as Saudi Arabia, or change the pilot geography without a separately governed change fails closed through Terraform validation/checks.
+Any attempt to set `saudi_hosted=true`, widen the data classification, enable real incident data, relabel `me-central-1` as Saudi Arabia, or change the pilot geography without a separately governed change fails closed through Terraform variable validation.
 
 ## Observability and trace-correlation evidence basis
 
@@ -144,7 +145,7 @@ The runner performs only:
 
 1. exact Git HEAD + clean working-tree proof;
 2. exact Terraform `1.15.8` version proof;
-3. tracked-files-only staging IaC materialization, including the region-governance gate;
+3. tracked-files-only staging IaC materialization, including the region-governance variables;
 4. manifest/tfvars pre-run SHA-256 capture;
 5. temporary AWS credential export and expiry validation;
 6. `sts:GetCallerIdentity` read;
