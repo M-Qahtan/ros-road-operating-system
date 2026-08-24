@@ -9,12 +9,15 @@ This runbook does **not** authorize Terraform apply, deployment, public-road ope
 ## Hard boundaries
 
 - Run only from a clean checkout whose `HEAD` equals the independently approved candidate SHA recorded in the runner manifest.
+- Terraform is checked at runtime and must be exactly `1.15.8`; a different version fails closed before AWS planning.
+- The disposable IaC workspace is built only from files returned by `git ls-files` under `infrastructure/staging/aws`. Ignored/untracked `.terraform`, state, tfvars, plan or other local artifacts cannot enter the planning source tree.
 - AWS credentials must be temporary. The runner uses `aws configure export-credentials --format process` and rejects exports without both `SessionToken` and `Expiration`, credentials with less than five minutes remaining, and credentials whose remaining lifetime exceeds the ROS short-lived boundary.
 - The exported credentials are kept in memory and passed directly to AWS read calls and Terraform. They are never printed or written by the runner.
 - The authenticated AWS Region is fixed to `me-central-1`; the runner performs read-only STS identity and EC2 Region checks before Terraform planning.
 - The runner has no `apply`, `destroy`, `import`, state mutation, GitHub OIDC mutation, IAM mutation, repository-variable mutation, or deployment command.
-- Terraform runs in a disposable copy of `infrastructure/staging/aws`; `terraform init` cannot modify the Git checkout.
-- The input tfvars file, evidence root, runner manifest, and output directory must all be outside the Git repository.
+- Terraform runs in a disposable tracked-files-only copy of `infrastructure/staging/aws`; `terraform init` cannot modify the Git checkout.
+- The input tfvars file, evidence root, runner manifest, and output directory must all be outside the Git repository and must not be symlinked inputs.
+- Runner manifest and tfvars SHA-256 + byte size are checked before and after `terraform plan`; mutation during the run fails closed.
 - The saved `ros-staging.tfplan` is sensitive. Keep it only in the approved secure output directory. Never commit it, upload it to ordinary GitHub artifacts, or copy it into the normal WORM evidence package.
 - Raw `terraform show -json` output is analyzed in memory by the existing verifier and is never written by this runner.
 - Existing PLAN_ONLY outputs are never overwritten. A regenerated plan receives a new digest and a new review.
@@ -24,7 +27,7 @@ This runbook does **not** authorize Terraform apply, deployment, public-road ope
 - Git
 - Node/pnpm matching the repository toolchain
 - AWS CLI v2 with an already-authenticated short-lived profile/session
-- Terraform `1.15.8`
+- Terraform **exactly `1.15.8`**
 
 No secrets belong in the repository.
 
@@ -95,7 +98,7 @@ The `OBSERVABILITY` evidence file for a real PLAN_ONLY review should cite the ex
 
 Create the reviewed `.tfvars` or `.tfvars.json` file outside the repository. It may contain environment-specific trust material and therefore must not be committed.
 
-The exact required variables are defined by `infrastructure/staging/aws/variables.tf`. The runner refuses a tfvars file located inside the repository.
+The exact required variables are defined by `infrastructure/staging/aws/variables.tf`. The runner refuses a tfvars file located inside the repository. Its SHA-256 is emitted only as a digest in the sanitized terminal result and is checked again after plan generation; the file contents are never printed by the runner.
 
 ## Secure output directory
 
@@ -128,16 +131,22 @@ The same command is usable from PowerShell with normal PowerShell line-continuat
 The runner performs only:
 
 1. exact Git HEAD + clean working-tree proof;
-2. temporary AWS credential export and expiry validation;
-3. `sts:GetCallerIdentity` read;
-4. `ec2:DescribeRegions` read for `me-central-1`;
-5. isolated `terraform init -backend=false -input=false -lockfile=readonly`;
-6. `terraform plan -input=false -out=<secure-plan> -var-file=<external-tfvars>`;
-7. in-memory `terraform show -json` through the existing governance verifier;
-8. evidence byte/hash verification;
-9. sanitized review package, decision JSON and plan SHA-256 output.
+2. exact Terraform `1.15.8` version proof;
+3. tracked-files-only staging IaC materialization;
+4. manifest/tfvars pre-run SHA-256 capture;
+5. temporary AWS credential export and expiry validation;
+6. `sts:GetCallerIdentity` read;
+7. `ec2:DescribeRegions` read for `me-central-1`;
+8. isolated `terraform init -backend=false -input=false -lockfile=readonly`;
+9. `terraform plan -input=false -out=<secure-plan> -var-file=<external-tfvars>`;
+10. manifest/tfvars post-plan SHA-256 equality proof;
+11. in-memory `terraform show -json` through the existing governance verifier;
+12. evidence byte/hash verification;
+13. sanitized review package, decision JSON and plan SHA-256 output.
 
 No captured Terraform init/plan stdout or stderr is emitted by the runner because plan/input data can be sensitive.
+
+The sanitized terminal result includes only review-safe binding metadata such as Terraform version, tracked IaC file count, manifest SHA-256, tfvars SHA-256, plan SHA-256, sanitized account reference and plan action analysis. It does not print credentials, tfvars contents or raw Terraform JSON.
 
 ## Exit semantics
 
