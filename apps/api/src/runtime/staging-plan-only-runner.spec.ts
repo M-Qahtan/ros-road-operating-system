@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
+  assertExternalDirectory,
+  assertExternalRegularFile,
   parseAwsProfile,
   parseShortLivedCredentialExport,
   parseStagingPlanOnlyRunnerManifest,
@@ -123,4 +128,33 @@ test('AWS profile names are canonicalized fail-closed', () => {
   assert.equal(parseAwsProfile(undefined), null);
   assert.equal(parseAwsProfile('ros-staging'), 'ros-staging');
   assert.throws(() => parseAwsProfile('bad profile name'), /not canonical/);
+});
+
+test('symlinked sensitive PLAN_ONLY inputs are rejected before realpath resolution', { skip: process.platform === 'win32' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ros-plan-only-inputs-'));
+  try {
+    const repo = join(root, 'repo');
+    const external = join(root, 'external');
+    const realFile = join(external, 'runner-manifest.json');
+    const realDir = join(external, 'evidence');
+    const fileLink = join(root, 'manifest-link.json');
+    const dirLink = join(root, 'evidence-link');
+    await mkdir(repo);
+    await mkdir(external);
+    await mkdir(realDir);
+    await writeFile(realFile, '{}\n', 'utf8');
+    await symlink(realFile, fileLink, 'file');
+    await symlink(realDir, dirLink, 'dir');
+
+    await assert.rejects(
+      assertExternalRegularFile(repo, fileLink, 'runner manifest'),
+      /non-symbolic-link file/
+    );
+    await assert.rejects(
+      assertExternalDirectory(repo, dirLink, 'evidence root'),
+      /non-symbolic-link directory/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
