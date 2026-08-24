@@ -9,9 +9,10 @@ api_image_uri    = "123456789012.dkr.ecr.me-central-1.amazonaws.com/ros-api@sha2
 worker_image_uri = "123456789012.dkr.ecr.me-central-1.amazonaws.com/ros-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 tls_certificate_arn = "arn:aws:acm:me-central-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
 
-postgres_engine_version = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"
-redis_engine_version    = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"
-database_ssl_ca_pem     = "REPLACE_WITH_APPROVED_RDS_CA_PEM_FROM_SECURE_INPUT"
+fargate_platform_version = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"
+postgres_engine_version  = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"
+redis_engine_version     = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"
+database_ssl_ca_pem      = "REPLACE_WITH_APPROVED_RDS_CA_PEM_FROM_SECURE_INPUT"
 
 # These URLs must resolve through the separately reviewed private identity path.
 oidc_issuer   = "https://identity.internal.example/"
@@ -24,7 +25,7 @@ oidc_allowed_bindings = [
     purpose  = "INCIDENT_TRIAGE"
   }
 ]
-identity_private_cidr                         = "10.70.15.0/24"
+identity_private_cidr                           = "10.70.15.0/24"
 identity_private_connectivity_review_reference = "REVIEW-REFERENCE-REQUIRED"
 
 oncall_owner = "REPLACE_WITH_APPROVED_ONCALL_TEAM"
