@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
-import { copyFile, dirname, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import {
   evaluateStagingCloudReview,
@@ -11,7 +11,6 @@ import {
 } from '../runtime/staging-cloud-governance.js';
 import {
   ROS_STAGING_REGION,
-  ROS_TERRAFORM_VERSION,
   assertExternalDirectory,
   assertExternalRegularFile,
   executeJson,
