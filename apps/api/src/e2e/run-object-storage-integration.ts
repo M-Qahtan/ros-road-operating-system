@@ -61,7 +61,10 @@ async function run(): Promise<void> {
       sizeBytes: Buffer.byteLength(BODY, 'utf8'),
       checksumSha256: CHECKSUM,
       retention: {
-        retainUntil: new Date(Date.now() + 366 * 24 * 60 * 60 * 1000),
+        // This integration proves the storage path, not the policy boundary.
+        // Keep the fixture well inside the MVP_BOUNDED_RETENTION guarantee;
+        // exact 365-day and rejection boundaries are covered by unit tests.
+        retainUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         legalHold: false
       }
     });

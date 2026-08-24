@@ -25,6 +25,9 @@ const ALLOWED_CONTENT_TYPES = new Set([
 const MAX_SIZE_BYTES = 250 * 1024 * 1024;
 const MAX_UPLOAD_TTL_MS = 10 * 60 * 1000;
 const MAX_DOWNLOAD_TTL_MS = 5 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MVP_STORAGE_RETENTION_DAYS = 365;
+const MVP_STORAGE_RETENTION_MS = MVP_STORAGE_RETENTION_DAYS * DAY_MS;
 
 export interface CreateEvidenceIntentInput {
   readonly roadEventId: string;
@@ -82,6 +85,25 @@ function sanitizeFilename(filename: string): string {
   return leaf;
 }
 
+function requireMvpBoundedRetention(
+  retention: CreateEvidenceIntentInput['retention'],
+  now: Date
+): EvidenceRecord['retention'] {
+  const retainUntil = new Date(retention.retainUntil);
+  if (!Number.isFinite(retainUntil.getTime()) || retainUntil <= now) {
+    throw new EvidenceValidationError('retainUntil must be in the future');
+  }
+  if (retention.legalHold) {
+    throw new EvidenceValidationError('legalHold is not supported by MVP_BOUNDED_RETENTION');
+  }
+  if (retainUntil.getTime() > now.getTime() + MVP_STORAGE_RETENTION_MS) {
+    throw new EvidenceValidationError(
+      `retainUntil exceeds the ${MVP_STORAGE_RETENTION_DAYS}-day MVP storage guarantee`
+    );
+  }
+  return { retainUntil, legalHold: false };
+}
+
 export class EvidenceService {
   private readonly now: () => Date;
   private readonly createId: () => string;
@@ -121,9 +143,7 @@ export class EvidenceService {
     const checksum = requireChecksum(input.checksumSha256);
     const filename = sanitizeFilename(input.filename);
     const now = this.now();
-    if (!Number.isFinite(input.retention.retainUntil.getTime()) || input.retention.retainUntil <= now) {
-      throw new EvidenceValidationError('retainUntil must be in the future');
-    }
+    const retention = requireMvpBoundedRetention(input.retention, now);
     const id = this.createId();
     const objectKey = `road-events/${roadEventId}/evidence/${id}/${filename}`;
     const uploadExpiresAt = new Date(now.getTime() + this.uploadTtlMs);
@@ -131,7 +151,7 @@ export class EvidenceService {
       id, roadEventId, objectKey, originalFilename: filename,
       contentType: input.contentType, declaredSizeBytes: input.sizeBytes,
       declaredChecksumSha256: checksum, status: 'PENDING_UPLOAD', uploadExpiresAt,
-      retention: { retainUntil: new Date(input.retention.retainUntil), legalHold: input.retention.legalHold },
+      retention,
       createdBy: principal.actorId, createdAt: now
     };
     const upload = await this.storage.createUploadRequest(objectKey, input.contentType, input.sizeBytes, checksum, uploadExpiresAt);
