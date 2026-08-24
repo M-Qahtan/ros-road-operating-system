@@ -55,6 +55,25 @@ data "aws_iam_policy_document" "vpc_flow_publish" {
     actions   = ["logs:DescribeLogGroups"]
     resources = ["*"]
   }
+
+  statement {
+    sid    = "UseLogsKmsViaCloudWatch"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt",
+      "kms:ReEncrypt*",
+      "kms:Decrypt",
+      "kms:GenerateDataKey*",
+      "kms:Describe*"
+    ]
+    resources = [aws_kms_key.logs.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["logs.${var.aws_region}.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "vpc_flow_publish" {
