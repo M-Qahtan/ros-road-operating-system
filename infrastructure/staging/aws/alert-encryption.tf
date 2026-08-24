@@ -1,3 +1,8 @@
+locals {
+  staging_safety_alert_topic_arn = "arn:aws:sns:${var.aws_region}:${var.expected_aws_account_id}:${var.name_prefix}-safety-alerts"
+  staging_alarm_arn_pattern      = "arn:aws:cloudwatch:${var.aws_region}:${var.expected_aws_account_id}:alarm:${var.name_prefix}-*"
+}
+
 data "aws_iam_policy_document" "alerts_kms" {
   statement {
     sid    = "EnableAccountIamPermissions"
@@ -26,6 +31,40 @@ data "aws_iam_policy_document" "alerts_kms" {
       "kms:GenerateDataKey*"
     ]
     resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.expected_aws_account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = [local.staging_alarm_arn_pattern]
+    }
+  }
+
+  statement {
+    sid    = "AllowSnsTopicEncryption"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["sns.amazonaws.com"]
+    }
+
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey*"
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:sns:topicArn"
+      values   = [local.staging_safety_alert_topic_arn]
+    }
   }
 }
 
@@ -80,7 +119,7 @@ data "aws_iam_policy_document" "safety_alerts_topic" {
     condition {
       test     = "ArnLike"
       variable = "aws:SourceArn"
-      values   = ["arn:aws:cloudwatch:${var.aws_region}:${var.expected_aws_account_id}:alarm:${var.name_prefix}-*"]
+      values   = [local.staging_alarm_arn_pattern]
     }
   }
 }
