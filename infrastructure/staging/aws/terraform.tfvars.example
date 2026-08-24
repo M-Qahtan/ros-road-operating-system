@@ -1,12 +1,24 @@
 # Example values only. Do not commit real account IDs, trust material, certificates,
 # personal data, credentials, private keys, or production endpoints.
+#
+# Geography/hosting boundary:
+# - pilot_geography = Riyadh, Saudi Arabia
+# - aws_region = me-central-1 = AWS Middle East (UAE), NOT Saudi Arabia
+# - this temporary staging slice is SYNTHETIC_NON_SENSITIVE_ONLY
+# - no real incident/evidence/medical/legal data is allowed here
 
 expected_aws_account_id = "123456789012"
 aws_region              = "me-central-1"
 name_prefix             = "ros-staging"
 
-api_image_uri    = "123456789012.dkr.ecr.me-central-1.amazonaws.com/ros-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-worker_image_uri = "123456789012.dkr.ecr.me-central-1.amazonaws.com/ros-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+pilot_geography             = "Riyadh, Saudi Arabia"
+cloud_jurisdiction           = "United Arab Emirates"
+saudi_hosted                 = false
+staging_data_classification  = "SYNTHETIC_NON_SENSITIVE_ONLY"
+real_incident_data_allowed   = false
+
+api_image_uri    = "123456789012.dkr.ecr.me-central-1.amazonaws.com/ros-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+worker_image_uri = "123456789012.dkr.ecr.me-central-1.amazonaws.com/ros-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 tls_certificate_arn = "arn:aws:acm:me-central-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
 
 fargate_platform_version = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"
