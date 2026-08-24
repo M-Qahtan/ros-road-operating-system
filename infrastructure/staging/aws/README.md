@@ -46,7 +46,7 @@ The staging proposal assumes the reviewed runtime line containing these prerequi
 3. presigned evidence uploads bind the explicit SHA-256 checksum algorithm required by the Object Lock upload contract;
 4. `MVP_BOUNDED_RETENTION` fails closed before an upload intent is issued when `legalHold=true` or `retainUntil` exceeds the 365-day MVP guarantee.
 
-The R2 IaC branch is intentionally stacked on the current bounded-retention candidate while that candidate completes its independent merge gate. No CI or review evidence from the stacked state may be reused after the base changes. Once the prerequisite is merged, this IaC must be reconciled to the resulting exact `main` and reverified from scratch before it can become Ready-for-Review.
+`MVP_BOUNDED_RETENTION` was independently approved and merged through PR #120 into `main` at merge commit `38f46b7f931037b137790e2f38bd88318383bd5b`. The merged `main` tree SHA and the reviewed prerequisite head tree SHA are identical (`d74696217e44ef41b1dea04bd9104db0ea9a27d9`), proving that the intervening merge commit changed history topology only and introduced no content drift. This IaC PR is therefore reviewed against `main` directly, and all final workflow/review evidence must come from the post-retarget exact head rather than from the earlier stacked-validation cycle.
 
 ## MVP retention contract
 
@@ -112,7 +112,7 @@ Before a real plan can be generated, freeze and independently review:
 7. approved RDS CA PEM;
 8. approved OIDC issuer/JWKS/audience/client/tenant/purpose bindings;
 9. approved private identity connectivity review reference;
-10. on-call and rollback owners;
+10. on-call and rollback owners plus proof that the human on-call delivery path is operational;
 11. VPC Flow Logs plus evidence/audit retention >=365 days, CloudTrail S3 data events and log-file validation represented in the exact plan;
 12. zero unresolved P0/P1 findings for the staging slice.
 
