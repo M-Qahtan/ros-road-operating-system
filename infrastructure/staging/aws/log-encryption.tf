@@ -1,7 +1,8 @@
 locals {
   staging_log_group_arns = [
     "arn:aws:logs:${var.aws_region}:${var.expected_aws_account_id}:log-group:/ros/staging/api",
-    "arn:aws:logs:${var.aws_region}:${var.expected_aws_account_id}:log-group:/ros/staging/worker"
+    "arn:aws:logs:${var.aws_region}:${var.expected_aws_account_id}:log-group:/ros/staging/worker",
+    "arn:aws:logs:${var.aws_region}:${var.expected_aws_account_id}:log-group:/ros/staging/vpc-flow"
   ]
 }
 
