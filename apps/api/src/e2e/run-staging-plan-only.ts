@@ -10,7 +10,12 @@ import {
   verifyTerraformPlanFile
 } from '../runtime/staging-cloud-governance.js';
 import {
+  ROS_PILOT_GEOGRAPHY,
+  ROS_STAGING_CLOUD_JURISDICTION,
+  ROS_STAGING_DATA_CLASSIFICATION,
+  ROS_STAGING_REAL_INCIDENT_DATA_ALLOWED,
   ROS_STAGING_REGION,
+  ROS_STAGING_SAUDI_HOSTED,
   assertExternalDirectory,
   assertExternalRegularFile,
   executeJson,
@@ -80,7 +85,7 @@ async function copyTrackedStagingIac(repoRoot: string, workDir: string): Promise
     windowsHide: true
   });
   const tracked = stdout.split('\0').filter((path) => path.length > 0);
-  if (tracked.length === 0) throw new Error('no tracked Riyadh staging IaC files were found');
+  if (tracked.length === 0) throw new Error('no tracked temporary staging IaC files were found');
 
   for (const repositoryPath of tracked) {
     if (!repositoryPath.startsWith(STAGING_IAC_PREFIX) || repositoryPath.includes('..') || repositoryPath.includes('\\')) {
@@ -120,12 +125,21 @@ async function runSilent(
   }
 }
 
-async function ensureOutputNamesAvailable(outputDir: string): Promise<{ planPath: string; packagePath: string; decisionPath: string; digestPath: string }> {
-  const paths = {
+interface PlanOnlyOutputPaths {
+  readonly planPath: string;
+  readonly packagePath: string;
+  readonly decisionPath: string;
+  readonly digestPath: string;
+  readonly hostingBoundaryPath: string;
+}
+
+async function ensureOutputNamesAvailable(outputDir: string): Promise<PlanOnlyOutputPaths> {
+  const paths: PlanOnlyOutputPaths = {
     planPath: join(outputDir, 'ros-staging.tfplan'),
     packagePath: join(outputDir, 'ros-staging-cloud-review.json'),
     decisionPath: join(outputDir, 'ros-staging-cloud-decision.json'),
-    digestPath: join(outputDir, 'ros-staging.tfplan.sha256')
+    digestPath: join(outputDir, 'ros-staging.tfplan.sha256'),
+    hostingBoundaryPath: join(outputDir, 'ros-staging-hosting-boundary.json')
   };
   for (const path of Object.values(paths)) {
     try {
@@ -247,13 +261,14 @@ async function main(): Promise<void> {
       evidenceFiles.push({ kind: input.kind, path: input.path, sha256: digest.sha256, sizeBytes: digest.sizeBytes });
     }
 
+    const generatedAt = new Date().toISOString();
     const reviewPackage = parseStagingCloudReviewPackage({
       schema: 'ros-staging-cloud-review/v1',
       candidateHeadSha: runnerManifest.expectedCandidateHeadSha,
       environment: 'STAGING',
       cloudAccountReference: sanitizedAccountReference(account),
       cloudRegion: ROS_STAGING_REGION,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       claims: runnerManifest.claims,
       evidenceFiles
     });
@@ -264,21 +279,43 @@ async function main(): Promise<void> {
       verifiedPlan
     );
     const decision = evaluateStagingCloudReview(reviewPackage, verification);
+    const hostingBoundaryReceipt = Object.freeze({
+      schema: 'ros-staging-hosting-boundary/v1',
+      candidateHeadSha: runnerManifest.expectedCandidateHeadSha,
+      cloudRegion: ROS_STAGING_REGION,
+      cloudJurisdiction: ROS_STAGING_CLOUD_JURISDICTION,
+      pilotGeography: ROS_PILOT_GEOGRAPHY,
+      saudiHosted: ROS_STAGING_SAUDI_HOSTED,
+      dataClassification: ROS_STAGING_DATA_CLASSIFICATION,
+      realIncidentDataAllowed: ROS_STAGING_REAL_INCIDENT_DATA_ALLOWED,
+      runnerManifestSha256: manifestDigest.sha256,
+      terraformInputsSha256: tfvarsBefore.sha256,
+      terraformPlanSha256: verifiedPlan.terraformPlanSha256,
+      generatedAt
+    });
 
     await writeFile(outputs.packagePath, `${JSON.stringify(reviewPackage, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
     await writeFile(outputs.decisionPath, `${JSON.stringify(decision, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
     await writeFile(outputs.digestPath, `${verifiedPlan.terraformPlanSha256}  ros-staging.tfplan\n`, { encoding: 'utf8', flag: 'wx' });
+    await writeFile(outputs.hostingBoundaryPath, `${JSON.stringify(hostingBoundaryReceipt, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    const hostingBoundaryDigest = await sha256File(outputs.hostingBoundaryPath);
 
     process.stdout.write(`${JSON.stringify({
       status: decision.status,
       candidateHeadSha: runnerManifest.expectedCandidateHeadSha,
       cloudAccountReference: reviewPackage.cloudAccountReference,
       cloudRegion: ROS_STAGING_REGION,
+      cloudJurisdiction: ROS_STAGING_CLOUD_JURISDICTION,
+      pilotGeography: ROS_PILOT_GEOGRAPHY,
+      saudiHosted: ROS_STAGING_SAUDI_HOSTED,
+      dataClassification: ROS_STAGING_DATA_CLASSIFICATION,
+      realIncidentDataAllowed: ROS_STAGING_REAL_INCIDENT_DATA_ALLOWED,
       terraformVersion,
       trackedIacFileCount,
       runnerManifestSha256: manifestDigest.sha256,
       terraformInputsSha256: tfvarsBefore.sha256,
       terraformPlanSha256: verifiedPlan.terraformPlanSha256,
+      hostingBoundarySha256: hostingBoundaryDigest.sha256,
       terraformPlanAnalysis: verifiedPlan.terraformPlanAnalysis,
       blockingReasons: decision.blockingReasons,
       terraformApplyAuthorized: false,
