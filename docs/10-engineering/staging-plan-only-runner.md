@@ -2,11 +2,13 @@
 
 ## Purpose
 
-Generate one saved Terraform plan for the exact reviewed ROS `main` candidate in AWS `me-central-1` using short-lived AWS credentials only, then pass that exact plan through the staging cloud-review verifier.
+Generate one saved Terraform plan for the exact reviewed ROS `main` candidate in AWS `eu-central-1` (Europe/Frankfurt) using short-lived AWS credentials only, then pass that exact plan through the staging cloud-review verifier.
 
-**Geography boundary:** `me-central-1` is AWS Middle East (UAE). Riyadh, Saudi Arabia is the intended pilot geography, not the AWS hosting region. Any plan produced by this runner must therefore be treated as **temporary UAE cloud staging** and **synthetic/non-sensitive only**. It is not evidence of Saudi hosting or Saudi data residency.
+**Geography boundary:** `eu-central-1` is AWS Europe (Frankfurt), in Germany / European Union. Riyadh, Saudi Arabia is the intended pilot geography, not the AWS hosting region. Any plan produced by this runner must therefore be treated as **temporary Frankfurt cloud staging** and **synthetic/non-sensitive only**. It is not evidence of Saudi hosting or Saudi data residency.
 
-This runbook does **not** authorize Terraform apply, deployment, public-road operation, live partner/government integration, camera ingestion, vehicle actuation, autonomous S3/S4 authority, or use of real incident/evidence/medical/legal data in the temporary UAE staging slice.
+The prior `me-central-1` (UAE) staging baseline is obsolete for execution under this runbook. UAE plans, images, tfvars, certificates, state assumptions or evidence must not be relabeled or reused as Frankfurt proof. Frankfurt requires a fresh exact candidate, fresh image digest, fresh external inputs, fresh binary plan and fresh review package.
+
+This runbook does **not** authorize Terraform apply, deployment, public-road operation, live partner/government integration, camera ingestion, vehicle actuation, autonomous S3/S4 authority, or use of real incident/evidence/medical/legal data in the temporary Frankfurt staging slice.
 
 ## Hard boundaries
 
@@ -14,7 +16,7 @@ This runbook does **not** authorize Terraform apply, deployment, public-road ope
 - Terraform is checked at runtime and must be exactly `1.15.8`; a different version fails closed before AWS planning.
 - The disposable IaC workspace is built only from files returned by `git ls-files` under `infrastructure/staging/aws`.
 - `infrastructure/staging/aws/region-governance.tf` is part of that tracked-only source set and therefore travels into every governed plan.
-- `me-central-1` must be represented as **United Arab Emirates**, never Riyadh/Saudi hosting.
+- `eu-central-1` must be represented as **Germany / European Union**, never Riyadh/Saudi hosting.
 - `pilot_geography` must remain `Riyadh, Saudi Arabia`.
 - `saudi_hosted` must remain `false`.
 - `staging_data_classification` must remain `SYNTHETIC_NON_SENSITIVE_ONLY`.
@@ -22,7 +24,7 @@ This runbook does **not** authorize Terraform apply, deployment, public-road ope
 - Each geography/data value above is locked by Terraform variable validation; a widening or false hosting claim must fail input validation before a reviewable plan can be produced.
 - AWS credentials must be temporary. The runner uses `aws configure export-credentials --format process` and rejects exports without both `SessionToken` and `Expiration`, credentials with less than five minutes remaining, and credentials whose remaining lifetime exceeds the ROS short-lived boundary.
 - The exported credentials are kept in memory and passed directly to AWS read calls and Terraform. They are never printed or written by the runner.
-- The authenticated AWS Region is fixed to `me-central-1`; the runner performs read-only STS identity and EC2 Region checks before Terraform planning.
+- The authenticated AWS Region is fixed to `eu-central-1`; the runner performs read-only STS identity and EC2 Region checks before Terraform planning.
 - The runner has no `apply`, `destroy`, `import`, state mutation, GitHub OIDC mutation, IAM mutation, repository-variable mutation, or deployment command.
 - Terraform runs in a disposable tracked-files-only copy of `infrastructure/staging/aws`; `terraform init` cannot modify the Git checkout.
 - The input tfvars file, evidence root, runner manifest, and output directory must all be outside the Git repository and must not be symlinked inputs.
@@ -91,15 +93,15 @@ Every evidence file is independently byte-sized and SHA-256 hashed by the runner
 The external tfvars must preserve the explicit governance values:
 
 ```hcl
-aws_region                    = "me-central-1"
+aws_region                    = "eu-central-1"
 pilot_geography               = "Riyadh, Saudi Arabia"
-cloud_jurisdiction             = "United Arab Emirates"
+cloud_jurisdiction             = "Germany / European Union"
 saudi_hosted                   = false
 staging_data_classification    = "SYNTHETIC_NON_SENSITIVE_ONLY"
 real_incident_data_allowed     = false
 ```
 
-Any attempt to set `saudi_hosted=true`, widen the data classification, enable real incident data, relabel `me-central-1` as Saudi Arabia, or change the pilot geography without a separately governed change fails closed through Terraform variable validation.
+Any attempt to set `saudi_hosted=true`, widen the data classification, enable real incident data, relabel `eu-central-1` as Saudi Arabia, return to another region without a governed change, or change the pilot geography fails closed through Terraform variable validation.
 
 ## Hosting-boundary receipt
 
@@ -108,8 +110,8 @@ Every successful PLAN_ONLY execution also writes `ros-staging-hosting-boundary.j
 The receipt binds these fixed governance facts to the exact execution:
 
 - candidate Git SHA;
-- `cloudRegion = me-central-1`;
-- `cloudJurisdiction = United Arab Emirates`;
+- `cloudRegion = eu-central-1`;
+- `cloudJurisdiction = Germany / European Union`;
 - `pilotGeography = Riyadh, Saudi Arabia`;
 - `saudiHosted = false`;
 - `dataClassification = SYNTHETIC_NON_SENSITIVE_ONLY`;
@@ -118,7 +120,7 @@ The receipt binds these fixed governance facts to the exact execution:
 - Terraform-input SHA-256;
 - exact binary-plan SHA-256.
 
-The runner hashes the receipt after writing it and emits only that receipt SHA-256 in the sanitized terminal result. The receipt does not authorize apply or real-data processing; it prevents a reviewed UAE plan from later being relabeled as Saudi-hosted or real-data-ready without a new candidate, inputs and plan.
+The runner hashes the receipt after writing it and emits only that receipt SHA-256 in the sanitized terminal result. The receipt does not authorize apply or real-data processing; it prevents a reviewed Frankfurt plan from later being relabeled as Saudi-hosted or real-data-ready without a new candidate, inputs and plan.
 
 ## Observability and trace-correlation evidence basis
 
@@ -169,7 +171,7 @@ The runner performs only:
 4. manifest/tfvars pre-run SHA-256 capture;
 5. temporary AWS credential export and expiry validation;
 6. `sts:GetCallerIdentity` read;
-7. `ec2:DescribeRegions` read for `me-central-1` (Middle East/UAE);
+7. `ec2:DescribeRegions` read for `eu-central-1` (Europe/Frankfurt);
 8. isolated `terraform init -backend=false -input=false -lockfile=readonly`;
 9. `terraform plan -input=false -out=<secure-plan> -var-file=<external-tfvars>`;
 10. manifest/tfvars post-plan SHA-256 equality proof;
