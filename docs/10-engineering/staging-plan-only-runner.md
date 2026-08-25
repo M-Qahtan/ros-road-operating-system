@@ -101,6 +101,25 @@ real_incident_data_allowed     = false
 
 Any attempt to set `saudi_hosted=true`, widen the data classification, enable real incident data, relabel `me-central-1` as Saudi Arabia, or change the pilot geography without a separately governed change fails closed through Terraform variable validation.
 
+## Hosting-boundary receipt
+
+Every successful PLAN_ONLY execution also writes `ros-staging-hosting-boundary.json` in the secure output directory. The receipt is deliberately separate from the existing `ros-staging-cloud-review/v1` schema so that the established verifier contract is not silently widened.
+
+The receipt binds these fixed governance facts to the exact execution:
+
+- candidate Git SHA;
+- `cloudRegion = me-central-1`;
+- `cloudJurisdiction = United Arab Emirates`;
+- `pilotGeography = Riyadh, Saudi Arabia`;
+- `saudiHosted = false`;
+- `dataClassification = SYNTHETIC_NON_SENSITIVE_ONLY`;
+- `realIncidentDataAllowed = false`;
+- runner-manifest SHA-256;
+- Terraform-input SHA-256;
+- exact binary-plan SHA-256.
+
+The runner hashes the receipt after writing it and emits only that receipt SHA-256 in the sanitized terminal result. The receipt does not authorize apply or real-data processing; it prevents a reviewed UAE plan from later being relabeled as Saudi-hosted or real-data-ready without a new candidate, inputs and plan.
+
 ## Observability and trace-correlation evidence basis
 
 `logsMetricsTracesPlanned=true` does **not** claim that ROS has deployed AWS X-Ray, a third-party APM backend, or a full OpenTelemetry collector. It refers to the existing vendor-neutral trace-correlation plane represented in the application/runtime design and the merged staging logging/metrics topology.
@@ -121,8 +140,9 @@ Create an empty directory outside the repository. It must not contain any of the
 - `ros-staging.tfplan.sha256`
 - `ros-staging-cloud-review.json`
 - `ros-staging-cloud-decision.json`
+- `ros-staging-hosting-boundary.json`
 
-The runner refuses to overwrite an earlier plan or decision.
+The runner refuses to overwrite an earlier plan, review, decision, digest or hosting-boundary receipt.
 
 ## Execution
 
@@ -155,7 +175,8 @@ The runner performs only:
 10. manifest/tfvars post-plan SHA-256 equality proof;
 11. in-memory `terraform show -json` through the governance verifier;
 12. evidence byte/hash verification;
-13. sanitized review package, decision JSON and plan SHA-256 output.
+13. sanitized review package, decision JSON and plan SHA-256 output;
+14. hosting-boundary receipt creation and SHA-256 binding to the exact candidate, tfvars and binary plan.
 
 No captured Terraform init/plan stdout or stderr is emitted by the runner because plan/input data can be sensitive.
 
