@@ -1,16 +1,18 @@
-# ROS AWS Temporary Cloud Staging — UAE Region / Riyadh Pilot Geography (R3)
+# ROS AWS Temporary Cloud Staging — Frankfurt Region / Riyadh Pilot Geography (R4)
 
-This directory defines a reviewable ROS staging topology in AWS `me-central-1`.
+This directory defines a reviewable ROS temporary engineering-staging topology in AWS `eu-central-1` (Europe/Frankfurt).
 
 **Critical geography boundary:**
 
-- `me-central-1` is **AWS Middle East (UAE)**. It is not Riyadh and it is not a Saudi Arabia hosting region.
+- `eu-central-1` is **AWS Europe (Frankfurt)** in **Germany / European Union**. It is not Riyadh and it is not a Saudi Arabia hosting region.
 - **Riyadh, Saudi Arabia** remains the intended pilot geography for controlled ROS validation.
-- The current `me-central-1` slice, if ever separately authorized beyond PLAN_ONLY, is limited to **synthetic/non-sensitive staging data only**.
+- The current `eu-central-1` slice, if ever separately authorized beyond PLAN_ONLY, is limited to **synthetic/non-sensitive staging data only**.
 - It must not contain real incident evidence, medical/legal payloads, production personal data, or other sensitive operational data.
 - It must never be described as Saudi-hosted or as satisfying Saudi data-residency requirements.
 
-The distinction between **pilot geography** and **cloud hosting jurisdiction** is a hard governance invariant. `region-governance.tf` uses Terraform variable validations that fail input validation if the temporary UAE staging slice is configured as Saudi-hosted, permits real incident data, or weakens the synthetic/non-sensitive boundary.
+The prior temporary `me-central-1` (UAE) staging target was retired from this proposal after an externally observed regional service disruption made it unsuitable as the current engineering validation target. That operational history does not authorize copying or reusing UAE plans, images, state, certificates, resources, or evidence as Frankfurt proof. Every executable artifact for Frankfurt must be generated and reviewed against the exact Frankfurt-bound candidate.
+
+The distinction between **pilot geography** and **cloud hosting jurisdiction** is a hard governance invariant. `region-governance.tf` uses Terraform variable validations that fail input validation if the temporary Frankfurt staging slice is configured as Saudi-hosted, permits real incident data, or weakens the synthetic/non-sensitive boundary.
 
 ## Authority boundary
 
@@ -24,8 +26,8 @@ This module is an **infrastructure proposal only**. It does not authorize or per
 - live camera ingestion;
 - vehicle actuation;
 - autonomous S3/S4 authority;
-- use of real incident/evidence/medical/legal data in the temporary UAE staging slice;
-- any claim that `me-central-1` is Saudi-hosted.
+- use of real incident/evidence/medical/legal data in the temporary Frankfurt staging slice;
+- any claim that `eu-central-1` is Saudi-hosted.
 
 Any future real Terraform plan is a separate **PLAN_ONLY** operation. A later apply, if ever approved, requires a new founder authorization bound to the exact reviewed binary `tfplan` SHA-256, AWS account, region, scope, hosting/data boundary and evidence package. Regenerating or changing the plan invalidates that authorization.
 
@@ -33,7 +35,7 @@ Any future real Terraform plan is a separate **PLAN_ONLY** operation. A later ap
 
 The current proposal remains intentionally conservative:
 
-- isolated VPC in `me-central-1` across at least two AZs;
+- isolated VPC in `eu-central-1` across at least two AZs;
 - private application and data subnets; no Internet Gateway and no NAT Gateway in this slice;
 - private AWS endpoints for ECR, CloudWatch Logs, Secrets Manager, KMS, STS and S3;
 - internal HTTPS ALB only;
@@ -55,15 +57,16 @@ The current proposal remains intentionally conservative:
 
 `region-governance.tf` fixes the temporary staging contract to:
 
+- `aws_region = "eu-central-1"`;
 - `pilot_geography = "Riyadh, Saudi Arabia"`;
-- `cloud_jurisdiction = "United Arab Emirates"`;
+- `cloud_jurisdiction = "Germany / European Union"`;
 - `saudi_hosted = false`;
 - `staging_data_classification = "SYNTHETIC_NON_SENSITIVE_ONLY"`;
 - `real_incident_data_allowed = false`.
 
-These values are not documentation hints; each is locked by Terraform variable validation. An operator cannot change this slice to `saudi_hosted=true`, widen the data class, or permit real incident data without causing Terraform input validation/plan failure.
+These values are not documentation hints; each is locked by Terraform variable validation. An operator cannot change this slice to `saudi_hosted=true`, widen the data class, permit real incident data, or silently return the plan to another region without causing Terraform input validation/plan failure.
 
-A future Saudi-hosted environment is a **separate deployment target and governance decision**. It must use an actually available and independently verified Saudi hosting region/provider boundary, with its own account/region, data-residency review, service-availability checks, threat model, exact plan digest and founder approval. No migration or equivalence is implied by this temporary UAE slice.
+A future Saudi-hosted environment is a **separate deployment target and governance decision**. It must use an actually available and independently verified Saudi hosting region/provider boundary, with its own account/region, data-residency review, service-availability checks, threat model, exact plan digest and founder approval. No migration or equivalence is implied by this temporary Frankfurt slice.
 
 ## Required runtime/evidence contracts
 
@@ -95,7 +98,7 @@ VPC Flow Logs provide a distinct network-forensics plane for accepted and reject
 
 Both evidence and audit retention use Object Lock **COMPLIANCE** mode with a minimum of 365 days. CloudTrail log-file validation is enabled. A successful Terraform validation proves configuration validity only; a later real PLAN_ONLY plan must still prove the exact in-region resource graph, service availability, IAM/KMS policies and plan digest.
 
-Because the temporary UAE slice is synthetic/non-sensitive only, no real-world incident evidence should ever enter these stores under this staging contract.
+Because the temporary Frankfurt slice is synthetic/non-sensitive only, no real-world incident evidence should ever enter these stores under this staging contract.
 
 ## Identity boundary
 
@@ -134,12 +137,12 @@ The CI workflow performs only non-mutating checks and verifies that the reviewed
 Before any real plan can be considered reviewable, freeze and independently review:
 
 1. exact merged ROS candidate SHA;
-2. exact API and worker ECR image digests;
-3. exact supported Fargate platform version in the selected cloud region;
-4. approved AWS account and `me-central-1` access using short-lived SSO/OIDC credentials;
-5. explicit proof that `me-central-1` is treated as **UAE temporary staging**, not Saudi hosting;
+2. exact API and worker ECR image digests generated for the Frankfurt-bound candidate;
+3. exact supported Fargate platform version in `eu-central-1`;
+4. approved AWS account and `eu-central-1` access using short-lived SSO/OIDC credentials;
+5. explicit proof that `eu-central-1` is treated as **Germany/EU temporary staging**, not Saudi hosting;
 6. explicit proof that the input/evidence population is **synthetic/non-sensitive only**;
-7. ACM certificate ARN for the internal endpoint;
+7. ACM certificate ARN for the internal endpoint in the exact account/region;
 8. exact supported PostgreSQL and Redis engine versions in-region;
 9. approved RDS CA PEM;
 10. approved OIDC issuer/JWKS/audience/client/tenant/purpose bindings;
