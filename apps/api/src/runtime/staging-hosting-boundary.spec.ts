@@ -10,8 +10,8 @@ import {
 } from './staging-plan-only-runner.js';
 
 test('temporary cloud staging hosting boundary constants remain explicit', () => {
-  assert.equal(ROS_STAGING_REGION, 'me-central-1');
-  assert.equal(ROS_STAGING_CLOUD_JURISDICTION, 'United Arab Emirates');
+  assert.equal(ROS_STAGING_REGION, 'eu-central-1');
+  assert.equal(ROS_STAGING_CLOUD_JURISDICTION, 'Germany / European Union');
   assert.equal(ROS_PILOT_GEOGRAPHY, 'Riyadh, Saudi Arabia');
   assert.equal(ROS_STAGING_SAUDI_HOSTED, false);
   assert.equal(ROS_STAGING_DATA_CLASSIFICATION, 'SYNTHETIC_NON_SENSITIVE_ONLY');

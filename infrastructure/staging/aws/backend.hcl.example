@@ -1,10 +1,10 @@
 # Example only. Copy outside Git and fill with the already-approved Terraform state boundary.
 # Never commit live account-specific backend configuration or credentials.
-# me-central-1 is AWS Middle East (UAE); this backend example is not a Saudi-hosting claim.
+# eu-central-1 is AWS Europe (Frankfurt), Germany / European Union; this backend example is not a Saudi-hosting claim.
 
 bucket         = "REPLACE_WITH_APPROVED_TERRAFORM_STATE_BUCKET"
 key            = "ros/staging/runtime/terraform.tfstate"
-region         = "me-central-1"
+region         = "eu-central-1"
 encrypt        = true
 kms_key_id     = "REPLACE_WITH_APPROVED_STATE_KMS_KEY_ARN"
 dynamodb_table = "REPLACE_IF_APPROVED_LOCK_TABLE_IS_USED"

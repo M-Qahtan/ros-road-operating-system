@@ -1,5 +1,5 @@
 # Hosting and pilot geography are deliberately separate concepts.
-# The current cloud staging slice is pinned to AWS Middle East (UAE), me-central-1.
+# The current temporary cloud staging slice is pinned to AWS Europe (Frankfurt), eu-central-1.
 # Riyadh is the pilot geography, not the AWS hosting region.
 #
 # Each variable below is locked to its approved value with Terraform variable
@@ -18,35 +18,35 @@ variable "pilot_geography" {
 }
 
 variable "cloud_jurisdiction" {
-  description = "Jurisdiction of the currently selected AWS staging region. me-central-1 is Middle East (UAE)."
+  description = "Jurisdiction of the currently selected AWS staging region. eu-central-1 is Europe (Frankfurt), Germany / European Union."
   type        = string
-  default     = "United Arab Emirates"
+  default     = "Germany / European Union"
 
   validation {
-    condition     = var.cloud_jurisdiction == "United Arab Emirates"
-    error_message = "me-central-1 must be represented as United Arab Emirates; it must not be labeled Riyadh or Saudi Arabia."
+    condition     = var.cloud_jurisdiction == "Germany / European Union"
+    error_message = "eu-central-1 must be represented as Germany / European Union; it must not be labeled Riyadh or Saudi Arabia."
   }
 }
 
 variable "saudi_hosted" {
-  description = "Whether this exact cloud staging slice is hosted in Saudi Arabia. Must remain false for me-central-1."
+  description = "Whether this exact cloud staging slice is hosted in Saudi Arabia. Must remain false for eu-central-1."
   type        = bool
   default     = false
 
   validation {
     condition     = var.saudi_hosted == false
-    error_message = "me-central-1 is not Saudi-hosted. A Saudi-hosted claim requires a separately reviewed Saudi-region deployment."
+    error_message = "eu-central-1 is not Saudi-hosted. A Saudi-hosted claim requires a separately reviewed in-jurisdiction Saudi deployment."
   }
 }
 
 variable "staging_data_classification" {
-  description = "Maximum data class allowed in the temporary UAE staging slice."
+  description = "Maximum data class allowed in the temporary Frankfurt staging slice."
   type        = string
   default     = "SYNTHETIC_NON_SENSITIVE_ONLY"
 
   validation {
     condition     = var.staging_data_classification == "SYNTHETIC_NON_SENSITIVE_ONLY"
-    error_message = "Temporary UAE staging is limited to SYNTHETIC_NON_SENSITIVE_ONLY data."
+    error_message = "Temporary Frankfurt staging is limited to SYNTHETIC_NON_SENSITIVE_ONLY data."
   }
 }
 
@@ -57,6 +57,6 @@ variable "real_incident_data_allowed" {
 
   validation {
     condition     = var.real_incident_data_allowed == false
-    error_message = "Real incident/evidence/medical/legal data is forbidden in the temporary UAE staging slice."
+    error_message = "Real incident/evidence/medical/legal data is forbidden in the temporary Frankfurt staging slice."
   }
 }
