@@ -7,6 +7,11 @@ import { promisify } from 'node:util';
 import type { StagingCloudReviewClaims, StagingEvidenceKind } from './staging-cloud-governance.js';
 
 export const ROS_STAGING_REGION = 'me-central-1';
+export const ROS_PILOT_GEOGRAPHY = 'Riyadh, Saudi Arabia';
+export const ROS_STAGING_CLOUD_JURISDICTION = 'United Arab Emirates';
+export const ROS_STAGING_SAUDI_HOSTED = false;
+export const ROS_STAGING_DATA_CLASSIFICATION = 'SYNTHETIC_NON_SENSITIVE_ONLY';
+export const ROS_STAGING_REAL_INCIDENT_DATA_ALLOWED = false;
 export const ROS_TERRAFORM_VERSION = '1.15.8';
 export const MAX_TEMPORARY_CREDENTIAL_LIFETIME_MS = 13 * 60 * 60 * 1000;
 export const MIN_TEMPORARY_CREDENTIAL_REMAINING_MS = 5 * 60 * 1000;
