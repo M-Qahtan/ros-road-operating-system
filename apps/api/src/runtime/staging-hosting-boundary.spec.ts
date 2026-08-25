@@ -9,7 +9,7 @@ import {
   ROS_STAGING_SAUDI_HOSTED
 } from './staging-plan-only-runner.js';
 
-test('temporary cloud staging hosting boundary remains explicit and fail-closed by policy', () => {
+test('temporary cloud staging hosting boundary constants remain explicit', () => {
   assert.equal(ROS_STAGING_REGION, 'me-central-1');
   assert.equal(ROS_STAGING_CLOUD_JURISDICTION, 'United Arab Emirates');
   assert.equal(ROS_PILOT_GEOGRAPHY, 'Riyadh, Saudi Arabia');
