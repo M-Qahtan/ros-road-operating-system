@@ -1,11 +1,11 @@
 variable "aws_region" {
-  description = "ROS staging AWS region. This slice is intentionally pinned to Riyadh."
+  description = "Temporary ROS cloud staging region. me-central-1 is AWS Middle East (UAE); Riyadh remains the pilot geography and this value must not be represented as Saudi-hosted."
   type        = string
   default     = "me-central-1"
 
   validation {
     condition     = var.aws_region == "me-central-1"
-    error_message = "ROS staging is currently approved for me-central-1 only."
+    error_message = "ROS temporary cloud staging is currently approved for me-central-1 (Middle East/UAE) only. This is not a Saudi hosting claim."
   }
 }
 
@@ -86,7 +86,7 @@ variable "worker_image_uri" {
 }
 
 variable "tls_certificate_arn" {
-  description = "ACM certificate ARN for the internal staging ALB HTTPS listener. It must belong to the approved account and Riyadh region."
+  description = "ACM certificate ARN for the internal staging ALB HTTPS listener. It must belong to the approved account and me-central-1 (Middle East/UAE)."
   type        = string
 
   validation {
@@ -94,7 +94,7 @@ variable "tls_certificate_arn" {
       "^arn:aws:acm:${var.aws_region}:${var.expected_aws_account_id}:certificate/[0-9a-f-]+$",
       var.tls_certificate_arn
     ))
-    error_message = "tls_certificate_arn must be an ACM certificate ARN in the approved AWS account and me-central-1."
+    error_message = "tls_certificate_arn must be an ACM certificate ARN in the approved AWS account and me-central-1 (Middle East/UAE)."
   }
 }
 
@@ -139,7 +139,7 @@ variable "task_memory" {
 }
 
 variable "fargate_platform_version" {
-  description = "Exact Linux Fargate platform version approved in me-central-1 during the real PLAN_ONLY session. LATEST is forbidden."
+  description = "Exact Linux Fargate platform version approved in me-central-1 (Middle East/UAE) during the real PLAN_ONLY session. LATEST is forbidden."
   type        = string
 
   validation {
@@ -149,12 +149,12 @@ variable "fargate_platform_version" {
 }
 
 variable "postgres_engine_version" {
-  description = "Exact PostgreSQL engine version approved for me-central-1 during the real PLAN_ONLY session."
+  description = "Exact PostgreSQL engine version approved for me-central-1 (Middle East/UAE) during the real PLAN_ONLY session."
   type        = string
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$", var.postgres_engine_version))
-    error_message = "postgres_engine_version must be an explicit numeric version such as 16.14; aliases such as latest are forbidden."
+    error_message = "postgres_engine_version must be an explicit numeric version such as 16.12; aliases such as latest are forbidden."
   }
 }
 

@@ -21,11 +21,16 @@ provider "aws" {
 
   default_tags {
     tags = merge(var.tags, {
-      ManagedBy   = "Terraform"
-      Project     = "ROS"
-      Environment = "staging"
-      Repository  = "${var.repository_owner}/${var.repository_name}"
-      Control     = "PLAN_ONLY"
+      ManagedBy               = "Terraform"
+      Project                 = "ROS"
+      Environment             = "staging"
+      Repository              = "${var.repository_owner}/${var.repository_name}"
+      Control                 = "PLAN_ONLY"
+      PilotGeography          = var.pilot_geography
+      CloudJurisdiction       = var.cloud_jurisdiction
+      SaudiHosted             = tostring(var.saudi_hosted)
+      DataClassification      = var.staging_data_classification
+      RealIncidentDataAllowed = tostring(var.real_incident_data_allowed)
     })
   }
 }
