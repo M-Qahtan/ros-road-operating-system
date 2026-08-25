@@ -6,9 +6,9 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { StagingCloudReviewClaims, StagingEvidenceKind } from './staging-cloud-governance.js';
 
-export const ROS_STAGING_REGION = 'me-central-1';
+export const ROS_STAGING_REGION = 'eu-central-1';
 export const ROS_PILOT_GEOGRAPHY = 'Riyadh, Saudi Arabia';
-export const ROS_STAGING_CLOUD_JURISDICTION = 'United Arab Emirates';
+export const ROS_STAGING_CLOUD_JURISDICTION = 'Germany / European Union';
 export const ROS_STAGING_SAUDI_HOSTED = false;
 export const ROS_STAGING_DATA_CLASSIFICATION = 'SYNTHETIC_NON_SENSITIVE_ONLY';
 export const ROS_STAGING_REAL_INCIDENT_DATA_ALLOWED = false;
