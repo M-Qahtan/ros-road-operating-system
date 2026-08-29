@@ -24,6 +24,10 @@ export interface ObjectStorageCredentialProviderPort {
   resolve(): Promise<ObjectStorageCredentials>;
 }
 
+export interface EvidenceObjectStorageRuntime extends EvidenceObjectStorage {
+  checkReadiness(signal?: AbortSignal): Promise<void>;
+}
+
 export interface ObjectStorageRuntimeOptions {
   readonly endpoint: string;
   readonly region: string;
@@ -331,6 +335,11 @@ export class RotatingMinioEvidenceStorageAdapter implements EvidenceObjectStorag
     return adapter.quarantine(objectKey, quarantineKey);
   }
 
+  async checkReadiness(signal?: AbortSignal): Promise<void> {
+    const adapter = await this.adapterFor(new Date(this.now().getTime() + 30_000));
+    await adapter.checkReadiness(signal);
+  }
+
   private async adapterFor(operationExpiresAt: Date): Promise<MinioEvidenceStorageAdapter> {
     if (!Number.isFinite(operationExpiresAt.getTime())) {
       throw new ObjectStorageRuntimeConfigurationError('Object-storage operation expiry is invalid');
@@ -364,7 +373,7 @@ export function createEvidenceObjectStorageForRuntime(
     readonly fetchImpl?: typeof fetch;
     readonly credentialFetchImpl?: typeof fetch;
   } = {}
-): EvidenceObjectStorage {
+): EvidenceObjectStorageRuntime {
   const production = (environment.NODE_ENV ?? 'development').trim().toLowerCase() === 'production';
   const now = () => new Date();
   const provider = dependencies.credentialProvider ?? defaultCredentialProvider(

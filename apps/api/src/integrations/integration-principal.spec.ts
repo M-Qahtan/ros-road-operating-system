@@ -38,8 +38,30 @@ function verifier(claims: VerifiedOidcClaims = CLAIMS): OidcTokenVerifierPort {
 test('accepts only an exact binding returned by the trusted verifier', async () => {
   assert.deepEqual(await resolveTrustedIntegrationPrincipal('signed-token', verifier(), POLICY, NOW), {
     subject: 'integration-service-1', clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot',
-    purpose: 'TRAFFIC_COORDINATION', mfaVerified: true
+    purpose: 'TRAFFIC_COORDINATION', mfaVerified: true, roles: ['INTEGRATION_SERVICE']
   });
+});
+
+test('accepts only provisioned human roles on the exact binding', async () => {
+  const policy: IntegrationPrincipalPolicy = {
+    ...POLICY,
+    allowedBindings: [{
+      clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION',
+      roles: ['OPERATOR', 'SUPERVISOR']
+    }]
+  };
+  const principal = await resolveTrustedIntegrationPrincipal(
+    'signed-token', verifier({ ...CLAIMS, roles: ['OPERATOR'] }), policy, NOW
+  );
+  assert.deepEqual(principal.roles, ['OPERATOR']);
+  await assert.rejects(
+    resolveTrustedIntegrationPrincipal('signed-token', verifier({ ...CLAIMS, roles: ['AUDITOR'] }), policy, NOW),
+    /not allowlisted/
+  );
+  await assert.rejects(
+    resolveTrustedIntegrationPrincipal('signed-token', verifier(CLAIMS), policy, NOW),
+    /roles claim is required/
+  );
 });
 
 test('rejects issuer audience and exact principal-binding drift', async () => {

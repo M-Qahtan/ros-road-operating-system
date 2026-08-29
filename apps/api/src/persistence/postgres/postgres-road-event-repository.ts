@@ -21,6 +21,7 @@ interface RoadEventRow {
   readonly id: string;
   readonly tenant_id: string;
   readonly purpose: string;
+  readonly reporter_actor_id: string | null;
   readonly status: RoadEventStatus;
   readonly severity: SeverityLevel;
   readonly severity_score: number | string;
@@ -66,7 +67,8 @@ function requireAccessScope(scope: RoadEventAccessScope): RoadEventAccessScope {
   const purpose = scope.purpose.trim();
   if (!ACCESS_SCOPE_PATTERN.test(tenantId)) throw new TypeError('tenantId is not a valid access scope');
   if (!ACCESS_SCOPE_PATTERN.test(purpose)) throw new TypeError('purpose is not a valid access scope');
-  return { tenantId, purpose };
+  if (scope.reporterActorId !== undefined) requireUuid(scope.reporterActorId, 'reporterActorId');
+  return { tenantId, purpose, ...(scope.reporterActorId === undefined ? {} : { reporterActorId: scope.reporterActorId }) };
 }
 
 function asDate(value: Date | string, field: string): Date {
@@ -86,6 +88,7 @@ function mapRoadEvent(row: RoadEventRow): RoadEvent {
 
   return new RoadEvent({
     id: row.id,
+    reporterActorId: row.reporter_actor_id,
     status: row.status,
     severity: {
       level: row.severity,
@@ -147,6 +150,7 @@ const ROAD_EVENT_SELECT = `
     id,
     tenant_id,
     purpose,
+    reporter_actor_id,
     status,
     severity,
     severity_score,
@@ -169,6 +173,13 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     requireUuid(event.id, 'RoadEvent id');
     const { occurredAt, scope } = validateContext(context);
     const afterState = snapshot(event);
+    const trustedReporterActorId = context.reporterActorId ?? null;
+    if (trustedReporterActorId !== null && context.actorId !== trustedReporterActorId) {
+      throw new TypeError('RoadEvent reporter ownership must use the trusted write actor');
+    }
+    if (event.reporterActorId !== trustedReporterActorId || scope.reporterActorId !== (trustedReporterActorId ?? undefined)) {
+      throw new TypeError('RoadEvent reporter ownership must match the trusted FIELD_USER write context');
+    }
 
     try {
       await this.withTransaction(async (client) => {
@@ -177,11 +188,12 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
           `INSERT INTO road_events (
             id, tenant_id, purpose, status, severity, severity_score, confidence, reason_codes,
             severity_requires_human_review, location, occurred_at, version,
-            closure_authorized_by, closure_authorized_at, closure_authorization_reason
+            closure_authorized_by, closure_authorized_at, closure_authorization_reason,
+            reporter_actor_id
           ) VALUES (
             $1::uuid, $2, $3, $4::road_event_status, $5::severity_level, $6, $7, $8::text[],
             $9, ST_SetSRID(ST_MakePoint($10, $11), 4326)::geography, $12, $13,
-            $14::uuid, $15, $16
+            $14::uuid, $15, $16, $17::uuid
           )`,
           [
             event.id,
@@ -199,7 +211,8 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
             event.version,
             authorization?.actorId ?? null,
             authorization?.authorizedAt ?? null,
-            authorization?.reason ?? null
+            authorization?.reason ?? null,
+            trustedReporterActorId
           ]
         );
         await this.appendAuditAndOutbox(client, event, null, afterState, context, occurredAt);
@@ -279,8 +292,8 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     const client = await this.pool.connect();
     try {
       const result = await client.query<RoadEventRow>(
-        `${ROAD_EVENT_SELECT} WHERE id = $1::uuid AND tenant_id = $2 AND purpose = $3`,
-        [id, scope.tenantId, scope.purpose]
+        `${ROAD_EVENT_SELECT} WHERE id = $1::uuid AND tenant_id = $2 AND purpose = $3${scope.reporterActorId === undefined ? '' : ' AND reporter_actor_id = $4::uuid'}`,
+        [id, scope.tenantId, scope.purpose, ...(scope.reporterActorId === undefined ? [] : [scope.reporterActorId])]
       );
       const row = result.rows[0];
       return row === undefined ? undefined : mapRoadEvent(row);
@@ -297,6 +310,7 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     const conditions: string[] = ['tenant_id = $1', 'purpose = $2'];
     const values: unknown[] = [scope.tenantId, scope.purpose];
     const addValue = (value: unknown): number => { values.push(value); return values.length; };
+    if (scope.reporterActorId !== undefined) conditions.push(`reporter_actor_id = $${addValue(scope.reporterActorId)}::uuid`);
 
     if (query.statuses !== undefined && query.statuses.length > 0) {
       conditions.push(`status = ANY($${addValue([...query.statuses])}::road_event_status[])`);

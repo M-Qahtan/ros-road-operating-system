@@ -1,10 +1,11 @@
 import type {
-  ApiEnvelope,
   HumanContactSessionContract,
   HumanSafetyActorRole,
   HumanSafetyCaseContract,
   SafetyFusionRecommendation
 } from '@ros/contracts';
+import { authenticatedApiRequest, type AuthenticatedRequestFailure } from './authenticated-http.js';
+import type { OperationsAccessTokenProvider } from './trusted-browser-session.js';
 
 export type CommandCenterConnectivity = 'HEALTHY' | 'DEGRADED' | 'LOST';
 export type CommandCenterDependencyHealth = 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE';
@@ -75,14 +76,24 @@ export interface HumanSafetyCommandCenterGateway {
 
 export class CommandCenterRequestError extends Error {
   override readonly name = 'CommandCenterRequestError';
-  constructor(readonly code: string, message: string, readonly traceId: string) { super(message); }
+  readonly code: string;
+  readonly traceId: string;
+  readonly status: number;
+  readonly outcomeAmbiguous: boolean;
+
+  constructor(failure: AuthenticatedRequestFailure) {
+    super(failure.message);
+    this.code = failure.code;
+    this.traceId = failure.traceId;
+    this.status = failure.status;
+    this.outcomeAmbiguous = failure.outcomeAmbiguous;
+  }
 }
 
 export class HttpHumanSafetyCommandCenterGateway implements HumanSafetyCommandCenterGateway {
   constructor(
     private readonly baseUrl: string,
-    private readonly actorId: string,
-    private readonly roles: readonly HumanSafetyActorRole[],
+    private readonly session: OperationsAccessTokenProvider,
     private readonly fetcher: typeof fetch = fetch
   ) {}
 
@@ -104,25 +115,17 @@ export class HttpHumanSafetyCommandCenterGateway implements HumanSafetyCommandCe
   }
 
   private async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-    const response = await this.fetcher(`${this.baseUrl}${path}`, {
-      method,
-      headers: {
-        'content-type': 'application/json',
-        'x-actor-id': this.actorId,
-        'x-ros-eye-roles': this.roles.join(','),
-        ...(method === 'POST' && isAction(body) ? { 'idempotency-key': body.idempotencyKey } : {})
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    const transmittedBody = method === 'POST' && isAction(body) ? actionRequestBody(body) : body;
+    return authenticatedApiRequest<T, CommandCenterRequestError>({
+      baseUrl: this.baseUrl,
+      path,
+      method: method === 'POST' ? 'POST' : 'GET',
+      ...(transmittedBody === undefined ? {} : { body: transmittedBody }),
+      ...(method === 'POST' && isAction(body) ? { idempotencyKey: body.idempotencyKey } : {}),
+      session: this.session,
+      fetcher: this.fetcher,
+      createError: (failure) => new CommandCenterRequestError(failure)
     });
-    const envelope = await response.json() as ApiEnvelope<T>;
-    if (!response.ok || !envelope.success || envelope.data === null) {
-      throw new CommandCenterRequestError(
-        envelope.error?.code ?? 'HTTP_ERROR',
-        envelope.error?.message ?? 'تعذر تنفيذ طلب مركز القيادة',
-        envelope.traceId
-      );
-    }
-    return envelope.data;
   }
 }
 
@@ -396,6 +399,17 @@ function validateAction(input: CommandCenterActionInput, allowedRoles: readonly 
 }
 
 function isAction(value: unknown): value is CommandCenterActionInput { return typeof value === 'object' && value !== null && 'idempotencyKey' in value; }
+function actionRequestBody(value: CommandCenterActionInput | CommandCenterReassignInput): Omit<CommandCenterActionInput, 'actorId' | 'actorRoles'> & { readonly assigneeId?: string } {
+  const base = {
+    expectedCaseVersion: value.expectedCaseVersion,
+    expectedContactVersion: value.expectedContactVersion,
+    reason: value.reason,
+    traceId: value.traceId,
+    occurredAt: value.occurredAt,
+    idempotencyKey: value.idempotencyKey
+  };
+  return 'assigneeId' in value ? { ...base, assigneeId: value.assigneeId } : base;
+}
 function severityAtLeastS3(value: HumanSafetyCaseContract['severity']): HumanSafetyCaseContract['severity'] { return value === 'S4' ? 'S4' : 'S3'; }
 function validId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value); }
 function clone<T>(value: T): T { return structuredClone(value); }

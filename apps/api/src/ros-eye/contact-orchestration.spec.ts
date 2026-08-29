@@ -102,10 +102,10 @@ const ids = { async create(namespace: string, material: string) { return `${name
 const providerInvocations: string[] = [];
 const providerLogicalDeliveries = new Set<string>();
 const channel: ContactChannelPort = { async send(input) { providerInvocations.push(input.idempotencyKey); providerLogicalDeliveries.add(input.idempotencyKey); return 'SENT'; } };
-const scope = { tenantId: 'tenant-riyadh', caseId: 'case-001', sessionId: 'session-001' } as const;
+const scope = { tenantId: 'tenant-riyadh', caseId: 'case-001', sessionId: 'session-001', ownerActorId: null } as const;
 
-function openInput(overrides: Partial<OpenContactInput> = {}): OpenContactInput { return { ...scope, language: 'ar', traceId: 'trace-001', occurredAt: '2026-07-29T15:00:00.000Z', idempotencyKey: 'open-001', preferredChannel: 'IN_APP', ...overrides }; }
-function callback(kind: ContactCallbackKind, overrides: Partial<CallbackInput> = {}): CallbackInput { return { ...scope, authenticatedTenantId: 'tenant-riyadh', authenticatedCaseId: 'case-001', callbackId: `callback-${kind.toLowerCase()}`, traceId: `trace-${kind.toLowerCase()}`, occurredAt: '2026-07-29T15:00:05.000Z', idempotencyKey: `key-${kind.toLowerCase()}`, kind, ...overrides }; }
+function openInput(overrides: Partial<OpenContactInput> = {}): OpenContactInput { return { ...scope, language: 'ar', traceId: 'trace-001', occurredAt: '2026-07-29T15:00:00.000Z', idempotencyKey: 'open-001', preferredChannel: 'IN_APP', ...overrides, ownerActorId: overrides.ownerActorId ?? scope.ownerActorId }; }
+function callback(kind: ContactCallbackKind, overrides: Partial<CallbackInput> = {}): CallbackInput { return { ...scope, authenticatedTenantId: 'tenant-riyadh', authenticatedCaseId: 'case-001', callbackId: `callback-${kind.toLowerCase()}`, traceId: `trace-${kind.toLowerCase()}`, occurredAt: '2026-07-29T15:00:05.000Z', idempotencyKey: `key-${kind.toLowerCase()}`, kind, ...overrides, ownerActorId: overrides.ownerActorId ?? scope.ownerActorId }; }
 function takeover(overrides: Partial<OperatorTakeoverInput> = {}): OperatorTakeoverInput { return { ...scope, operatorId: 'operator-001', authenticatedTenantId: 'tenant-riyadh', authenticatedCaseId: 'case-001', authorizedRole: 'OPERATOR', traceId: 'trace-takeover', occurredAt: '2026-07-29T15:00:20.000Z', idempotencyKey: 'takeover-001', authorityPolicyVersion: CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION, ...overrides }; }
 function session(repo: MemoryRepository): ContactSessionRecord { const value = repo.sessions.get(scopedKey(scope)); assert.ok(value); return value; }
 function activeMessages(repo: MemoryRepository): ContactOutboxMessage[] { return [...repo.outbox.values()].filter((message) => message.cancelledAt === null && message.deliveredAt === null); }

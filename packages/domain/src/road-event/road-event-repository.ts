@@ -5,6 +5,8 @@ import { SeverityLevel } from './severity.js';
 export interface RoadEventAccessScope {
   readonly tenantId: string;
   readonly purpose: string;
+  /** Present only for a least-privilege FIELD_USER principal. */
+  readonly reporterActorId?: string;
 }
 
 export interface RoadEventWriteContext extends RoadEventAccessScope {

@@ -1,4 +1,5 @@
 import { RoadEventApplicationService } from '../application/road-event-application.js';
+import { IdempotencyPort } from '../application/ports.js';
 import {
   MemoryIdempotencyAdapter,
   MemoryRoadEventRepository,
@@ -12,6 +13,13 @@ import {
   PostgresSignalAttachmentAdapter
 } from '../persistence/postgres/postgres-road-event-support.js';
 import { PostgresPool } from '../persistence/postgres/postgres-types.js';
+import { RoadEventRepository } from '@ros/domain';
+
+export interface RoadEventRuntimeComposition {
+  readonly application: RoadEventApplicationService;
+  readonly repository: RoadEventRepository;
+  readonly idempotency: IdempotencyPort;
+}
 
 function isMemoryRuntimeAllowed(environment: NodeJS.ProcessEnv): boolean {
   const nodeEnvironment = (environment.NODE_ENV ?? 'development').trim().toLowerCase();
@@ -29,14 +37,25 @@ function isMemoryRuntimeAllowed(environment: NodeJS.ProcessEnv): boolean {
 export function createPersistentRoadEventApplication(
   postgresPool: PostgresPool
 ): RoadEventApplicationService {
+  return createPersistentRoadEventRuntimeComposition(postgresPool).application;
+}
+
+export function createPersistentRoadEventRuntimeComposition(
+  postgresPool: PostgresPool
+): RoadEventRuntimeComposition {
   const repository = new PostgresRoadEventRepository(postgresPool);
-  return new RoadEventApplicationService(
+  const idempotency = new PostgresIdempotencyAdapter(postgresPool);
+  return {
+    repository,
+    idempotency,
+    application: new RoadEventApplicationService(
     repository,
     new RoleMatrixAuthorizationAdapter(),
-    new PostgresIdempotencyAdapter(postgresPool),
+    idempotency,
     new PostgresSignalAttachmentAdapter(postgresPool),
     new PostgresAuditTimelineAdapter(postgresPool)
-  );
+    )
+  };
 }
 
 /**
@@ -54,6 +73,12 @@ export function createPersistentRoadEventApplication(
 export function createRoadEventApplicationForRuntime(
   environment: NodeJS.ProcessEnv
 ): RoadEventApplicationService {
+  return createRoadEventRuntimeComposition(environment).application;
+}
+
+export function createRoadEventRuntimeComposition(
+  environment: NodeJS.ProcessEnv
+): RoadEventRuntimeComposition {
   if (!isMemoryRuntimeAllowed(environment)) {
     throw new Error(
       'Persistent runtime adapters are required; refusing implicit in-memory fallback'
@@ -61,11 +86,16 @@ export function createRoadEventApplicationForRuntime(
   }
 
   const repository = new MemoryRoadEventRepository();
-  return new RoadEventApplicationService(
+  const idempotency = new MemoryIdempotencyAdapter();
+  return {
+    repository,
+    idempotency,
+    application: new RoadEventApplicationService(
     repository,
     new RoleMatrixAuthorizationAdapter(),
-    new MemoryIdempotencyAdapter(),
-    new MemorySignalAttachmentAdapter(),
+    idempotency,
+    new MemorySignalAttachmentAdapter(repository),
     repository
-  );
+    )
+  };
 }

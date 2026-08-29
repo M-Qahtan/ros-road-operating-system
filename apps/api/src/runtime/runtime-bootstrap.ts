@@ -1,28 +1,41 @@
 import { RoadEventApplicationService } from '../application/road-event-application.js';
+import { fileURLToPath } from 'node:url';
+import { IdempotencyPort } from '../application/ports.js';
+import { RoadEventRepository } from '@ros/domain';
 import { RedisRuntimeClient, createNodeRedisStreamClient } from '../messaging/node-redis-stream-client.js';
 import { PgRuntimePool, createNodePostgresPool } from '../persistence/postgres/pg-postgres-pool.js';
-import { evaluateReadiness, ReadinessResult } from './operational-readiness.js';
+import { runPostgresMigrations } from '../persistence/postgres/migration-runner.js';
+import { evaluateReadiness, ReadinessResult, RuntimeReadinessProbes } from './operational-readiness.js';
 import {
-  createPersistentRoadEventApplication,
-  createRoadEventApplicationForRuntime
+  createPersistentRoadEventRuntimeComposition,
+  createRoadEventRuntimeComposition
 } from './runtime-composition.js';
 
 export interface RuntimeBootstrapResult {
   readonly application: RoadEventApplicationService;
+  readonly roadEvents: RoadEventRepository;
+  readonly idempotency: IdempotencyPort;
+  readonly postgres: PgRuntimePool | null;
   readonly mode: 'simulation' | 'persistent';
   readonly redis: RedisRuntimeClient | null;
-  readonly readiness: () => Promise<ReadinessResult>;
+  readonly readiness: (additionalProbes?: Pick<RuntimeReadinessProbes, 'objectStorage'>) => Promise<ReadinessResult>;
   close(): Promise<void>;
 }
 
 export interface RuntimeBootstrapDependencies {
   readonly createPostgresPool?: (environment: NodeJS.ProcessEnv) => PgRuntimePool;
   readonly createRedisClient?: (environment: NodeJS.ProcessEnv) => RedisRuntimeClient;
+  readonly migrationsDirectory?: string;
+  readonly runMigrations?: typeof runPostgresMigrations;
 }
 
 export class RuntimeBootstrapError extends Error {
   override readonly name = 'RuntimeBootstrapError';
 }
+
+const DEFAULT_MIGRATIONS_DIRECTORY = fileURLToPath(
+  new URL('../../../../database/migrations/', import.meta.url)
+);
 
 function nodeEnvironment(environment: NodeJS.ProcessEnv): string {
   return (environment.NODE_ENV ?? 'development').trim().toLowerCase();
@@ -57,20 +70,23 @@ async function closeQuietly(resource: { close(): Promise<void> } | undefined): P
  * Development/test and an explicit non-production simulation profile retain the
  * deterministic in-memory composition. Production (and any explicit persistent
  * profile) must successfully initialize the authenticated PostgreSQL schema and
- * Redis client before the API is allowed to listen. Evidence/Object Storage
- * remains a separately activated dependency and release gate until its HTTP/API
- * surface and production malware scanner are approved.
+ * Redis client before the API is allowed to listen. When Evidence is composed,
+ * main supplies its authenticated Object Storage probe to the readiness call.
  */
 export async function bootstrapRoadEventRuntime(
   environment: NodeJS.ProcessEnv,
   dependencies: RuntimeBootstrapDependencies = {}
 ): Promise<RuntimeBootstrapResult> {
   if (simulationAllowed(environment)) {
+    const composition = createRoadEventRuntimeComposition(environment);
     return {
-      application: createRoadEventApplicationForRuntime(environment),
+      application: composition.application,
+      roadEvents: composition.repository,
+      idempotency: composition.idempotency,
+      postgres: null,
       mode: 'simulation',
       redis: null,
-      readiness: () => evaluateReadiness({}),
+      readiness: (additionalProbes = {}) => evaluateReadiness(additionalProbes),
       close: async () => {}
     };
   }
@@ -83,12 +99,17 @@ export async function bootstrapRoadEventRuntime(
 
   const postgresFactory = dependencies.createPostgresPool ?? createNodePostgresPool;
   const redisFactory = dependencies.createRedisClient ?? createNodeRedisStreamClient;
+  const migrationRunner = dependencies.runMigrations ?? runPostgresMigrations;
+  const migrationsDirectory = dependencies.migrationsDirectory ?? DEFAULT_MIGRATIONS_DIRECTORY;
   const postgres = postgresFactory(environment);
   let redis: RedisRuntimeClient | undefined;
 
   try {
-    redis = redisFactory(environment);
+    // The migration ledger and source checksums are authoritative. Migrations
+    // must complete before schema readiness is evaluated or Redis is started.
+    await migrationRunner(postgres, migrationsDirectory);
     await postgres.verifyReadiness();
+    redis = redisFactory(environment);
     await redis.connect();
     await redis.verifyConnection();
   } catch {
@@ -100,13 +121,18 @@ export async function bootstrapRoadEventRuntime(
   }
 
   let closed = false;
+  const composition = createPersistentRoadEventRuntimeComposition(postgres);
   return {
-    application: createPersistentRoadEventApplication(postgres),
+    application: composition.application,
+    roadEvents: composition.repository,
+    idempotency: composition.idempotency,
+    postgres,
     mode: 'persistent',
     redis,
-    readiness: () => evaluateReadiness({
+    readiness: (additionalProbes = {}) => evaluateReadiness({
       database: () => postgres.verifyReadiness(),
-      redis: () => redis!.verifyConnection()
+      redis: () => redis!.verifyConnection(),
+      ...additionalProbes
     }),
     async close(): Promise<void> {
       if (closed) return;

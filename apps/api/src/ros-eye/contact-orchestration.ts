@@ -31,6 +31,7 @@ export interface ContactScope {
 
 export interface ContactSessionRecord extends HumanContactSessionContract {
   readonly tenantId: string;
+  readonly ownerActorId: string | null;
   readonly automationSuppressed: boolean;
   readonly nextActionAt: string | null;
   readonly leaseOwner: string | null;
@@ -132,6 +133,8 @@ const DEFAULT_RUNTIME_OPTIONS: ContactRuntimeOptions = Object.freeze({
 });
 
 export interface OpenContactInput extends ContactScope {
+  /** Trusted reporter subject copied from the parent RoadEvent; null for operational/legacy cases. */
+  readonly ownerActorId: string | null;
   /** Device/operator locale hint only; explicit language selection is still required. */
   readonly language: HumanContactLanguage;
   readonly traceId: string;
@@ -152,6 +155,8 @@ export type ContactCallbackKind =
   | 'ACCESSIBILITY_UNAVAILABLE';
 
 export interface CallbackInput extends ContactScope {
+  /** Must equal the immutable session owner before callback replay lookup. */
+  readonly ownerActorId: string | null;
   readonly authenticatedTenantId: string;
   readonly authenticatedCaseId: string;
   readonly callbackId: string;
@@ -191,7 +196,7 @@ export class ContactOrchestrationService {
   }
 
   async open(input: OpenContactInput): Promise<RuntimeDisposition> {
-    if (!validScope(input) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt) || !validLanguage(input.language)) return 'HUMAN_REVIEW';
+    if (!validScope(input) || !validNullableOwnerActorId(input.ownerActorId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt) || !validLanguage(input.language)) return 'HUMAN_REVIEW';
     const inboxKey = `open|${input.tenantId}|${input.caseId}|${input.sessionId}|${input.idempotencyKey}`;
     return this.repository.transaction(async (tx) => {
       if ((await tx.insertInboxIfAbsent(input, inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
@@ -199,6 +204,7 @@ export class ContactOrchestrationService {
       const deadline = new Date(Date.parse(input.occurredAt) + HUMAN_CONTACT_RESPONSE_DEADLINE_MS).toISOString();
       const session: ContactSessionRecord = {
         tenantId: input.tenantId,
+        ownerActorId: input.ownerActorId,
         sessionId: input.sessionId,
         caseId: input.caseId,
         state: 'CONSENT_PENDING',
@@ -240,6 +246,7 @@ export class ContactOrchestrationService {
     return this.repository.transaction(async (tx) => {
       const current = await tx.getSessionForUpdate(input);
       if (current === null) return 'HUMAN_REVIEW';
+      if (current.ownerActorId !== input.ownerActorId) return 'HUMAN_REVIEW';
       if ((await tx.insertInboxIfAbsent(input, inboxKey)) === 'EXISTS') return 'IDEMPOTENT';
       if (current.automationSuppressed || ['OPERATOR_TAKEOVER', 'ESCALATED', 'COMPLETED'].includes(current.state)) return 'IDEMPOTENT';
 
@@ -546,7 +553,7 @@ function callbackRequestedState(current: HumanContactState, kind: ContactCallbac
 }
 
 function validCallback(input: CallbackInput): boolean {
-  if (!validScope(input) || input.authenticatedTenantId !== input.tenantId || input.authenticatedCaseId !== input.caseId || !validId(input.callbackId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt)) return false;
+  if (!validScope(input) || !validNullableOwnerActorId(input.ownerActorId) || input.authenticatedTenantId !== input.tenantId || input.authenticatedCaseId !== input.caseId || !validId(input.callbackId) || !validId(input.traceId) || !validId(input.idempotencyKey) || !validTime(input.occurredAt)) return false;
   if (input.kind === 'LANGUAGE_SELECTED') return input.selectedLanguage === 'ar' || input.selectedLanguage === 'en';
   if (input.selectedLanguage !== undefined) return false;
   if (input.identityConfidence !== undefined && input.kind !== 'RESPONSE' && input.kind !== 'PARTIAL_RESPONSE') return false;
@@ -583,5 +590,6 @@ function humanOperatorRole(role: ContactAuthorizedRole): role is Exclude<Contact
 function scopeOf(value: ContactScope): ContactScope { return { tenantId: value.tenantId, caseId: value.caseId, sessionId: value.sessionId }; }
 function validScope(value: ContactScope): boolean { return validId(value.tenantId) && validId(value.caseId) && validId(value.sessionId); }
 function validLanguage(value: HumanContactLanguage): boolean { return value === 'ar' || value === 'en' || value === 'UNKNOWN'; }
+function validNullableOwnerActorId(value: string | null): boolean { return value === null || validId(value); }
 function validId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value); }
 function validTime(value: string): boolean { return Number.isFinite(Date.parse(value)); }

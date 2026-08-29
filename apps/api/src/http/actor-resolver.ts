@@ -11,6 +11,7 @@ export interface ActorResolver {
 }
 
 const ALLOWED_ROLES = new Set<RosRole>([
+  'FIELD_USER',
   'OPERATOR',
   'SUPERVISOR',
   'AUDITOR',
@@ -70,7 +71,7 @@ export function createOidcIntegrationActorResolver(
         }
         return {
           actorId: principal.subject,
-          roles: ['INTEGRATION_SERVICE'],
+          roles: principal.roles,
           tenantId: principal.tenantId,
           purpose: principal.purpose
         };

@@ -5,7 +5,7 @@ import type {
   RosRoleContract,
   TransitionRoadEventRequest
 } from '@ros/contracts';
-import type { AuditTimelineEntryContract, RoadEventGateway } from './api-client.js';
+import { ApiRequestError, type AuditTimelineEntryContract, type RoadEventGateway } from './api-client.js';
 
 export type DashboardPhase = 'loading' | 'ready' | 'empty' | 'failure';
 
@@ -38,8 +38,14 @@ export class OperationsDashboardController {
   ) {}
 
   get state(): DashboardState { return this.current; }
-  canAuthorizeClosure(): boolean { return !this.current.stale && this.session.roles.includes('SUPERVISOR'); }
-  canTransition(): boolean { return !this.current.stale && this.session.roles.some((role) => role === 'OPERATOR' || role === 'SUPERVISOR'); }
+  canAuthorizeClosure(): boolean {
+    return this.current.phase === 'ready' && this.current.selected !== null && !this.current.stale
+      && this.session.roles.includes('SUPERVISOR');
+  }
+  canTransition(): boolean {
+    return this.current.phase === 'ready' && this.current.selected !== null && !this.current.stale
+      && this.session.roles.some((role) => role === 'OPERATOR' || role === 'SUPERVISOR');
+  }
 
   async load(): Promise<DashboardState> {
     this.current = { ...this.current, phase: 'loading', error: null };
@@ -91,8 +97,13 @@ export class OperationsDashboardController {
     if (!this.canTransition()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تنفيذ قرار حرج' : 'لا تملك صلاحية تغيير حالة الحدث');
     const normalizedReason = this.requireReason(reason);
     const request: TransitionRoadEventRequest = { expectedVersion: selected.version, nextStatus, reason: normalizedReason };
-    const updated = await this.gateway.transition(selected.id, request);
-    return this.applyCriticalResult(updated);
+    try {
+      const updated = await this.gateway.transition(selected.id, request);
+      return this.applyCriticalResult(updated);
+    } catch (error) {
+      this.applyRemoteFailure(error);
+      throw error;
+    }
   }
 
   async authorizeClosure(reason: string): Promise<DashboardState> {
@@ -103,22 +114,37 @@ export class OperationsDashboardController {
       reason: this.requireReason(reason),
       authorizedAt: this.now().toISOString()
     };
-    const updated = await this.gateway.authorizeClosure(selected.id, request);
-    return this.applyCriticalResult(updated);
+    try {
+      const updated = await this.gateway.authorizeClosure(selected.id, request);
+      return this.applyCriticalResult(updated);
+    } catch (error) {
+      this.applyRemoteFailure(error);
+      throw error;
+    }
   }
 
   private async applyCriticalResult(updated: RoadEventResponse): Promise<DashboardState> {
-    const timeline = await this.gateway.timeline(updated.id);
-    this.current = {
-      ...this.current,
-      events: this.current.events.map((event) => event.id === updated.id ? updated : event),
-      selected: updated,
-      timeline,
-      stale: false,
-      error: null,
-      lastUpdatedAt: this.now().toISOString()
-    };
-    return this.current;
+    try {
+      const timeline = await this.gateway.timeline(updated.id);
+      this.current = {
+        ...this.current,
+        events: this.current.events.map((event) => event.id === updated.id ? updated : event),
+        selected: updated,
+        timeline,
+        stale: false,
+        error: null,
+        lastUpdatedAt: this.now().toISOString()
+      };
+      return this.current;
+    } catch (error) {
+      this.applyRemoteFailure(error);
+      throw error;
+    }
+  }
+
+  private applyRemoteFailure(error: unknown): void {
+    if (!(error instanceof ApiRequestError)) return;
+    this.current = { ...this.current, stale: true, error: error.message };
   }
 
   private requireSelected(): RoadEventResponse {

@@ -48,7 +48,7 @@ test('offline and reconnect path remains visible and does not lose pending escal
   await flow.companion.updateDevice({ network: 'ONLINE' });
   html = renderFieldCompanion(flow.companion.state);
   assert.match(html, /مشغل بشري يتابع الحالة الآن/);
-  assert.equal(flow.gateway.deliveries.length, 1);
+  assert.deepEqual(flow.gateway.deliveries.map((operation) => operation.kind), ['CONSENT', 'LANGUAGE_SELECTION', 'STRUCTURED_REPLY']);
 });
 
 test('restart restores consent, queue and status without sensitive free text', async () => {

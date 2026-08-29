@@ -52,18 +52,73 @@ test('idempotent create retries return the same result without duplicate reposit
 });
 
 test('idempotency scope derivation is unambiguous and bounded for valid access scopes', () => {
-  const first = deriveRoadEventIdempotencyScope('road_event:create', { tenantId: 'a:b', purpose: 'c' });
-  const second = deriveRoadEventIdempotencyScope('road_event:create', { tenantId: 'a', purpose: 'b:c' });
+  const first = deriveRoadEventIdempotencyScope('road_event:create', { actorId: ACTOR_ID, roles: ['OPERATOR'], tenantId: 'a:b', purpose: 'c' });
+  const second = deriveRoadEventIdempotencyScope('road_event:create', { actorId: ACTOR_ID, roles: ['OPERATOR'], tenantId: 'a', purpose: 'b:c' });
   assert.notEqual(first, second);
   assert.match(first, /^road-event:[0-9a-f]{64}$/);
   assert.ok(first.length <= 128);
 
   const maximum = deriveRoadEventIdempotencyScope('road_event:authorize_closure', {
+    actorId: ACTOR_ID,
+    roles: ['OPERATOR'],
     tenantId: `t${'a'.repeat(127)}`,
     purpose: `p${'b'.repeat(127)}`
   });
   assert.match(maximum, /^road-event:[0-9a-f]{64}$/);
   assert.ok(maximum.length <= 128);
+});
+
+test('idempotency scope binds the trusted actor and canonical role set without role-order sensitivity', () => {
+  const actorA: AuthenticatedActor = { ...operator, roles: ['FIELD_USER', 'OPERATOR'] };
+  const actorB: AuthenticatedActor = { ...operator, actorId: '77777777-7777-4777-8777-777777777777', roles: ['FIELD_USER', 'OPERATOR'] };
+  assert.equal(
+    deriveRoadEventIdempotencyScope('road_event:create', actorA),
+    deriveRoadEventIdempotencyScope('road_event:create', { ...actorA, roles: ['OPERATOR', 'FIELD_USER'] })
+  );
+  assert.notEqual(
+    deriveRoadEventIdempotencyScope('road_event:create', actorA),
+    deriveRoadEventIdempotencyScope('road_event:create', actorB)
+  );
+});
+
+test('same-tenant FIELD_USER actors can reuse create and attach keys only for their own reports', async () => {
+  const { repository, service, signals } = createFixture();
+  const fieldA: AuthenticatedActor = { ...operator, roles: ['AUDITOR', 'FIELD_USER'] };
+  const fieldB: AuthenticatedActor = { ...operator, actorId: '77777777-7777-4777-8777-777777777777', roles: ['FIELD_USER'] };
+  const eventB = '88888888-8888-4888-8888-888888888888';
+  await service.create({ id: EVENT_ID, occurredAt: '2026-07-25T03:00:00.000Z', latitude: 24.7136, longitude: 46.6753 }, context('field-shared-create-0001', fieldA));
+  await service.create({ id: eventB, occurredAt: '2026-07-25T03:01:00.000Z', latitude: 24.7137, longitude: 46.6754 }, context('field-shared-create-0001', fieldB));
+  assert.equal((await repository.findById(EVENT_ID, { ...SCOPE, reporterActorId: fieldA.actorId }))?.reporterActorId, fieldA.actorId);
+  assert.equal((await repository.findById(eventB, { ...SCOPE, reporterActorId: fieldB.actorId }))?.reporterActorId, fieldB.actorId);
+
+  await service.attachSignal({ roadEventId: EVENT_ID, signalId: '99999999-9999-4999-8999-999999999999', matchScore: 0.8, mergeReasons: ['owner_a'] }, context('field-shared-attach-0001', fieldA));
+  await service.attachSignal({ roadEventId: eventB, signalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', matchScore: 0.8, mergeReasons: ['owner_b'] }, context('field-shared-attach-0001', fieldB));
+  assert.equal(signals.attachments.length, 2);
+  assert.equal(signals.attachments[0]?.actor.roles.includes('FIELD_USER'), true);
+  assert.equal(signals.attachments[1]?.actor.roles.includes('FIELD_USER'), true);
+});
+
+test('ownership and canonical audit authority do not depend on trusted role claim order', async () => {
+  const { repository, service } = createFixture();
+  const fieldAuditor: AuthenticatedActor = { ...operator, roles: ['AUDITOR', 'FIELD_USER'] };
+  const operatorField: AuthenticatedActor = {
+    ...operator,
+    actorId: '77777777-7777-4777-8777-777777777777',
+    roles: ['FIELD_USER', 'OPERATOR']
+  };
+  const operatorEventId = '88888888-8888-4888-8888-888888888888';
+
+  await service.create({
+    id: EVENT_ID, occurredAt: '2026-07-25T03:00:00.000Z', latitude: 24.7136, longitude: 46.6753
+  }, context('ordered-field-create-0001', fieldAuditor));
+  await service.create({
+    id: operatorEventId, occurredAt: '2026-07-25T03:01:00.000Z', latitude: 24.7137, longitude: 46.6754
+  }, context('ordered-operator-create-0001', operatorField));
+
+  assert.equal((await repository.findById(EVENT_ID, { ...SCOPE, reporterActorId: fieldAuditor.actorId }))?.reporterActorId, fieldAuditor.actorId);
+  assert.equal((await repository.findById(operatorEventId, SCOPE))?.reporterActorId, null);
+  assert.equal((await repository.listForRoadEvent(EVENT_ID, { ...SCOPE, reporterActorId: fieldAuditor.actorId }))[0]?.actorType, 'FIELD_USER');
+  assert.equal((await repository.listForRoadEvent(operatorEventId, SCOPE))[0]?.actorType, 'OPERATOR');
 });
 
 test('delimiter-equivalent tenant and purpose pairs do not share idempotency records', async () => {

@@ -1,7 +1,7 @@
 import { RoadEventRepository } from '@ros/domain';
 import { PostgresPool } from '../persistence/postgres/postgres-types.js';
 import { EvidenceService } from './evidence-service.js';
-import { MalwareScanner } from './evidence-types.js';
+import { EvidenceObjectStorage, MalwareScanner } from './evidence-types.js';
 import {
   createEvidenceObjectStorageForRuntime,
   ObjectStorageCredentialProviderPort
@@ -14,6 +14,7 @@ export interface EvidenceRuntimeDependencies {
   readonly postgres: PostgresPool;
   readonly roadEvents: RoadEventRepository;
   readonly malwareScanner?: MalwareScanner;
+  readonly objectStorage?: EvidenceObjectStorage;
   readonly credentialProvider?: ObjectStorageCredentialProviderPort;
   readonly fetchImpl?: typeof fetch;
 }
@@ -41,7 +42,7 @@ export function createEvidenceServiceForRuntime(
     );
   }
 
-  const storage = createEvidenceObjectStorageForRuntime(environment, {
+  const storage = dependencies.objectStorage ?? createEvidenceObjectStorageForRuntime(environment, {
     ...(dependencies.credentialProvider === undefined
       ? {}
       : { credentialProvider: dependencies.credentialProvider }),

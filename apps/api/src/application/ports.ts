@@ -1,10 +1,14 @@
 import { RoadEvent, RoadEventAccessScope } from '@ros/domain';
 
-export type RosRole = 'OPERATOR' | 'SUPERVISOR' | 'AUDITOR' | 'INTEGRATION_SERVICE';
+export type RosRole = 'FIELD_USER' | 'OPERATOR' | 'SUPERVISOR' | 'AUDITOR' | 'INTEGRATION_SERVICE';
 
 export interface AuthenticatedActor extends RoadEventAccessScope {
   readonly actorId: string;
   readonly roles: readonly RosRole[];
+}
+
+export interface FieldCompanionDeviceAuthorizationPort {
+  assertActive(actor: AuthenticatedActor, deviceId: string): Promise<void>;
 }
 
 export type RoadEventPermission =

@@ -16,6 +16,7 @@ export interface ClosureAuthorization {
 
 export interface RoadEventProps {
   readonly id: string;
+  readonly reporterActorId?: string | null;
   readonly occurredAt: Date;
   readonly latitude: number;
   readonly longitude: number;
@@ -57,6 +58,7 @@ function copyAuthorization(authorization: ClosureAuthorization): ClosureAuthoriz
 
 export class RoadEvent {
   readonly id: string;
+  readonly reporterActorId: string | null;
   readonly latitude: number;
   readonly longitude: number;
   private readonly _occurredAt: Date;
@@ -67,6 +69,9 @@ export class RoadEvent {
 
   constructor(props: RoadEventProps) {
     this.id = requireNonEmpty(props.id, 'RoadEvent id', 128);
+    this.reporterActorId = props.reporterActorId === undefined || props.reporterActorId === null
+      ? null
+      : requireNonEmpty(props.reporterActorId, 'RoadEvent reporterActorId', 128);
 
     const occurredAt = props.occurredAt.getTime();
     if (!Number.isFinite(occurredAt) || occurredAt > Date.now() + MAX_CLOCK_SKEW_MILLISECONDS) {

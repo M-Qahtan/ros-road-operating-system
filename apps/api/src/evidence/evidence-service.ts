@@ -159,6 +159,26 @@ export class EvidenceService {
     return { evidence: record, upload };
   }
 
+  async assertRoadEventAccess(
+    roadEventId: string,
+    principal: EvidenceAccessPrincipal,
+    action: 'UPLOAD' | 'DOWNLOAD'
+  ): Promise<void> {
+    const scopedRoadEventId = requireIdentifier(roadEventId, 'roadEventId');
+    const access = requirePrincipal(principal);
+    if (!(await this.authorization.canAccess(access, scopedRoadEventId, action))) {
+      throw new EvidenceAccessDeniedError('RoadEvent evidence access is not authorized');
+    }
+  }
+
+  async getAuthorizedMetadata(
+    evidenceId: string,
+    principal: EvidenceAccessPrincipal,
+    action: 'UPLOAD' | 'DOWNLOAD'
+  ): Promise<EvidenceRecord> {
+    return this.requireAuthorized(evidenceId, requirePrincipal(principal), action);
+  }
+
   async completeUpload(evidenceId: string, principal: EvidenceAccessPrincipal, traceId: string): Promise<EvidenceRecord> {
     const access = requirePrincipal(principal);
     const record = await this.requireAuthorized(evidenceId, access, 'UPLOAD');
@@ -186,10 +206,30 @@ export class EvidenceService {
     });
   }
 
-  async createDownloadRequest(evidenceId: string, principal: EvidenceAccessPrincipal): Promise<SignedObjectRequest> {
-    const record = await this.requireAuthorized(evidenceId, requirePrincipal(principal), 'DOWNLOAD');
+  async createDownloadRequest(
+    evidenceId: string,
+    principal: EvidenceAccessPrincipal,
+    traceId: string
+  ): Promise<SignedObjectRequest> {
+    const access = requirePrincipal(principal);
+    const scopedTraceId = requireIdentifier(traceId, 'traceId');
+    const record = await this.requireAuthorized(evidenceId, access, 'DOWNLOAD');
     if (record.status !== 'PRESERVED') throw new EvidenceUnavailableError(`Evidence is ${record.status}`);
-    return this.storage.createDownloadRequest(record.objectKey, new Date(this.now().getTime() + this.downloadTtlMs));
+    const occurredAt = this.now();
+    // Presigning is side-effect free in the storage adapter. Persist the audit
+    // after successful signing but before returning the capability to a caller;
+    // an audit failure therefore fails closed and never discloses the URL.
+    const request = await this.storage.createDownloadRequest(
+      record.objectKey,
+      new Date(occurredAt.getTime() + this.downloadTtlMs)
+    );
+    await this.repository.appendAccessAudit(record, {
+      actorId: access.actorId,
+      traceId: scopedTraceId,
+      action: 'evidence.download_intent_created',
+      occurredAt
+    });
+    return request;
   }
 
   private async requireAuthorized(

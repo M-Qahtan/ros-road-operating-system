@@ -17,6 +17,12 @@ A release candidate is acceptable only when all mandatory gates complete with th
 9. A successful external evidence receipt for every release-relevant source run, with verified KMS encryption, S3 version ID, SHA-256, `COMPLIANCE` Object Lock, and effective retention of at least 365 days.
 10. Terraform formatting, backend-disabled initialization, and provider-backed validation for the external evidence root; live plan/apply approval remains a separate gate.
 
+## Runtime migration ledger
+
+Persistent API startup owns PostgreSQL migration execution. It applies the bundled `database/migrations` sources under the advisory-locked `schema_migrations` ledger before schema readiness is evaluated and before Redis is constructed or connected. A matching applied checksum is skipped; a changed checksum, migration failure, incomplete schema, or unavailable database refuses startup and closes initialized resources.
+
+Docker Compose does not install migrations through `docker-entrypoint-initdb.d`; new and already-ledgered volumes therefore follow the same runtime path. A legacy volume created by the former initdb mount may contain schema objects without ledger rows. The runtime must not guess that history or silently baseline it. Such a volume requires a separately reviewed schema-to-checksum baseline procedure or a newly provisioned volume; no automated deletion or destructive conversion is authorized.
+
 ## Non-authorized capabilities
 
 Passing these gates does not authorize:

@@ -39,11 +39,16 @@ const PRINCIPAL_B: EvidenceAccessPrincipal = {
 class MemoryRepository implements EvidenceRepository {
   readonly records = new Map<string, EvidenceRecord>();
   readonly audits: string[] = [];
+  failAccessAudit = false;
   async create(record: EvidenceRecord, audit: { readonly action: string }): Promise<void> {
     this.records.set(record.id, record);
     this.audits.push(audit.action);
   }
   async findById(id: string): Promise<EvidenceRecord | undefined> { return this.records.get(id); }
+  async appendAccessAudit(_record: EvidenceRecord, audit: { readonly action: string }): Promise<void> {
+    if (this.failAccessAudit) throw new Error('audit unavailable');
+    this.audits.push(audit.action);
+  }
   async markPreserved(
     id: string,
     actualSizeBytes: number,
@@ -276,7 +281,7 @@ test('malicious or scanner-error objects are quarantined while metadata remains 
     assert.equal(completed.status, 'QUARANTINED');
     assert.equal((await harness.repository.findById(EVIDENCE_ID))?.objectKey, intent.evidence.objectKey);
     assert.equal(harness.storage.quarantines.length, 1);
-    await assert.rejects(() => harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_A), EvidenceUnavailableError);
+    await assert.rejects(() => harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID), EvidenceUnavailableError);
   }
 });
 
@@ -286,7 +291,25 @@ test('cross-scope evidence identifiers are hidden for completion and download', 
   harness.storage.metadata = { sizeBytes: 1024, contentType: 'image/jpeg', checksumSha256: CHECKSUM };
   await assert.rejects(() => harness.service.completeUpload(EVIDENCE_ID, PRINCIPAL_B, TRACE_ID), EvidenceNotFoundError);
   await harness.service.completeUpload(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID);
-  await assert.rejects(() => harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_B), EvidenceNotFoundError);
-  const download = await harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_A);
+  const auditsBeforeDeniedDownload = [...harness.repository.audits];
+  await assert.rejects(() => harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_B, TRACE_ID), EvidenceNotFoundError);
+  assert.deepEqual(harness.repository.audits, auditsBeforeDeniedDownload);
+  assert.equal(harness.storage.downloadRequests.length, 0);
+  const download = await harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID);
   assert.match(download.url, /signed=download/);
+  assert.equal(harness.storage.downloadRequests.length, 1);
+  assert.equal(harness.repository.audits.at(-1), 'evidence.download_intent_created');
+});
+
+test('download URL fails closed when durable access audit cannot be persisted', async () => {
+  const harness = createHarness();
+  await createIntent(harness);
+  harness.storage.metadata = { sizeBytes: 1024, contentType: 'image/jpeg', checksumSha256: CHECKSUM };
+  await harness.service.completeUpload(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID);
+  harness.repository.failAccessAudit = true;
+  await assert.rejects(
+    () => harness.service.createDownloadRequest(EVIDENCE_ID, PRINCIPAL_A, TRACE_ID),
+    /audit unavailable/
+  );
+  assert.equal(harness.repository.audits.includes('evidence.download_intent_created'), false);
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -100,7 +100,7 @@ function packageFixture(): DeepMutable<StagingCloudReviewPackage> {
 async function withFixtureRoot<T>(
   packageValue: StagingCloudReviewPackage,
   planJson: unknown,
-  run: (context: { root: string; planPath: string; terraformExecutable: string }) => Promise<T>
+  run: (context: { root: string; planPath: string; terraformExecutable: string; terraformArgumentsPrefix: readonly string[] }) => Promise<T>
 ): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), 'ros-staging-cloud-review-'));
   const previousNodeEnv = process.env.NODE_ENV;
@@ -112,15 +112,14 @@ async function withFixtureRoot<T>(
     }
     const planPath = join(root, 'staging.tfplan');
     await writeFile(planPath, PLAN_BYTES);
-    const terraformExecutable = join(root, 'terraform-fixture');
+    const terraformFixture = join(root, 'terraform-fixture.mjs');
     await writeFile(
-      terraformExecutable,
-      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify(planJson))});\n`,
+      terraformFixture,
+      `process.stdout.write(${JSON.stringify(JSON.stringify(planJson))});\n`,
       'utf8'
     );
-    await chmod(terraformExecutable, 0o755);
     process.env.NODE_ENV = 'test';
-    return await run({ root, planPath, terraformExecutable });
+    return await run({ root, planPath, terraformExecutable: process.execPath, terraformArgumentsPrefix: [terraformFixture] });
   } finally {
     if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnv;
@@ -132,9 +131,9 @@ async function verifiedDecision(
   rawPackage: StagingCloudReviewPackage,
   planJson: unknown
 ): Promise<ReturnType<typeof evaluateStagingCloudReview>> {
-  return withFixtureRoot(rawPackage, planJson, async ({ root, planPath, terraformExecutable }) => {
+  return withFixtureRoot(rawPackage, planJson, async ({ root, planPath, terraformExecutable, terraformArgumentsPrefix }) => {
     const parsed = parseStagingCloudReviewPackage(rawPackage);
-    const verifiedPlan = await verifyTerraformPlanFile(planPath, { terraformExecutable });
+    const verifiedPlan = await verifyTerraformPlanFile(planPath, { terraformExecutable, terraformArgumentsPrefix });
     const verification = await verifyStagingCloudPackage(parsed, root, HEAD, verifiedPlan);
     return evaluateStagingCloudReview(parsed, verification);
   });
@@ -242,12 +241,12 @@ test('missing required evidence kinds and tampered evidence remain NO_GO', async
 
   const tampered = packageFixture();
   await assert.rejects(
-    withFixtureRoot(tampered, terraformJson(), async ({ root, planPath, terraformExecutable }) => {
+    withFixtureRoot(tampered, terraformJson(), async ({ root, planPath, terraformExecutable, terraformArgumentsPrefix }) => {
       const firstEvidence = tampered.evidenceFiles[0];
       if (firstEvidence === undefined) throw new Error('test fixture missing first evidence');
       const target = join(root, firstEvidence.path);
       await writeFile(target, Buffer.from('tampered staging evidence\n', 'utf8'));
-      const verifiedPlan = await verifyTerraformPlanFile(planPath, { terraformExecutable });
+      const verifiedPlan = await verifyTerraformPlanFile(planPath, { terraformExecutable, terraformArgumentsPrefix });
       return verifyStagingCloudPackage(tampered, root, HEAD, verifiedPlan);
     }),
     /size mismatch|SHA-256 mismatch/
@@ -257,15 +256,14 @@ test('missing required evidence kinds and tampered evidence remain NO_GO', async
 test('Terraform plan changing while terraform show runs is rejected', async () => {
   const rawPackage = packageFixture();
   await withFixtureRoot(rawPackage, terraformJson(), async ({ root, planPath }) => {
-    const mutatingTerraform = join(root, 'terraform-mutating-fixture');
+    const mutatingTerraform = join(root, 'terraform-mutating-fixture.mjs');
     await writeFile(
       mutatingTerraform,
-      `#!/usr/bin/env node\nconst fs=require('node:fs');const plan=process.argv[4];fs.appendFileSync(plan,'changed');process.stdout.write(${JSON.stringify(JSON.stringify(terraformJson()))});\n`,
+      `import fs from 'node:fs';const plan=process.argv[4];fs.appendFileSync(plan,'changed');process.stdout.write(${JSON.stringify(JSON.stringify(terraformJson()))});\n`,
       'utf8'
     );
-    await chmod(mutatingTerraform, 0o755);
     await assert.rejects(
-      verifyTerraformPlanFile(planPath, { terraformExecutable: mutatingTerraform }),
+      verifyTerraformPlanFile(planPath, { terraformExecutable: process.execPath, terraformArgumentsPrefix: [mutatingTerraform] }),
       /changed while it was being analyzed/
     );
   });
@@ -274,8 +272,8 @@ test('Terraform plan changing while terraform show runs is rejected', async () =
 test('wrong trusted candidate head is rejected before review', async () => {
   const rawPackage = packageFixture();
   await assert.rejects(
-    withFixtureRoot(rawPackage, terraformJson(), async ({ root, planPath, terraformExecutable }) => {
-      const verifiedPlan = await verifyTerraformPlanFile(planPath, { terraformExecutable });
+    withFixtureRoot(rawPackage, terraformJson(), async ({ root, planPath, terraformExecutable, terraformArgumentsPrefix }) => {
+      const verifiedPlan = await verifyTerraformPlanFile(planPath, { terraformExecutable, terraformArgumentsPrefix });
       return verifyStagingCloudPackage(rawPackage, root, 'b'.repeat(40), verifiedPlan);
     }),
     /trusted expected head/

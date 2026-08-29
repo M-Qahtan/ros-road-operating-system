@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "node dist/server.js",
     "lint": "pnpm --filter @ros/contracts build && tsc -p tsconfig.json --noEmit",
-    "test": "node --test $(find dist -name '*.spec.js' -print | sort)",
+    "test": "node ../../scripts/run-node-tests.mjs dist",
     "typecheck": "pnpm --filter @ros/contracts build && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -250,6 +250,36 @@ test('temporary credentials must outlive the signed operation safety margin', as
   );
 });
 
+test('readiness performs an authenticated bucket HEAD and fails closed on storage errors', async () => {
+  const requests: Array<{ readonly url: string; readonly method: string }> = [];
+  let status = 200;
+  const adapter = new RotatingMinioEvidenceStorageAdapter({
+    endpoint: 'https://evidence.example.test',
+    region: 'eu-central-1',
+    bucket: 'ros-evidence',
+    production: false,
+    credentialProvider: {
+      async resolve() {
+        return { accessKeyId: 'readiness-access', secretAccessKey: 'readiness-secret-material' };
+      }
+    },
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? 'GET' });
+      return new Response(null, { status });
+    },
+    now: () => new Date(NOW)
+  });
+
+  await adapter.checkReadiness();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.method, 'HEAD');
+  assert.equal(new URL(requests[0]!.url).pathname, '/ros-evidence');
+  assert.match(requests[0]!.url, /X-Amz-Signature=/);
+
+  status = 503;
+  await assert.rejects(adapter.checkReadiness(), /readiness failed with status 503/);
+});
+
 test('expired environment credentials fail closed', async () => {
   const provider = new EnvironmentObjectStorageCredentialProvider(
     production({ OBJECT_STORAGE_CREDENTIAL_EXPIRES_AT: '2026-08-19T21:00:20.000Z' }),

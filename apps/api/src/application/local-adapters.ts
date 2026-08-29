@@ -26,6 +26,7 @@ import {
 export class AuthorizationDeniedError extends Error { override readonly name = 'AuthorizationDeniedError'; }
 
 const ROLE_PERMISSIONS: Readonly<Record<RosRole, readonly RoadEventPermission[]>> = {
+  FIELD_USER: ['road_event:create', 'road_event:read', 'road_event:attach_signal'],
   OPERATOR: [
     'road_event:create', 'road_event:read', 'road_event:list', 'road_event:attach_signal',
     'road_event:reassess_severity', 'road_event:transition', 'road_event:close'
@@ -40,7 +41,8 @@ const ROLE_PERMISSIONS: Readonly<Record<RosRole, readonly RoadEventPermission[]>
 };
 
 function sameScope(left: RoadEventAccessScope, right: RoadEventAccessScope): boolean {
-  return left.tenantId === right.tenantId && left.purpose === right.purpose;
+  return left.tenantId === right.tenantId && left.purpose === right.purpose &&
+    (right.reporterActorId === undefined || left.reporterActorId === right.reporterActorId);
 }
 
 export class RoleMatrixAuthorizationAdapter implements AuthorizationPort {
@@ -102,6 +104,7 @@ function cloneEvent(event: RoadEvent): RoadEvent {
     latitude: event.latitude,
     longitude: event.longitude,
     status: event.status,
+    reporterActorId: event.reporterActorId,
     severity: event.severity,
     version: event.version,
     ...(authorization === undefined ? {} : { closureAuthorization: authorization })
@@ -125,8 +128,19 @@ export class MemoryRoadEventRepository implements RoadEventRepository, AuditTime
 
   async create(event: RoadEvent, context: RoadEventWriteContext): Promise<void> {
     if (this.events.has(event.id)) throw new RoadEventAlreadyExistsError(`RoadEvent ${event.id} already exists`);
+    const trustedReporterActorId = context.reporterActorId ?? null;
+    if (trustedReporterActorId !== null && context.actorId !== trustedReporterActorId) {
+      throw new TypeError('RoadEvent reporter ownership must use the trusted write actor');
+    }
+    if (event.reporterActorId !== trustedReporterActorId || context.reporterActorId !== (trustedReporterActorId ?? undefined)) {
+      throw new TypeError('RoadEvent reporter ownership must match the trusted FIELD_USER write context');
+    }
     this.events.set(event.id, cloneEvent(event));
-    this.scopes.set(event.id, { tenantId: context.tenantId, purpose: context.purpose });
+    this.scopes.set(event.id, {
+      tenantId: context.tenantId,
+      purpose: context.purpose,
+      ...(event.reporterActorId === null ? {} : { reporterActorId: event.reporterActorId })
+    });
     this.appendAudit(event.id, context, null, eventSnapshot(event));
   }
 

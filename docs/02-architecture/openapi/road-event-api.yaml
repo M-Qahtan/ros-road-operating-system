@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: ROS RoadEvent API
   version: 0.1.0
-  description: Safety-first command/query API for the Riyadh MVP. Local identity headers model claims that will later be supplied by OIDC middleware.
+  description: Safety-first command/query API for the Riyadh MVP. Bearer tokens are verified through OIDC; actor, roles, tenant and purpose are rebound from trusted claims rather than caller headers or bodies.
 servers:
   - url: http://localhost:3000
 components:
@@ -20,6 +20,12 @@ components:
       name: Idempotency-Key
       required: true
       schema: { type: string, minLength: 8, maxLength: 128 }
+    DeviceId:
+      in: header
+      name: X-Device-Id
+      required: false
+      description: Required for a least-privilege FIELD_USER after registration; verified against the trusted OIDC principal and never treated as authority by itself.
+      schema: { type: string, format: uuid }
     EventId:
       in: path
       name: roadEventId
@@ -72,6 +78,25 @@ components:
                 code: { type: string }
                 message: { type: string }
         traceId: { type: string }
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      required: [deviceId, platform, appVersion, consent]
+      properties:
+        deviceId: { type: string, format: uuid }
+        platform: { type: string, enum: [WEB] }
+        appVersion: { type: string, minLength: 1, maxLength: 32, pattern: '^[A-Za-z0-9][A-Za-z0-9._+-]*$' }
+        consent:
+          type: object
+          additionalProperties: false
+          required: [decision, policyVersion, occurredAt]
+          properties:
+            decision: { type: string, enum: [GRANTED] }
+            policyVersion: { type: string, enum: [ros-field-companion-device-registration-consent/v1] }
+            occurredAt:
+              type: string
+              format: date-time
+              description: Client-observed evidence only; registeredAt and consentGrantedAt are issued from server time.
 security:
   - oidc: []
 paths:
@@ -81,6 +106,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TraceId'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/DeviceId'
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Envelope' } } } }
         '400': { description: Validation error }
@@ -101,7 +127,7 @@ paths:
   /api/v1/road-events/{roadEventId}:
     get:
       summary: Get RoadEvent details
-      parameters: [ { $ref: '#/components/parameters/EventId' } ]
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/DeviceId' } ]
       responses:
         '200': { description: RoadEvent details }
         '403': { description: Forbidden }
@@ -125,10 +151,96 @@ paths:
   /api/v1/road-events/{roadEventId}/signals:
     post:
       summary: Attach a correlated signal
-      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/DeviceId' } ]
       responses: { '200': { description: Attached }, '400': { description: Validation error }, '403': { description: Forbidden }, '404': { description: RoadEvent not found } }
   /api/v1/road-events/{roadEventId}/timeline:
     get:
       summary: Read immutable audit timeline
       parameters: [ { $ref: '#/components/parameters/EventId' } ]
       responses: { '200': { description: Timeline }, '403': { description: Auditor or supervisor role required }, '404': { description: RoadEvent not found } }
+  /api/v1/road-events/{roadEventId}/contact-sessions:
+    post:
+      summary: Open the durable in-app Human Contact protocol for a scoped RoadEvent
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/DeviceId' } ]
+      responses: { '201': { description: Contact session opened }, '403': { description: FIELD_USER or operational mobile role required }, '404': { description: Scoped RoadEvent not found }, '409': { description: Contact session conflict }, '503': { description: Persistent contact orchestration unavailable } }
+  /api/v1/field-companion/devices/registrations:
+    post:
+      summary: Register or renew an app-instance binding for the trusted FIELD_USER principal
+      description: Creates a durable server-time consent receipt and binding. This is not hardware device attestation.
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRegistration' }
+      responses: { '201': { description: Registered with server-authoritative registeredAt and consentGrantedAt }, '200': { description: Idempotent replay or active renewal }, '400': { description: Invalid registration or consent policy }, '403': { description: FIELD_USER-only authority required }, '409': { description: Device rebind or idempotency conflict }, '503': { description: Persistent device registry unavailable } }
+  /api/v1/field-companion/deliveries:
+    post:
+      summary: Deliver an idempotent consent, language, structured reply, device-metadata, or reconnect operation
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/DeviceId' } ]
+      responses: { '202': { description: Durable delivery receipt }, '403': { description: FIELD_USER or operational mobile role required }, '404': { description: Scoped case or session not found }, '409': { description: Replay or session conflict }, '503': { description: Persistent Field Companion unavailable } }
+  /api/v1/notifications/nearby:
+    get:
+      summary: List scoped confirmed hazards near a consented location
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - { in: query, name: latitude, required: true, schema: { type: number, minimum: -90, maximum: 90 } }
+        - { in: query, name: longitude, required: true, schema: { type: number, minimum: -180, maximum: 180 } }
+        - { in: query, name: radiusMeters, required: true, schema: { type: number, minimum: 1, maximum: 50000 } }
+      responses: { '200': { description: Nearby notification page }, '403': { description: Forbidden }, '503': { description: Persistent notification audit unavailable } }
+  /api/v1/notifications/{notificationId}/acknowledgements:
+    post:
+      summary: Acknowledge a scoped nearby notification
+      parameters:
+        - { in: path, name: notificationId, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/DeviceId' }
+      responses: { '200': { description: Acknowledged }, '403': { description: Forbidden }, '404': { description: Scoped notification not found }, '409': { description: Idempotency conflict } }
+  /api/v1/human-safety/cases:
+    get:
+      summary: List scoped Human Safety cases
+      responses: { '200': { description: Human Safety case page }, '403': { description: Operator, supervisor, or auditor role required }, '503': { description: Persistent Human Safety unavailable } }
+  /api/v1/human-safety/cases/{roadEventId}:
+    get:
+      summary: Get a scoped Human Safety case, contact state, evidence provenance, and audit
+      parameters: [ { $ref: '#/components/parameters/EventId' } ]
+      responses: { '200': { description: Human Safety case }, '403': { description: Forbidden }, '404': { description: Not found } }
+  /api/v1/human-safety/cases/{roadEventId}/takeover:
+    post:
+      summary: Take over a Human Contact session as a verified operator or supervisor
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: Taken over }, '403': { description: Operational role required }, '409': { description: Version or transition conflict } }
+  /api/v1/human-safety/cases/{roadEventId}/escalate:
+    post:
+      summary: Escalate a Human Safety case
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: Escalated }, '403': { description: Operational role required }, '409': { description: Version or transition conflict } }
+  /api/v1/human-safety/cases/{roadEventId}/assignment:
+    post:
+      summary: Assign a provisioned operator UUID under supervisor authority
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: Assigned }, '400': { description: Invalid assignee UUID }, '403': { description: Supervisor role required }, '409': { description: Version conflict } }
+  /api/v1/human-safety/cases/{roadEventId}/resolution-authorization:
+    post:
+      summary: Persist supervised high-risk resolution authorization after trusted evidence
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: Authorized }, '403': { description: Supervisor role required }, '409': { description: Evidence or version conflict } }
+  /api/v1/road-events/{roadEventId}/evidence/upload-intents:
+    post:
+      summary: Create an authorized evidence upload intent
+      parameters: [ { $ref: '#/components/parameters/EventId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '201': { description: Upload intent and required checksum headers }, '403': { description: Evidence role required }, '404': { description: Scoped RoadEvent not found }, '409': { description: Idempotency conflict }, '503': { description: Evidence runtime unavailable } }
+  /api/v1/evidence/{evidenceId}/complete:
+    post:
+      summary: Verify checksum and scanner result and preserve or quarantine evidence
+      parameters:
+        - { in: path, name: evidenceId, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Evidence completion state }, '403': { description: Evidence role required }, '404': { description: Scoped evidence not found }, '409': { description: Integrity or idempotency conflict } }
+  /api/v1/evidence/{evidenceId}/download-intents:
+    post:
+      summary: Create an audited authorized evidence download intent
+      parameters:
+        - { in: path, name: evidenceId, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Audited short-lived download intent }, '403': { description: Evidence role required }, '404': { description: Scoped evidence not found }, '409': { description: Idempotency conflict } }

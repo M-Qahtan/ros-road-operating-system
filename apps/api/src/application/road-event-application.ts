@@ -127,12 +127,14 @@ function fingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-export function deriveRoadEventIdempotencyScope(operation: string, scope: RoadEventAccessScope): string {
+export function deriveRoadEventIdempotencyScope(operation: string, actor: AuthenticatedActor): string {
   const canonical = JSON.stringify({
     domain: IDEMPOTENCY_SCOPE_DOMAIN,
     operation,
-    tenantId: scope.tenantId,
-    purpose: scope.purpose
+    tenantId: actor.tenantId,
+    purpose: actor.purpose,
+    actorId: actor.actorId,
+    roles: [...new Set(actor.roles)].sort()
   });
   return `road-event:${createHash('sha256').update(canonical).digest('hex')}`;
 }
@@ -157,9 +159,10 @@ export class RoadEventApplicationService {
       occurredAt,
       latitude: command.latitude,
       longitude: command.longitude,
+      reporterActorId: scope.reporterActorId ?? null,
       ...(command.severity === undefined ? {} : { severity: command.severity })
     });
-    return this.executeIdempotently(this.operationScope('road_event:create', scope), context.idempotencyKey, command, async () => {
+    return this.executeIdempotently(this.operationScope('road_event:create', context.actor), context.idempotencyKey, command, async () => {
       await this.repository.create(event, {
         ...scope,
         actorType: this.primaryRole(context.actor),
@@ -180,7 +183,7 @@ export class RoadEventApplicationService {
     requireUuid(command.roadEventId, 'roadEventId');
     validateExpectedVersion(command.expectedVersion);
     const reason = requireText(command.reason, 'reason', 500);
-    return this.executeIdempotently(this.operationScope('road_event:reassess_severity', scope), context.idempotencyKey, command, async () => {
+    return this.executeIdempotently(this.operationScope('road_event:reassess_severity', context.actor), context.idempotencyKey, command, async () => {
       const event = await this.requireEvent(command.roadEventId, scope);
       if (event.version !== command.expectedVersion) throw new RoadEventConcurrencyError('RoadEvent version is stale');
       event.assessSeverity(command.assessment);
@@ -205,7 +208,7 @@ export class RoadEventApplicationService {
     requireUuid(command.roadEventId, 'roadEventId');
     validateExpectedVersion(command.expectedVersion);
     const reason = requireText(command.reason, 'reason', 500);
-    return this.executeIdempotently(this.operationScope('road_event:transition', scope), context.idempotencyKey, command, async () => {
+    return this.executeIdempotently(this.operationScope('road_event:transition', context.actor), context.idempotencyKey, command, async () => {
       const event = await this.requireEvent(command.roadEventId, scope);
       if (event.version !== command.expectedVersion) throw new RoadEventConcurrencyError('RoadEvent version is stale');
       event.transitionTo(command.nextStatus);
@@ -231,7 +234,7 @@ export class RoadEventApplicationService {
     validateExpectedVersion(command.expectedVersion);
     const reason = requireText(command.reason, 'reason', 500);
     const authorizedAt = parseDate(command.authorizedAt, 'authorizedAt');
-    return this.executeIdempotently(this.operationScope('road_event:authorize_closure', scope), context.idempotencyKey, command, async () => {
+    return this.executeIdempotently(this.operationScope('road_event:authorize_closure', context.actor), context.idempotencyKey, command, async () => {
       const event = await this.requireEvent(command.roadEventId, scope);
       if (event.version !== command.expectedVersion) throw new RoadEventConcurrencyError('RoadEvent version is stale');
       event.authorizeClosure({ actorId: context.actor.actorId, reason, authorizedAt });
@@ -261,8 +264,9 @@ export class RoadEventApplicationService {
     if (command.mergeReasons.length === 0 || command.mergeReasons.some((reason) => reason.trim().length === 0)) {
       throw new ApplicationValidationError('mergeReasons must contain at least one non-empty reason');
     }
-    return this.executeIdempotently(this.operationScope('road_event:attach_signal', scope), context.idempotencyKey, command, async () => {
-      await this.requireEvent(command.roadEventId, scope);
+    // Reporter ownership is a resource authorization check and must precede replay lookup.
+    await this.requireEvent(command.roadEventId, scope);
+    return this.executeIdempotently(this.operationScope('road_event:attach_signal', context.actor), context.idempotencyKey, command, async () => {
       await this.signals.attach({
         roadEventId: command.roadEventId,
         signalId: command.signalId,
@@ -295,14 +299,19 @@ export class RoadEventApplicationService {
   }
 
   private accessScope(actor: AuthenticatedActor): RoadEventAccessScope {
-    return {
+    const base = {
       tenantId: requireAccessScopeValue(actor.tenantId, 'actor.tenantId'),
       purpose: requireAccessScopeValue(actor.purpose, 'actor.purpose')
     };
+    const fieldUserOnly = actor.roles.includes('FIELD_USER') &&
+      !actor.roles.some((role) => ['OPERATOR', 'SUPERVISOR', 'INTEGRATION_SERVICE'].includes(role));
+    return fieldUserOnly
+      ? { ...base, reporterActorId: requireUuid(actor.actorId, 'actor.actorId') }
+      : base;
   }
 
-  private operationScope(operation: string, scope: RoadEventAccessScope): string {
-    return deriveRoadEventIdempotencyScope(operation, scope);
+  private operationScope(operation: string, actor: AuthenticatedActor): string {
+    return deriveRoadEventIdempotencyScope(operation, actor);
   }
 
   private async requireEvent(id: string, scope: RoadEventAccessScope): Promise<RoadEvent> {
@@ -313,7 +322,8 @@ export class RoadEventApplicationService {
 
   private primaryRole(actor: AuthenticatedActor): string {
     requireUuid(actor.actorId, 'actorId');
-    const role = actor.roles[0];
+    const role = (['SUPERVISOR', 'OPERATOR', 'INTEGRATION_SERVICE', 'FIELD_USER', 'AUDITOR'] as const)
+      .find((candidate) => actor.roles.includes(candidate));
     if (role === undefined) throw new ApplicationValidationError('actor must have at least one role');
     return role;
   }

@@ -15,7 +15,7 @@ export interface SignalInput {
   readonly payload: Readonly<Record<string, unknown>>;
 }
 
-export type RosRoleContract = 'OPERATOR' | 'SUPERVISOR' | 'AUDITOR' | 'INTEGRATION_SERVICE';
+export type RosRoleContract = 'FIELD_USER' | 'OPERATOR' | 'SUPERVISOR' | 'AUDITOR' | 'INTEGRATION_SERVICE';
 export type SeverityLevelContract = 'S0' | 'S1' | 'S2' | 'S3' | 'S4';
 export type RoadEventStatusContract =
   | 'DETECTED' | 'VALIDATING' | 'CONFIRMED' | 'SAFETY_ASSESSMENT'

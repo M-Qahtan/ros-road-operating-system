@@ -1,11 +1,11 @@
 import type {
-  ApiEnvelope,
   AuthorizeClosureRequest,
   RoadEventPageResponse,
   RoadEventResponse,
-  RosRoleContract,
   TransitionRoadEventRequest
 } from '@ros/contracts';
+import { authenticatedApiRequest, type AuthenticatedRequestFailure } from './authenticated-http.js';
+import type { OperationsAccessTokenProvider } from './trusted-browser-session.js';
 
 export interface AuditTimelineEntryContract {
   readonly action: string;
@@ -18,11 +18,6 @@ export interface AuditTimelineEntryContract {
   readonly occurredAt: string;
 }
 
-export interface OperationsIdentity {
-  readonly actorId: string;
-  readonly roles: readonly RosRoleContract[];
-}
-
 export interface RoadEventGateway {
   list(): Promise<RoadEventPageResponse>;
   getById(id: string): Promise<RoadEventResponse>;
@@ -33,13 +28,24 @@ export interface RoadEventGateway {
 
 export class ApiRequestError extends Error {
   override readonly name = 'ApiRequestError';
-  constructor(readonly code: string, message: string, readonly traceId: string) { super(message); }
+  readonly code: string;
+  readonly traceId: string;
+  readonly status: number;
+  readonly outcomeAmbiguous: boolean;
+
+  constructor(failure: AuthenticatedRequestFailure) {
+    super(failure.message);
+    this.code = failure.code;
+    this.traceId = failure.traceId;
+    this.status = failure.status;
+    this.outcomeAmbiguous = failure.outcomeAmbiguous;
+  }
 }
 
 export class HttpRoadEventGateway implements RoadEventGateway {
   constructor(
     private readonly baseUrl: string,
-    private readonly identity: OperationsIdentity,
+    private readonly session: OperationsAccessTokenProvider,
     private readonly fetcher: typeof fetch = fetch
   ) {}
 
@@ -54,20 +60,15 @@ export class HttpRoadEventGateway implements RoadEventGateway {
   }
 
   private async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-    const response = await this.fetcher(`${this.baseUrl}${path}`, {
-      method,
-      headers: {
-        'content-type': 'application/json',
-        'x-actor-id': this.identity.actorId,
-        'x-ros-roles': this.identity.roles.join(','),
-        ...(method === 'POST' ? { 'idempotency-key': crypto.randomUUID() } : {})
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    return authenticatedApiRequest<T, ApiRequestError>({
+      baseUrl: this.baseUrl,
+      path,
+      method: method === 'POST' ? 'POST' : 'GET',
+      ...(body === undefined ? {} : { body }),
+      ...(method === 'POST' ? { idempotencyKey: crypto.randomUUID() } : {}),
+      session: this.session,
+      fetcher: this.fetcher,
+      createError: (failure) => new ApiRequestError(failure)
     });
-    const envelope = await response.json() as ApiEnvelope<T>;
-    if (!response.ok || !envelope.success || envelope.data === null) {
-      throw new ApiRequestError(envelope.error?.code ?? 'HTTP_ERROR', envelope.error?.message ?? 'تعذر تنفيذ الطلب', envelope.traceId);
-    }
-    return envelope.data;
   }
 }

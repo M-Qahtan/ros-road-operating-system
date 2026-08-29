@@ -12,6 +12,7 @@ export interface ReadinessResult {
 export interface RuntimeReadinessProbes {
   readonly database?: () => Promise<void>;
   readonly redis?: () => Promise<void>;
+  readonly objectStorage?: () => Promise<void>;
 }
 
 // Must remain below the caller/readiness-client deadline so dependency loss is
@@ -82,18 +83,17 @@ async function probe(operation: (() => Promise<void>) | undefined): Promise<Read
 /**
  * Evaluate the dependencies held by the running process.
  *
- * Object Storage is an external release gate while no Evidence HTTP/API surface
- * is active in `main.ts`. The dedicated Object Storage Integration workflow
- * performs the PostgreSQL-backed EvidenceService -> MinIO/S3-compatible proof.
- * When Evidence becomes an active process dependency, add an authenticated
- * storage probe here rather than reintroducing a MinIO-specific health URL.
+ * Object Storage remains an external gate only when the Evidence surface is not
+ * active. A composed Evidence runtime supplies an authenticated S3 bucket probe.
  */
 export async function evaluateReadiness(probes: RuntimeReadinessProbes): Promise<ReadinessResult> {
-  const [database, redis] = await Promise.all([
+  const [database, redis, objectStorage] = await Promise.all([
     probe(probes.database),
-    probe(probes.redis)
+    probe(probes.redis),
+    probes.objectStorage === undefined ? Promise.resolve<ReadinessCheck>('external_gate') : probe(probes.objectStorage)
   ]);
-  const requiredChecks = [database, redis].filter((check) => check !== 'not_required');
+  const requiredChecks = [database, redis, objectStorage]
+    .filter((check) => check !== 'not_required' && check !== 'external_gate');
   const ready = requiredChecks.every((check) => check === 'reachable');
 
   return {
@@ -101,7 +101,7 @@ export async function evaluateReadiness(probes: RuntimeReadinessProbes): Promise
     checks: {
       database,
       redis,
-      objectStorage: 'external_gate'
+      objectStorage
     }
   };
 }
