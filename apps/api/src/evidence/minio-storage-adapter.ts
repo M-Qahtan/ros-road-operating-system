@@ -153,13 +153,23 @@ export class MinioEvidenceStorageAdapter implements EvidenceObjectStorage {
     // stores and could obscure retained evidence even though its version remains.
   }
 
+  async checkReadiness(signal?: AbortSignal): Promise<void> {
+    const expiresAt = new Date(this.now().getTime() + 30_000);
+    const response = await this.fetchImpl(this.presign('HEAD', '', expiresAt, {}), {
+      method: 'HEAD',
+      ...(signal === undefined ? {} : { signal })
+    });
+    if (!response.ok) throw new Error(`Object-storage bucket readiness failed with status ${response.status}`);
+  }
+
   private presign(method: string, objectKey: string, expiresAt: Date, headers: Readonly<Record<string, string>>): string {
     const now = this.now();
     const expires = requireFutureExpiry(now, expiresAt);
     const { amzDate, dateStamp } = formatAmzDate(now);
     const credentialScope = `${dateStamp}/${this.options.region}/s3/aws4_request`;
     const host = this.endpoint.host;
-    const canonicalUri = `${this.endpoint.pathname.replace(/\/$/, '')}/${encodeURIComponent(this.options.bucket)}/${encodePath(objectKey)}`.replace(/\/+/g, '/');
+    const bucketUri = `${this.endpoint.pathname.replace(/\/$/, '')}/${encodeURIComponent(this.options.bucket)}`;
+    const canonicalUri = `${bucketUri}${objectKey.length === 0 ? '' : `/${encodePath(objectKey)}`}`.replace(/\/+/g, '/');
     const normalizedHeaders: Record<string, string> = { host };
     for (const [key, value] of Object.entries(headers)) normalizedHeaders[key.toLowerCase()] = value.trim().replace(/\s+/g, ' ');
     const signedHeaders = Object.keys(normalizedHeaders).sort().join(';');

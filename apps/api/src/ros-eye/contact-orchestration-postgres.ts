@@ -29,7 +29,7 @@ export interface ContactSqlPoolPort extends ContactSqlConnectionPort {
 }
 
 const SESSION_COLUMNS = `
-  tenant_id, case_id, session_id, state, version, protocol_version,
+  tenant_id, case_id, session_id, owner_actor_id, state, version, protocol_version,
   prompt_policy_version, accessibility_policy_version, language,
   identity_confidence, active_channel, attempt_count, response_deadline_at,
   next_action_at, last_interaction_at, assigned_operator_id,
@@ -262,26 +262,27 @@ class PostgresContactRuntimeTransaction implements ContactRuntimeTransaction {
 
   async insertSession(session: ContactSessionRecord): Promise<void> {
     await this.connection.query(`INSERT INTO ros_eye_contact_sessions (
-      tenant_id, case_id, session_id, state, version, protocol_version,
+      tenant_id, case_id, session_id, owner_actor_id, state, version, protocol_version,
       prompt_policy_version, accessibility_policy_version, language,
       identity_confidence, active_channel, attempt_count, response_deadline_at,
       next_action_at, last_interaction_at, assigned_operator_id,
       automation_suppressed, accessibility, lease_owner, lease_expires_at, updated_at
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::timestamptz,$14::timestamptz,
-      $15::timestamptz,$16,$17,$18::jsonb,$19,$20::timestamptz,$21::timestamptz
+      $1,$2,$3,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::timestamptz,$15::timestamptz,
+      $16::timestamptz,$17,$18,$19::jsonb,$20,$21::timestamptz,$22::timestamptz
     )`, sessionValues(session));
   }
 
   async updateSession(session: ContactSessionRecord, expectedVersion: number): Promise<'UPDATED' | 'CONFLICT'> {
     const result = await this.connection.query(`UPDATE ros_eye_contact_sessions SET
-      state=$4, version=$5, protocol_version=$6, prompt_policy_version=$7,
-      accessibility_policy_version=$8, language=$9, identity_confidence=$10,
-      active_channel=$11, attempt_count=$12, response_deadline_at=$13::timestamptz,
-      next_action_at=$14::timestamptz, last_interaction_at=$15::timestamptz,
-      assigned_operator_id=$16, automation_suppressed=$17, accessibility=$18::jsonb,
-      lease_owner=$19, lease_expires_at=$20::timestamptz, updated_at=$21::timestamptz
-      WHERE tenant_id=$1 AND case_id=$2 AND session_id=$3 AND version=$22`,
+      state=$5, version=$6, protocol_version=$7, prompt_policy_version=$8,
+      accessibility_policy_version=$9, language=$10, identity_confidence=$11,
+      active_channel=$12, attempt_count=$13, response_deadline_at=$14::timestamptz,
+      next_action_at=$15::timestamptz, last_interaction_at=$16::timestamptz,
+      assigned_operator_id=$17, automation_suppressed=$18, accessibility=$19::jsonb,
+      lease_owner=$20, lease_expires_at=$21::timestamptz, updated_at=$22::timestamptz
+      WHERE tenant_id=$1 AND case_id=$2 AND session_id=$3
+        AND owner_actor_id IS NOT DISTINCT FROM $4::uuid AND version=$23`,
     [...sessionValues(session), expectedVersion]);
     return result.rowCount === 1 ? 'UPDATED' : 'CONFLICT';
   }
@@ -361,7 +362,7 @@ async function readDispositionWithConnection(
 
 function sessionValues(session: ContactSessionRecord): readonly unknown[] {
   return [
-    session.tenantId, session.caseId, session.sessionId, session.state,
+    session.tenantId, session.caseId, session.sessionId, session.ownerActorId, session.state,
     session.version, session.protocolVersion, session.promptPolicyVersion,
     session.accessibilityPolicyVersion, session.language,
     session.identityConfidence, session.activeChannel, session.attemptCount,
@@ -377,6 +378,7 @@ function mapSession(row: ContactSqlRow): ContactSessionRecord {
     tenantId: text(row, 'tenant_id'),
     caseId: text(row, 'case_id'),
     sessionId: text(row, 'session_id'),
+    ownerActorId: nullableText(row, 'owner_actor_id'),
     state: text(row, 'state') as ContactSessionRecord['state'],
     version: integer(row, 'version'),
     protocolVersion: text(row, 'protocol_version') as ContactSessionRecord['protocolVersion'],

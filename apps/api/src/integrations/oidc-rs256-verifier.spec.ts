@@ -42,6 +42,14 @@ test('verifies RS256 signature before returning authoritative integration claims
   });
 });
 
+test('parses canonical provisioned roles and rejects malformed or duplicate role claims', async () => {
+  const verifier = new Rs256OidcTokenVerifier(provider());
+  assert.deepEqual((await verifier.verifyBearerToken(createToken({ ros_roles: ['OPERATOR'] }))).roles, ['OPERATOR']);
+  await assert.rejects(verifier.verifyBearerToken(createToken({ ros_roles: [] })), /non-empty canonical/);
+  await assert.rejects(verifier.verifyBearerToken(createToken({ ros_roles: ['OPERATOR', 'OPERATOR'] })), /duplicates/);
+  await assert.rejects(verifier.verifyBearerToken(createToken({ ros_roles: [' OPERATOR'] })), /canonical/);
+});
+
 test('rejects tampering algorithm substitution and unknown keys', async () => {
   const verifier = new Rs256OidcTokenVerifier(provider());
   const valid = createToken();

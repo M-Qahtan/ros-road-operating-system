@@ -1,5 +1,14 @@
 import type { HumanContactReplyOption } from '@ros/contracts';
 import type { FieldCompanionState, FieldCompanionShareCategory } from './field-companion.js';
+import type { NearbyNotification } from './mvp-http-gateway.js';
+
+export interface MobileMvpRenderState {
+  readonly enabled: boolean;
+  readonly busy: boolean;
+  readonly statusCode: string;
+  readonly errorCode: string | null;
+  readonly notifications: readonly NearbyNotification[];
+}
 
 const STATUS_AR: Readonly<Record<string, string>> = {
   consent_pending: 'نحتاج موافقتك قبل بدء التحقق المختصر.', consent_granted: 'تم تسجيل الموافقة. اختر اللغة المناسبة.',
@@ -20,9 +29,9 @@ const SHARE_AR: Readonly<Record<FieldCompanionShareCategory, string>> = {
   MOTION_INDICATOR: 'مؤشر الحركة المصنف', LOCATION_QUALITY_ONLY: 'جودة الموقع دون الإحداثيات'
 };
 
-export function renderFieldCompanion(state: FieldCompanionState): string {
+export function renderFieldCompanion(state: FieldCompanionState, mvp?: MobileMvpRenderState): string {
   const offline = state.device.network === 'OFFLINE' ? '<div class="alert offline" role="alert">أنت دون اتصال. لن تفقد ردودك؛ ستبقى في قائمة محلية مشفرة بواسطة منصة الجهاز عند اعتماد التطبيق الإنتاجي.</div>' : '';
-  const simulation = '<div class="alert simulation" role="status"><strong>محاكاة آمنة:</strong> هذا المرجع لا يتصل حاليًا بالإسعاف أو المرور، ولا يقدم تشخيصًا أو ضمان وصول مساعدة.</div>';
+  const simulation = state.session.simulation ? '<div class="alert simulation" role="status"><strong>محاكاة آمنة:</strong> هذا المرجع لا يتصل حاليًا بالإسعاف أو المرور، ولا يقدم تشخيصًا أو ضمان وصول مساعدة.</div>' : '';
   const clockWarning = Math.abs(state.device.clockSkewMs) > 300_000 ? '<div class="alert warning" role="alert">ساعة الجهاز غير موثوقة؛ أوقفنا مشاركة بيانات الجهاز وطلبنا مراجعة بشرية.</div>' : '';
   const takeover = state.session.operatorTakeoverVisible ? '<div class="operator-banner" role="status"><strong>مشغل بشري يتابع الحالة الآن.</strong><span>قد تستمر الرسائل المنظمة، ولن تتخذ الأتمتة قرارًا متعارضًا.</span></div>' : '';
   return `<main id="main-content" tabindex="-1">
@@ -31,7 +40,8 @@ export function renderFieldCompanion(state: FieldCompanionState): string {
     <section class="status-card" aria-labelledby="status-title"><div><h2 id="status-title">حالة التواصل</h2><p class="status-message">${escape(statusMessage(state.session.statusMessageCode))}</p></div><div class="status-meta"><span>${escape(state.session.contactState)}</span><span>${state.pending.length} بانتظار الإرسال</span></div></section>
     <div class="mobile-layout"><section class="panel primary-panel" aria-labelledby="interaction-title"><h2 id="interaction-title">التحقق المختصر</h2>${renderInteraction(state)}</section>
     <aside class="side-stack"><section class="panel" aria-labelledby="sharing-title"><h2 id="sharing-title">ما الذي نشاركه؟</h2><p class="muted">لا نعرض إحداثيات دقيقة ولا نسجل نصًا حرًا أو وصفًا طبيًا.</p><ul class="sharing-list">${sharingRows()}</ul><button id="share-device" type="button" ${canShareDevice(state) ? '' : 'disabled'}>مشاركة حالة الجهاز الآمنة</button></section>
-    <section class="panel" aria-labelledby="device-title"><h2 id="device-title">محاكي حالة الجهاز</h2><div class="device-grid">${deviceFact('الشبكة', state.device.network)}${deviceFact('البطارية', state.device.battery)}${deviceFact('جودة الموقع', state.device.locationQuality)}${deviceFact('الحركة', state.device.motion)}${deviceFact('انحراف الساعة', `${state.device.clockSkewMs} ms`)}</div>${renderSimulatorControls()}</section></aside></div>
+    <section class="panel" aria-labelledby="device-title"><h2 id="device-title">${state.session.simulation ? 'محاكي حالة الجهاز' : 'حالة الجهاز'}</h2><div class="device-grid">${deviceFact('الشبكة', state.device.network)}${deviceFact('البطارية', state.device.battery)}${deviceFact('جودة الموقع', state.device.locationQuality)}${deviceFact('الحركة', state.device.motion)}${deviceFact('انحراف الساعة', `${state.device.clockSkewMs} ms`)}</div>${state.session.simulation ? renderSimulatorControls() : ''}</section></aside></div>
+    ${mvp === undefined ? '' : renderMvpWorkflow(state, mvp)}
     <section class="privacy-panel" aria-labelledby="privacy-title"><h2 id="privacy-title">حدود الخصوصية والسلامة</h2><ul>${state.privacyNotice.map((notice) => `<li>${escape(notice)}</li>`).join('')}</ul><details><summary>البيانات التشغيلية الآمنة</summary><pre>${escape(JSON.stringify(privacyTelemetry(state), null, 2))}</pre></details></section>
   </main>`;
 }
@@ -56,10 +66,30 @@ function renderSimulatorControls(): string {
   </div></details>`;
 }
 
+function renderMvpWorkflow(state: FieldCompanionState, mvp: MobileMvpRenderState): string {
+  const authorized = mvp.enabled && state.session.consent === 'GRANTED';
+  const disabled = !authorized || mvp.busy ? 'disabled' : '';
+  const error = mvp.errorCode === null ? '' : `<div class="alert warning" role="alert">${escape(mvpError(mvp.errorCode))}</div>`;
+  const items = mvp.notifications.length === 0
+    ? '<p class="muted">لا توجد تنبيهات قريبة معروضة. الموقع لا يُطلب إلا بعد الموافقة والضغط على زر التحقق.</p>'
+    : `<ul class="notification-list">${mvp.notifications.map((item) => `<li><div><strong>تنبيه ${escape(item.severity)}</strong><span>على بعد ${escape(Math.round(item.distanceMeters))} متر</span><span>${escape(new Date(item.occurredAt).toLocaleString('ar-SA'))}</span></div><button type="button" data-ack-notification="${escape(item.id)}" ${item.acknowledgedAt === null && !mvp.busy ? '' : 'disabled'}>${item.acknowledgedAt === null ? 'فهمت التنبيه' : 'تم الإقرار'}</button></li>`).join('')}</ul>`;
+  return `<section class="panel mvp-workflow" aria-labelledby="mvp-workflow-title">
+    <h2 id="mvp-workflow-title">بلاغات الطريق والتنبيهات القريبة</h2>
+    <p>بعد موافقتك فقط، يستخدم الموقع لحظيًا لإرسال البلاغ أو البحث عن مخاطر قريبة. لا تُحفظ الإحداثيات في تخزين المتصفح.</p>
+    ${mvp.enabled ? '' : '<div class="alert simulation" role="status">وظائف الشبكة غير مفعلة في وضع المحاكاة المحلي.</div>'}
+    ${state.session.consent === 'GRANTED' ? '' : '<p class="muted">الموافقة مطلوبة قبل استخدام الموقع.</p>'}
+    ${error}<p role="status" class="mvp-status">${escape(mvpStatus(mvp.statusCode))}</p>
+    <div class="button-grid"><button id="poll-nearby" type="button" class="primary large-action" ${disabled}>تحقق من المخاطر القريبة</button><button id="report-incident" type="button" class="large-action" ${disabled}>إرسال بلاغ حادث</button></div>
+    ${items}
+  </section>`;
+}
+
 function sharingRows(): string { return (Object.keys(SHARE_AR) as FieldCompanionShareCategory[]).map((category) => `<li><span>${escape(SHARE_AR[category])}</span><strong>أقل قدر ضروري</strong></li>`).join(''); }
 function deviceFact(label: string, value: string): string { return `<div><span>${escape(label)}</span><strong>${escape(value)}</strong></div>`; }
 function canShareDevice(state: FieldCompanionState): boolean { return state.session.consent === 'GRANTED' && state.device.network !== 'OFFLINE' && Math.abs(state.device.clockSkewMs) <= 300_000; }
+function mvpStatus(code: string): string { return ({ READY: 'جاهز بعد الموافقة.', LOCATING: 'جارٍ طلب الموقع الآمن من الجهاز…', POLLING: 'جارٍ التحقق من المخاطر القريبة…', NEARBY_UPDATED: 'تم تحديث التنبيهات القريبة.', REPORTING: 'جارٍ إرسال البلاغ إلى ROS…', INCIDENT_REPORTED: 'استلم ROS البلاغ وفتح جلسة التواصل وأكد مزامنة العمليات المنظمة.', INCIDENT_REPORTED_PENDING_SYNC: 'استلم ROS البلاغ وفتح جلسة التواصل، لكن بقيت عمليات منظمة بانتظار إعادة المزامنة.', ACKNOWLEDGING: 'جارٍ تسجيل الإقرار…', ACKNOWLEDGED: 'تم تسجيل إقرارك بالتنبيه.' } as Record<string, string>)[code] ?? 'الحالة غير متاحة.'; }
+function mvpError(code: string): string { return ({ AUTH_REQUIRED: 'انتهت الجلسة أو لم تعد موثقة. أعد تسجيل الدخول.', DEVICE_REGISTRATION_REQUIRED: 'يلزم تسجيل مورد الجهاز بموافقتك قبل هذا الإجراء.', LOCATION_DENIED: 'لم يمنح الجهاز إذن الموقع؛ لم يتم إرسال أو تخمين موقع.', NETWORK_UNAVAILABLE: 'تعذر الاتصال بخادم ROS. لم نعتبر العملية ناجحة.', REQUEST_TIMEOUT: 'انتهت مهلة الخادم. بقيت العملية غير مؤكدة.', FORBIDDEN: 'الحساب الحالي غير مخول لهذا الإجراء.', INVALID_API_RESPONSE: 'وصل رد غير موثوق من الخادم؛ تم رفضه.', UNKNOWN: 'تعذر إكمال الإجراء، ولم نعتبره ناجحًا.' } as Record<string, string>)[code] ?? 'تعذر إكمال الإجراء، ولم نعتبره ناجحًا.'; }
 function statusMessage(code: string): string { if (code.startsWith('operator_takeover:')) return `يتابع ${code.split(':')[1] ?? 'مشغل السلامة'} الحالة.`; return STATUS_AR[code] ?? code; }
 function networkLabel(value: FieldCompanionState['device']['network']): string { return value === 'ONLINE' ? 'متصل' : value === 'DEGRADED' ? 'اتصال ضعيف' : 'دون اتصال'; }
-function privacyTelemetry(state: FieldCompanionState): Readonly<Record<string, unknown>> { return { phase: state.session.phase, contactState: state.session.contactState, network: state.device.network, battery: state.device.battery, locationQuality: state.device.locationQuality, motion: state.device.motion, pendingOperationCount: state.pending.length, simulation: true }; }
+function privacyTelemetry(state: FieldCompanionState): Readonly<Record<string, unknown>> { return { phase: state.session.phase, contactState: state.session.contactState, network: state.device.network, battery: state.device.battery, locationQuality: state.device.locationQuality, motion: state.device.motion, pendingOperationCount: state.pending.length, simulation: state.session.simulation }; }
 function escape(value: unknown): string { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;'); }

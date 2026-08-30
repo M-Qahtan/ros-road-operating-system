@@ -79,12 +79,12 @@ async function run(): Promise<void> {
     assert.equal(completed.status, 'PRESERVED');
     assert.equal(completed.verifiedChecksumSha256, CHECKSUM);
 
-    const download = await service.createDownloadRequest(intent.evidence.id, principal);
+    const download = await service.createDownloadRequest(intent.evidence.id, principal, 'object-storage-download');
     const downloaded = await requireOk(await fetch(download.url), 'EvidenceService presigned GET');
     assert.equal(await downloaded.text(), BODY);
 
     await assert.rejects(
-      service.createDownloadRequest(intent.evidence.id, wrongTenant),
+      service.createDownloadRequest(intent.evidence.id, wrongTenant, 'object-storage-cross-tenant-download'),
       EvidenceNotFoundError
     );
 

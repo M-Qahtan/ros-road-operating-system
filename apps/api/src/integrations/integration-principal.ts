@@ -6,6 +6,13 @@ export type IntegrationPurpose =
   | 'TOWING_COORDINATION'
   | 'ROUTE_COORDINATION';
 
+export type IntegrationPrincipalRole =
+  | 'FIELD_USER'
+  | 'OPERATOR'
+  | 'SUPERVISOR'
+  | 'AUDITOR'
+  | 'INTEGRATION_SERVICE';
+
 export interface VerifiedOidcClaims {
   readonly subject: string;
   readonly issuer: string;
@@ -14,6 +21,7 @@ export interface VerifiedOidcClaims {
   readonly tenantId: string;
   readonly purpose: string;
   readonly authenticationMethods: readonly string[];
+  readonly roles?: readonly string[];
   readonly issuedAtEpochSeconds: number;
   readonly expiresAtEpochSeconds: number;
 }
@@ -26,6 +34,8 @@ export interface IntegrationPrincipalBinding {
   readonly clientId: string;
   readonly tenantId: string;
   readonly purpose: IntegrationPurpose;
+  /** Human roles provisioned for this exact client/tenant/purpose binding. */
+  readonly roles?: readonly IntegrationPrincipalRole[];
 }
 
 export interface IntegrationPrincipalPolicy {
@@ -43,6 +53,7 @@ export interface TrustedIntegrationPrincipal {
   readonly tenantId: string;
   readonly purpose: IntegrationPurpose;
   readonly mfaVerified: boolean;
+  readonly roles: readonly IntegrationPrincipalRole[];
 }
 
 export class IntegrationPrincipalError extends Error {
@@ -63,17 +74,49 @@ function validInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
 }
 
-function bindingAuthorized(
+function authorizedBinding(
   bindings: readonly IntegrationPrincipalBinding[],
   clientId: string,
   tenantId: string,
   purpose: IntegrationPurpose
-): boolean {
-  return bindings.some((binding) =>
+): IntegrationPrincipalBinding | undefined {
+  return bindings.find((binding) =>
     binding.clientId === clientId &&
     binding.tenantId === tenantId &&
     binding.purpose === purpose
   );
+}
+
+const PRINCIPAL_ROLES = new Set<IntegrationPrincipalRole>([
+  'FIELD_USER', 'OPERATOR', 'SUPERVISOR', 'AUDITOR', 'INTEGRATION_SERVICE'
+]);
+
+function trustedRoles(
+  binding: IntegrationPrincipalBinding,
+  claimedRoles: readonly string[] | undefined
+): readonly IntegrationPrincipalRole[] {
+  if (binding.roles === undefined) {
+    if (claimedRoles !== undefined) {
+      throw new IntegrationPrincipalError('OIDC roles are not authorized for this principal binding');
+    }
+    return Object.freeze(['INTEGRATION_SERVICE'] as const);
+  }
+  if (claimedRoles === undefined || claimedRoles.length === 0) {
+    throw new IntegrationPrincipalError('Provisioned OIDC roles claim is required');
+  }
+  const roles = claimedRoles.map((role) => {
+    if (!PRINCIPAL_ROLES.has(role as IntegrationPrincipalRole)) {
+      throw new IntegrationPrincipalError('OIDC roles contain an unsupported role');
+    }
+    return role as IntegrationPrincipalRole;
+  });
+  if (new Set(roles).size !== roles.length) {
+    throw new IntegrationPrincipalError('OIDC roles must be unique');
+  }
+  if (roles.some((role) => !binding.roles!.includes(role))) {
+    throw new IntegrationPrincipalError('OIDC role is not allowlisted for this principal binding');
+  }
+  return Object.freeze([...roles]);
 }
 
 export async function resolveTrustedIntegrationPrincipal(
@@ -99,9 +142,11 @@ export async function resolveTrustedIntegrationPrincipal(
 
   if (claims.issuer !== policy.issuer) throw new IntegrationPrincipalError('OIDC issuer is not trusted');
   if (!hasAudience(claims.audience, policy.audience)) throw new IntegrationPrincipalError('OIDC audience is not trusted');
-  if (!bindingAuthorized(policy.allowedBindings, clientId, tenantId, purpose)) {
+  const binding = authorizedBinding(policy.allowedBindings, clientId, tenantId, purpose);
+  if (binding === undefined) {
     throw new IntegrationPrincipalError('OIDC principal binding is not authorized');
   }
+  const roles = trustedRoles(binding, claims.roles);
 
   if (!validInteger(claims.issuedAtEpochSeconds) || !validInteger(claims.expiresAtEpochSeconds)) {
     throw new IntegrationPrincipalError('Token timestamps are invalid');
@@ -120,5 +165,5 @@ export async function resolveTrustedIntegrationPrincipal(
   const mfaVerified = methods.includes('mfa');
   if (policy.requireMfa && !mfaVerified) throw new IntegrationPrincipalError('Explicit MFA authentication is required');
 
-  return Object.freeze({ subject, clientId, tenantId, purpose, mfaVerified });
+  return Object.freeze({ subject, clientId, tenantId, purpose, mfaVerified, roles });
 }

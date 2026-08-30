@@ -6,18 +6,34 @@ const MAX_POOL_MAX = 100;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 2_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10_000;
 const REQUIRED_RUNTIME_RELATIONS = Object.freeze([
+  'schema_migrations',
   'road_events',
   'idempotency_records',
   'idempotency_reservations',
   'audit_logs',
   'outbox_events',
-  'road_event_signals'
+  'road_event_signals',
+  'evidence_objects',
+  'evidence_audit_logs',
+  'ros_eye_contact_sessions',
+  'ros_eye_contact_inbox',
+  'ros_eye_contact_outbox',
+  'ros_eye_contact_audit',
+  'ros_eye_safety_fusion_recommendations',
+  'field_companion_devices',
+  'field_notification_deliveries'
 ]);
 const REQUIRED_RUNTIME_COLUMNS = Object.freeze([
   { tableName: 'road_events', columnName: 'tenant_id' },
   { tableName: 'road_events', columnName: 'purpose' },
+  { tableName: 'road_events', columnName: 'reporter_actor_id' },
   { tableName: 'outbox_events', columnName: 'tenant_id' },
-  { tableName: 'outbox_events', columnName: 'purpose' }
+  { tableName: 'outbox_events', columnName: 'purpose' },
+  { tableName: 'evidence_objects', columnName: 'road_event_id' },
+  { tableName: 'ros_eye_contact_sessions', columnName: 'tenant_id' },
+  { tableName: 'ros_eye_contact_sessions', columnName: 'case_id' },
+  { tableName: 'ros_eye_contact_sessions', columnName: 'owner_actor_id' },
+  { tableName: 'ros_eye_contact_sessions', columnName: 'next_action_at' }
 ]);
 
 interface RuntimeSchemaProbeRow {

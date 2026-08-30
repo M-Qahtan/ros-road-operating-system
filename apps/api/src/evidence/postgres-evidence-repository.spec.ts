@@ -94,6 +94,19 @@ test('preservation locks pending metadata and appends audit in one transaction',
   assert.equal(client.queries.at(-1)?.text, 'COMMIT');
 });
 
+test('download intent appends a durable access audit without mutating evidence metadata', async () => {
+  const client = new FakeClient(() => ({ rows: [], rowCount: 1 }));
+  const repository = new PostgresEvidenceRepository(new FakePool(client));
+  await repository.appendAccessAudit(record(), {
+    actorId: 'operator-a', traceId: 'trace-download-1',
+    action: 'evidence.download_intent_created', occurredAt: new Date('2026-07-25T04:02:00.000Z')
+  });
+  assert.deepEqual(client.queries.map((query) => query.text.trim().split(/\s+/)[0]), ['BEGIN', 'INSERT', 'COMMIT']);
+  assert.match(client.queries[1]!.text, /INSERT INTO evidence_audit_logs/);
+  assert.equal(client.queries[1]!.values[3], 'evidence.download_intent_created');
+  assert.equal(client.queries.some((query) => query.text.includes('UPDATE evidence_objects')), false);
+});
+
 test('transition rollback preserves the original failure', async () => {
   const client = new FakeClient((text) => {
     if (text.includes('FOR UPDATE')) return { rows: [row()], rowCount: 1 };

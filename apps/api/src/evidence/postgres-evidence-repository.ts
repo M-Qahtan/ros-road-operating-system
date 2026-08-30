@@ -90,6 +90,12 @@ export class PostgresEvidenceRepository implements EvidenceRepository {
     }
   }
 
+  async appendAccessAudit(record: EvidenceRecord, audit: EvidenceAuditContext): Promise<void> {
+    await this.withTransaction(async (client) => {
+      await this.appendAudit(client, record.id, record.roadEventId, record, record, audit);
+    });
+  }
+
   async markPreserved(
     id: string,
     actualSizeBytes: number,

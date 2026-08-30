@@ -60,6 +60,24 @@ function productionEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Proces
   };
 }
 
+function humanEnvironment(): NodeJS.ProcessEnv {
+  return productionEnvironment({
+    OIDC_ALLOWED_BINDINGS: JSON.stringify([{
+      clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION',
+      roles: ['OPERATOR', 'SUPERVISOR']
+    }])
+  });
+}
+
+function fieldEnvironment(): NodeJS.ProcessEnv {
+  return productionEnvironment({
+    OIDC_ALLOWED_BINDINGS: JSON.stringify([{
+      clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION',
+      roles: ['FIELD_USER']
+    }])
+  });
+}
+
 test('production runtime verifies signed bearer and returns authoritative ABAC scope', async () => {
   const resolver = createRuntimeActorResolver(productionEnvironment(), { jwksFetch: fakeFetch });
   assert.deepEqual(await resolver.resolve({
@@ -74,6 +92,34 @@ test('production runtime verifies signed bearer and returns authoritative ABAC s
     tenantId: 'riyadh-pilot',
     purpose: 'TRAFFIC_COORDINATION'
   });
+});
+
+test('production accepts provisioned human roles while ignoring forged identity headers', async () => {
+  const resolver = createRuntimeActorResolver(humanEnvironment(), { jwksFetch: fakeFetch });
+  assert.deepEqual(await resolver.resolve({
+    authorization: `Bearer ${token({ ros_roles: ['OPERATOR'] })}`,
+    'x-actor-id': 'attacker', 'x-ros-roles': 'SUPERVISOR'
+  }), {
+    actorId: ACTOR_ID, roles: ['OPERATOR'], tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION'
+  });
+  await assert.rejects(
+    resolver.resolve({ authorization: `Bearer ${token({ ros_roles: ['AUDITOR'] })}` }),
+    /could not be verified/
+  );
+});
+
+test('production accepts only an explicitly provisioned FIELD_USER claim for the exact binding', async () => {
+  const resolver = createRuntimeActorResolver(fieldEnvironment(), { jwksFetch: fakeFetch });
+  assert.deepEqual(await resolver.resolve({
+    authorization: `Bearer ${token({ ros_roles: ['FIELD_USER'] })}`,
+    'x-ros-roles': 'SUPERVISOR'
+  }), {
+    actorId: ACTOR_ID, roles: ['FIELD_USER'], tenantId: 'riyadh-pilot', purpose: 'TRAFFIC_COORDINATION'
+  });
+  await assert.rejects(
+    resolver.resolve({ authorization: `Bearer ${token({ ros_roles: ['OPERATOR'] })}` }),
+    /could not be verified/
+  );
 });
 
 test('production rejects a cross-client binding even when each value is individually allowed elsewhere', async () => {

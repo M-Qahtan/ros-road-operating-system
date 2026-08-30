@@ -1,10 +1,11 @@
 import type { HumanSafetyActorRole } from '@ros/contracts';
-import type {
-  CommandCenterActionInput,
-  CommandCenterCaseView,
-  CommandCenterPage,
-  CommandCenterReassignInput,
-  HumanSafetyCommandCenterGateway
+import {
+  CommandCenterRequestError,
+  type CommandCenterActionInput,
+  type CommandCenterCaseView,
+  type CommandCenterPage,
+  type CommandCenterReassignInput,
+  type HumanSafetyCommandCenterGateway
 } from './human-safety-gateway.js';
 
 export type CommandCenterPhase = 'loading' | 'ready' | 'empty' | 'failure';
@@ -124,23 +125,32 @@ export class HumanSafetyCommandCenterController {
 
   async takeover(reason: string, idempotencyKey: string, traceId: string): Promise<HumanSafetyCommandCenterState> {
     if (!this.canTakeover()) throw new Error(this.blockedReason('الاستحواذ على التواصل'));
-    return this.apply(await this.gateway.takeover(this.requireSelected().safetyCase.id, this.action(reason, idempotencyKey, traceId)));
+    return this.apply(await this.execute(() => this.gateway.takeover(
+      this.requireSelected().safetyCase.id,
+      this.action(reason, idempotencyKey, traceId)
+    )));
   }
 
   async escalate(reason: string, idempotencyKey: string, traceId: string): Promise<HumanSafetyCommandCenterState> {
     if (!this.canEscalate()) throw new Error(this.blockedReason('التصعيد'));
-    return this.apply(await this.gateway.escalate(this.requireSelected().safetyCase.id, this.action(reason, idempotencyKey, traceId)));
+    return this.apply(await this.execute(() => this.gateway.escalate(
+      this.requireSelected().safetyCase.id,
+      this.action(reason, idempotencyKey, traceId)
+    )));
   }
 
   async reassign(assigneeId: string, reason: string, idempotencyKey: string, traceId: string): Promise<HumanSafetyCommandCenterState> {
     if (!this.canReassign()) throw new Error(this.blockedReason('إعادة الإسناد'));
     const input: CommandCenterReassignInput = { ...this.action(reason, idempotencyKey, traceId), assigneeId: requireId(assigneeId, 'المستلم') };
-    return this.apply(await this.gateway.reassign(this.requireSelected().safetyCase.id, input));
+    return this.apply(await this.execute(() => this.gateway.reassign(this.requireSelected().safetyCase.id, input)));
   }
 
   async authorizeResolution(reason: string, idempotencyKey: string, traceId: string): Promise<HumanSafetyCommandCenterState> {
     if (!this.canAuthorizeResolution()) throw new Error(this.blockedReason('تفويض الحل'));
-    return this.apply(await this.gateway.authorizeResolution(this.requireSelected().safetyCase.id, this.action(reason, idempotencyKey, traceId)));
+    return this.apply(await this.execute(() => this.gateway.authorizeResolution(
+      this.requireSelected().safetyCase.id,
+      this.action(reason, idempotencyKey, traceId)
+    )));
   }
 
   private loadedState(page: CommandCenterPage): HumanSafetyCommandCenterState {
@@ -159,6 +169,16 @@ export class HumanSafetyCommandCenterController {
   private apply(updated: CommandCenterCaseView): HumanSafetyCommandCenterState {
     this.current = { ...this.current, phase: 'ready', items: replaceCase(this.current.items, updated), selected: updated, stale: false, error: null, lastUpdatedAt: this.now().toISOString() };
     return this.current;
+  }
+
+  private async execute(action: () => Promise<CommandCenterCaseView>): Promise<CommandCenterCaseView> {
+    try { return await action(); }
+    catch (error) {
+      if (error instanceof CommandCenterRequestError) {
+        this.current = { ...this.current, stale: true, error: error.message };
+      }
+      throw error;
+    }
   }
 
   private fresh(): boolean { return !this.current.stale && this.current.phase === 'ready'; }

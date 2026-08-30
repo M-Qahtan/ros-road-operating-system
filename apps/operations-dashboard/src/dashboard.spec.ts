@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { RoadEventPageResponse, RoadEventResponse } from '@ros/contracts';
-import type { AuditTimelineEntryContract, RoadEventGateway } from './api-client.js';
+import { ApiRequestError, type AuditTimelineEntryContract, type RoadEventGateway } from './api-client.js';
 import { OperationsDashboardController } from './dashboard.js';
 import { renderDashboard } from './render.js';
 
@@ -26,6 +26,18 @@ class FakeGateway implements RoadEventGateway {
   authorizeClosure(id: string, request: { readonly expectedVersion: number; readonly reason: string; readonly authorizedAt: string }): Promise<RoadEventResponse> {
     this.calls.push(`authorize:${id}:${request.reason}`);
     return Promise.resolve({ ...roadEvent, version: 5, closureAuthorization: { actorId: 'supervisor-1', reason: request.reason, authorizedAt: request.authorizedAt } });
+  }
+}
+
+class ConflictGateway extends FakeGateway {
+  override authorizeClosure(): Promise<RoadEventResponse> {
+    return Promise.reject(new ApiRequestError({
+      status: 409,
+      code: 'CONFLICT',
+      message: 'تغيرت البيانات منذ آخر تحديث. حدّث الشاشة قبل اتخاذ قرار جديد.',
+      traceId: 'trace-conflict-001',
+      outcomeAmbiguous: true
+    }));
   }
 }
 
@@ -55,6 +67,23 @@ test('permission and stale states are explicit and fail closed', async () => {
   await staleController.select(roadEvent.id);
   const staleState = { ...staleController.state, stale: true };
   const html = renderDashboard(staleState, { canTransition: false, canAuthorizeClosure: false, now: new Date('2026-07-25T03:10:02.000Z') });
+  assert.match(html, /البيانات قديمة/);
+  assert.match(html, /disabled/);
+});
+
+test('remote conflict makes the selected RoadEvent stale and disables critical controls', async () => {
+  const controller = new OperationsDashboardController(
+    new ConflictGateway(),
+    { roles: ['SUPERVISOR'] },
+    () => new Date('2026-07-25T03:10:00.000Z')
+  );
+  await controller.load();
+  await controller.select(roadEvent.id);
+  await assert.rejects(() => controller.authorizeClosure('مراجعة بشرية مكتملة'), /تغيرت البيانات/);
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  const html = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-07-25T03:10:00.000Z') });
   assert.match(html, /البيانات قديمة/);
   assert.match(html, /disabled/);
 });

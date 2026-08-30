@@ -277,6 +277,9 @@ jobs:
           minio="$(openssl rand -hex 24)"
           object="$(openssl rand -hex 24)"
           jwt="$(openssl rand -hex 32)"
+          for value in "$pg" "$redis" "$minio" "$object" "$jwt"; do
+            echo "::add-mask::${value}"
+          done
           {
             echo "POSTGRES_USER=ros"
             echo "POSTGRES_PASSWORD=${pg}"
@@ -291,6 +294,12 @@ jobs:
             echo "OBJECT_STORAGE_SECRET_KEY=${object}"
             echo "OBJECT_STORAGE_BUCKET=ros-evidence"
             echo "JWT_SECRET=${jwt}"
+            echo "ROS_OUTBOX_WORKER_ID=ci-outbox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "ROS_CONTACT_WORKER_ID=ci-contact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "OIDC_ISSUER=https://identity.invalid/ros-ci"
+            echo "OIDC_JWKS_URL=https://identity.invalid/ros-ci/.well-known/jwks.json"
+            echo "OIDC_AUDIENCE=ros-api-ci"
+            echo 'OIDC_ALLOWED_BINDINGS=[{"clientId":"ros-ci-client","tenantId":"11111111-1111-4111-8111-111111111111","purpose":"INCIDENT_TRIAGE","roles":["OPERATOR"]}]'
           } >> "$GITHUB_ENV"
       - name: Validate secrets and compose configuration
         run: |

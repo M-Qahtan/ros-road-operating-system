@@ -9,6 +9,7 @@ COPY packages/observability/package.json packages/observability/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/api apps/api
 COPY packages packages
+COPY database/migrations database/migrations
 RUN pnpm --filter @ros/api... build
 
 FROM node:22-alpine AS runtime

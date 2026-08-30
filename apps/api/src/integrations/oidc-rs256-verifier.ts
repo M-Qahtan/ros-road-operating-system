@@ -21,6 +21,7 @@ interface JwtPayload {
   readonly tenant_id?: unknown;
   readonly purpose?: unknown;
   readonly amr?: unknown;
+  readonly ros_roles?: unknown;
   readonly iat?: unknown;
   readonly exp?: unknown;
 }
@@ -88,6 +89,21 @@ function parseAuthenticationMethods(value: unknown): readonly string[] {
   return value.map((item) => (item as string).trim());
 }
 
+function parseOptionalRoles(value: unknown): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) || value.length === 0 ||
+    value.some((item) => typeof item !== 'string' || item.length === 0 || item.trim() !== item)
+  ) {
+    throw new OidcTokenVerificationError('JWT ros_roles claim must be a non-empty canonical string array');
+  }
+  const roles = value as string[];
+  if (new Set(roles).size !== roles.length) {
+    throw new OidcTokenVerificationError('JWT ros_roles claim must not contain duplicates');
+  }
+  return roles;
+}
+
 function assertStrongRs256Key(publicKey: KeyObject): void {
   if (publicKey.type !== 'public') throw new OidcTokenVerificationError('JWT verification key must be public');
   if (publicKey.asymmetricKeyType !== 'rsa') {
@@ -142,6 +158,7 @@ export class Rs256OidcTokenVerifier implements OidcTokenVerifierPort {
         ? payload.azp.trim()
         : requiredString(payload.client_id, 'client_id/azp');
 
+    const roles = parseOptionalRoles(payload.ros_roles);
     return Object.freeze({
       subject: requiredString(payload.sub, 'sub'),
       issuer: requiredString(payload.iss, 'iss'),
@@ -150,6 +167,7 @@ export class Rs256OidcTokenVerifier implements OidcTokenVerifierPort {
       tenantId: requiredString(payload.tenant_id, 'tenant_id'),
       purpose: requiredString(payload.purpose, 'purpose'),
       authenticationMethods: parseAuthenticationMethods(payload.amr),
+      ...(roles === undefined ? {} : { roles }),
       issuedAtEpochSeconds: requiredInteger(payload.iat, 'iat'),
       expiresAtEpochSeconds: requiredInteger(payload.exp, 'exp')
     });

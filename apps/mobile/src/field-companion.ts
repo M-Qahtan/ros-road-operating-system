@@ -17,7 +17,7 @@ export type FieldCompanionLocationQuality = 'PRECISE_AVAILABLE_RESTRICTED' | 'AP
 export type FieldCompanionMotion = 'STABLE' | 'HARD_BRAKE' | 'POSSIBLE_IMPACT' | 'POSSIBLE_ROLLOVER';
 export type FieldCompanionPhase = 'BOOTING' | 'READY' | 'OFFLINE' | 'HUMAN_REVIEW' | 'OPERATOR_TAKEOVER' | 'COMPLETED' | 'FAILURE';
 export type FieldCompanionShareCategory = 'CONTACT_STATUS' | 'STRUCTURED_REPLY' | 'DEVICE_CONDITION' | 'MOTION_INDICATOR' | 'LOCATION_QUALITY_ONLY';
-export type FieldCompanionOperationKind = 'STRUCTURED_REPLY' | 'DEVICE_METADATA' | 'RECONNECT';
+export type FieldCompanionOperationKind = 'CONSENT' | 'LANGUAGE_SELECTION' | 'STRUCTURED_REPLY' | 'DEVICE_METADATA' | 'RECONNECT';
 
 export interface FieldCompanionDeviceSnapshot {
   readonly network: FieldCompanionNetwork;
@@ -37,10 +37,11 @@ export interface FieldCompanionSession {
   readonly contactState: HumanContactState;
   readonly phase: FieldCompanionPhase;
   readonly consent: FieldCompanionConsent;
+  readonly consentOccurredAt: string | null;
   readonly activePromptId: string | null;
   readonly allowedReplyOptions: readonly HumanContactReplyOption[];
   readonly operatorTakeoverVisible: boolean;
-  readonly simulation: true;
+  readonly simulation: boolean;
   readonly statusMessageCode: string;
   readonly lastServerReceiptAt: string | null;
 }
@@ -49,6 +50,16 @@ export interface FieldCompanionStructuredReply {
   readonly promptId: string;
   readonly promptVersion: number;
   readonly selectedOptions: readonly HumanContactReplyOption[];
+  readonly occurredAt: string;
+}
+
+export interface FieldCompanionConsentOperation {
+  readonly decision: 'GRANTED' | 'DECLINED';
+  readonly occurredAt: string;
+}
+
+export interface FieldCompanionLanguageSelection {
+  readonly language: 'ar' | 'en';
   readonly occurredAt: string;
 }
 
@@ -69,7 +80,7 @@ export interface FieldCompanionQueuedOperation {
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly attemptCount: number;
-  readonly payload: FieldCompanionStructuredReply | FieldCompanionDeviceMetadata | Readonly<Record<string, never>>;
+  readonly payload: FieldCompanionConsentOperation | FieldCompanionLanguageSelection | FieldCompanionStructuredReply | FieldCompanionDeviceMetadata | Readonly<Record<string, never>>;
 }
 
 export interface FieldCompanionPersistedState {
@@ -96,6 +107,7 @@ export interface FieldCompanionDeliveryReceipt {
 }
 
 export interface FieldCompanionGateway {
+  readonly simulation: boolean;
   deliver(input: {
     readonly tenantId: string;
     readonly caseId: string;
@@ -139,10 +151,10 @@ export class FieldSafetyCompanionController {
   async boot(input: FieldCompanionBootstrap): Promise<FieldCompanionState> {
     validateBootstrap(input);
     const persisted = await this.storage.load(this.storageKey);
-    if (persisted !== null && validPersisted(persisted, input, this.now())) {
-      this.current = { ...persisted, session: { ...persisted.session, phase: phaseForNetwork(persisted.device.network, persisted.session.phase) }, error: null, privacyNotice: privacyNotice() };
+    if (persisted !== null && validPersisted(persisted, input, this.now(), this.gateway.simulation)) {
+      this.current = { ...persisted, session: { ...persisted.session, phase: phaseForNetwork(persisted.device.network, persisted.session.phase) }, error: null, privacyNotice: privacyNotice(persisted.session.simulation) };
     } else {
-      this.current = initialState(input);
+      this.current = initialState(input, this.gateway.simulation);
       await this.persist();
     }
     if (this.current.device.network !== 'OFFLINE') await this.flush();
@@ -151,12 +163,15 @@ export class FieldSafetyCompanionController {
 
   async setConsent(consent: Extract<FieldCompanionConsent, 'GRANTED' | 'DECLINED'>): Promise<FieldCompanionState> {
     this.requireBooted();
+    const occurredAt = this.now().toISOString();
+    this.enqueue(this.operation('CONSENT', { decision: consent, occurredAt }));
     const contactState: HumanContactState = consent === 'GRANTED' ? 'LANGUAGE_SELECTION' : 'HUMAN_REVIEW';
     this.current = {
       ...this.current,
       session: {
         ...this.current.session,
         consent,
+        consentOccurredAt: occurredAt,
         contactState,
         phase: consent === 'GRANTED' ? phaseForNetwork(this.current.device.network, 'READY') : 'HUMAN_REVIEW',
         activePromptId: consent === 'GRANTED' ? 'contact.language' : null,
@@ -165,11 +180,13 @@ export class FieldSafetyCompanionController {
       }
     };
     await this.persist();
+    if (this.current.device.network !== 'OFFLINE') await this.flush();
     return this.current;
   }
 
   async selectLanguage(language: 'ar' | 'en'): Promise<FieldCompanionState> {
     this.requireConsent();
+    this.enqueue(this.operation('LANGUAGE_SELECTION', { language, occurredAt: this.now().toISOString() }));
     this.current = {
       ...this.current,
       session: {
@@ -182,6 +199,7 @@ export class FieldSafetyCompanionController {
       }
     };
     await this.persist();
+    if (this.current.device.network !== 'OFFLINE') await this.flush();
     return this.current;
   }
 
@@ -331,7 +349,7 @@ export class FieldSafetyCompanionController {
       motion: this.current.device.motion,
       pendingOperationCount: this.current.pending.length,
       operatorTakeoverVisible: this.current.session.operatorTakeoverVisible,
-      simulation: true
+      simulation: this.current.session.simulation
     };
   }
 
@@ -374,7 +392,7 @@ export class FieldSafetyCompanionController {
       acknowledgedIdempotencyKeys: this.current.acknowledgedIdempotencyKeys
     };
     await this.storage.save(this.storageKey, persisted);
-    this.current = { ...persisted, error: this.current.error, privacyNotice: privacyNotice() };
+    this.current = { ...persisted, error: this.current.error, privacyNotice: privacyNotice(this.current.session.simulation) };
   }
 
   private requireBooted(): void { if (this.current.session.phase === 'FAILURE' || this.current.session.phase === 'BOOTING') throw new Error('التطبيق غير جاهز'); }
@@ -405,6 +423,7 @@ export class SequentialFieldCompanionIdFactory implements FieldCompanionIdFactor
 }
 
 export class SimulatedFieldCompanionGateway implements FieldCompanionGateway {
+  readonly simulation = true;
   readonly deliveries: FieldCompanionQueuedOperation[] = [];
   private readonly receipts = new Map<string, FieldCompanionDeliveryReceipt>();
   unavailable = false;
@@ -439,20 +458,22 @@ export class FieldDeviceSimulator {
   private update(value: Partial<FieldCompanionDeviceSnapshot>): FieldCompanionDeviceSnapshot { this.snapshot = validateDevice({ ...this.snapshot, ...value }); return this.current(); }
 }
 
-function initialState(input: FieldCompanionBootstrap): FieldCompanionState {
+function initialState(input: FieldCompanionBootstrap, simulation: boolean): FieldCompanionState {
   const device: FieldCompanionDeviceSnapshot = { network: 'ONLINE', battery: 'NORMAL', locationQuality: 'APPROXIMATE', motion: 'STABLE', clockSkewMs: 0, observedAt: input.now, appInstanceId: input.appInstanceId };
-  const session: FieldCompanionSession = { tenantId: input.tenantId, caseId: input.caseId, sessionId: input.sessionId, language: input.language, contactState: 'CONSENT_PENDING', phase: 'READY', consent: 'NOT_REQUESTED', activePromptId: 'contact.consent', allowedReplyOptions: ['YES', 'NO', 'UNKNOWN'], operatorTakeoverVisible: false, simulation: true, statusMessageCode: 'consent_pending', lastServerReceiptAt: null };
-  return { schemaVersion: FIELD_COMPANION_SCHEMA_VERSION, privacyPolicyVersion: FIELD_COMPANION_PRIVACY_POLICY_VERSION, savedAt: input.now, session, device, pending: [], acknowledgedIdempotencyKeys: [], error: null, privacyNotice: privacyNotice() };
+  const session: FieldCompanionSession = { tenantId: input.tenantId, caseId: input.caseId, sessionId: input.sessionId, language: input.language, contactState: 'CONSENT_PENDING', phase: 'READY', consent: 'NOT_REQUESTED', consentOccurredAt: null, activePromptId: 'contact.consent', allowedReplyOptions: ['YES', 'NO', 'UNKNOWN'], operatorTakeoverVisible: false, simulation, statusMessageCode: 'consent_pending', lastServerReceiptAt: null };
+  return { schemaVersion: FIELD_COMPANION_SCHEMA_VERSION, privacyPolicyVersion: FIELD_COMPANION_PRIVACY_POLICY_VERSION, savedAt: input.now, session, device, pending: [], acknowledgedIdempotencyKeys: [], error: null, privacyNotice: privacyNotice(simulation) };
 }
 
 function failureState(code: string): FieldCompanionState {
   const at = new Date(0).toISOString();
-  return { schemaVersion: FIELD_COMPANION_SCHEMA_VERSION, privacyPolicyVersion: FIELD_COMPANION_PRIVACY_POLICY_VERSION, savedAt: at, session: { tenantId: 'invalid', caseId: 'invalid', sessionId: 'invalid', language: 'ar', contactState: 'HUMAN_REVIEW', phase: 'FAILURE', consent: 'NOT_REQUESTED', activePromptId: null, allowedReplyOptions: [], operatorTakeoverVisible: false, simulation: true, statusMessageCode: code, lastServerReceiptAt: null }, device: { network: 'OFFLINE', battery: 'CRITICAL', locationQuality: 'UNAVAILABLE', motion: 'STABLE', clockSkewMs: 0, observedAt: at, appInstanceId: 'invalid' }, pending: [], acknowledgedIdempotencyKeys: [], error: code, privacyNotice: privacyNotice() };
+  return { schemaVersion: FIELD_COMPANION_SCHEMA_VERSION, privacyPolicyVersion: FIELD_COMPANION_PRIVACY_POLICY_VERSION, savedAt: at, session: { tenantId: 'invalid', caseId: 'invalid', sessionId: 'invalid', language: 'ar', contactState: 'HUMAN_REVIEW', phase: 'FAILURE', consent: 'NOT_REQUESTED', consentOccurredAt: null, activePromptId: null, allowedReplyOptions: [], operatorTakeoverVisible: false, simulation: false, statusMessageCode: code, lastServerReceiptAt: null }, device: { network: 'OFFLINE', battery: 'CRITICAL', locationQuality: 'UNAVAILABLE', motion: 'STABLE', clockSkewMs: 0, observedAt: at, appInstanceId: 'invalid' }, pending: [], acknowledgedIdempotencyKeys: [], error: code, privacyNotice: privacyNotice(false) };
 }
 
-function validPersisted(value: FieldCompanionPersistedState, input: FieldCompanionBootstrap, now: Date): boolean {
+function validPersisted(value: FieldCompanionPersistedState, input: FieldCompanionBootstrap, now: Date, simulation: boolean): boolean {
   return value.schemaVersion === FIELD_COMPANION_SCHEMA_VERSION && value.privacyPolicyVersion === FIELD_COMPANION_PRIVACY_POLICY_VERSION
     && value.session.tenantId === input.tenantId && value.session.caseId === input.caseId && value.session.sessionId === input.sessionId
+    && value.session.simulation === simulation
+    && (value.session.consent === 'NOT_REQUESTED' ? value.session.consentOccurredAt === null : typeof value.session.consentOccurredAt === 'string' && Number.isFinite(Date.parse(value.session.consentOccurredAt)))
     && Number.isFinite(Date.parse(value.savedAt)) && now.getTime() - Date.parse(value.savedAt) <= FIELD_COMPANION_LOCAL_RETENTION_MS
     && value.pending.length <= FIELD_COMPANION_MAX_QUEUE;
 }
@@ -476,6 +497,7 @@ function validateReplyOptions(selected: readonly HumanContactReplyOption[], allo
 }
 
 function deliveryDisposition(operation: FieldCompanionQueuedOperation): FieldCompanionDeliveryReceipt['disposition'] {
+  if (operation.kind === 'CONSENT' && (operation.payload as FieldCompanionConsentOperation).decision === 'DECLINED') return 'HUMAN_REVIEW';
   if (operation.kind !== 'STRUCTURED_REPLY') return 'ACCEPTED';
   const reply = operation.payload as FieldCompanionStructuredReply;
   if (reply.selectedOptions.includes('HELP_REQUESTED') || reply.selectedOptions.includes('CANNOT_SPEAK')) return 'OPERATOR_TAKEOVER';
@@ -501,6 +523,6 @@ function uniqueOperations(items: readonly FieldCompanionQueuedOperation[]): read
   return items.filter((item) => seen.has(item.idempotencyKey) ? false : (seen.add(item.idempotencyKey), true));
 }
 
-function privacyNotice(): readonly string[] { return ['لا يتم عرض أو حفظ إحداثيات دقيقة في الواجهة العامة.', 'لا توجد كتابة حرة أو نص طبي في مسار الرد.', 'المحاكاة لا تعني اتصالًا حقيقيًا بجهة طوارئ.', 'يمكنك رؤية فئات البيانات المشتركة وسبب مشاركتها.']; }
+function privacyNotice(simulation: boolean): readonly string[] { return ['لا يتم عرض أو حفظ إحداثيات دقيقة في الواجهة العامة.', 'لا توجد كتابة حرة أو نص طبي في مسار الرد.', simulation ? 'المحاكاة لا تعني اتصالًا حقيقيًا بجهة طوارئ.' : 'استلام الخادم للبيانات لا يعني تأكيد إرسال جهة طوارئ أو وصولها.', 'يمكنك رؤية فئات البيانات المشتركة وسبب مشاركتها.']; }
 function validId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value); }
 function safeLabel(value: string): string { return value.replace(/[^\p{L}\p{N} ._-]/gu, '').slice(0, 80); }

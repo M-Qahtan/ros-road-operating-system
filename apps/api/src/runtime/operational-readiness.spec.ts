@@ -55,6 +55,20 @@ test('persistent readiness succeeds only when both live runtime probes succeed',
   });
 });
 
+test('active Evidence storage participates in readiness and fails closed', async () => {
+  assert.deepEqual(await evaluateReadiness({ ...probes(), objectStorage: async () => {} }), {
+    status: 'ready',
+    checks: { database: 'reachable', redis: 'reachable', objectStorage: 'reachable' }
+  });
+  assert.deepEqual(await evaluateReadiness({
+    ...probes(),
+    objectStorage: async () => { throw new Error('bucket unavailable'); }
+  }), {
+    status: 'not_ready',
+    checks: { database: 'reachable', redis: 'reachable', objectStorage: 'unreachable' }
+  });
+});
+
 test('Redis protocol failure fails readiness closed', async () => {
   assert.deepEqual(await evaluateReadiness(probes({ redis: false })), {
     status: 'not_ready',

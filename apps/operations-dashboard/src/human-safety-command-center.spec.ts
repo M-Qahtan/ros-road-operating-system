@@ -1,13 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { HumanSafetyCommandCenterController } from './human-safety-command-center.js';
-import { SimulatedHumanSafetyCommandCenterGateway, seedCommandCenterCases } from './human-safety-gateway.js';
+import {
+  CommandCenterRequestError,
+  SimulatedHumanSafetyCommandCenterGateway,
+  seedCommandCenterCases,
+  type CommandCenterActionInput,
+  type CommandCenterCaseView
+} from './human-safety-gateway.js';
 import { renderHumanSafetyCommandCenter } from './human-safety-render.js';
 
 class MutableClock {
   constructor(private value: Date) {}
   now = (): Date => new Date(this.value);
   advance(ms: number): void { this.value = new Date(this.value.getTime() + ms); }
+}
+
+class FailingActionGateway extends SimulatedHumanSafetyCommandCenterGateway {
+  override takeover(_caseId: string, _input: CommandCenterActionInput): Promise<CommandCenterCaseView> {
+    return Promise.reject(new CommandCenterRequestError({
+      status: 503,
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'الخدمة غير متاحة ولم يتم تأكيد نتيجة الإجراء. حدّث البيانات قبل المحاولة مجددًا.',
+      traceId: 'trace-outage-001',
+      outcomeAmbiguous: true
+    }));
+  }
 }
 
 test('urgent cases remain visible and ordered first regardless of operator filter', async () => {
@@ -86,4 +104,24 @@ test('Arabic command-center rendering exposes urgency privacy explainability and
   assert.match(html, /توصية فقط/);
   assert.match(html, /سجل التدقيق غير القابل للتعديل/);
   assert.doesNotMatch(html, /24\.\d+,\s*46\.\d+/);
+});
+
+test('ambiguous remote action failure marks Human Safety data stale and disables retry', async () => {
+  const now = new Date('2026-07-31T04:00:00.000Z');
+  const controller = new HumanSafetyCommandCenterController(
+    new FailingActionGateway(seedCommandCenterCases(now)),
+    { actorId: 'operator-9', roles: ['OPERATOR'] },
+    () => now
+  );
+  await controller.load();
+  await controller.select('case-ros-eye-001');
+  await assert.rejects(
+    () => controller.takeover('استحواذ بشري بسبب عدم الاستجابة', 'idem-outage-001', 'trace-outage-001'),
+    /لم يتم تأكيد نتيجة الإجراء/
+  );
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.canTakeover(), false);
+  const html = renderHumanSafetyCommandCenter(controller.state, controller, now);
+  assert.match(html, /تم تعطيل الإجراءات الحرجة/);
+  assert.match(html, /disabled/);
 });

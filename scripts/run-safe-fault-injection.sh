@@ -15,10 +15,10 @@ redis_outage=false
 redis_readiness_failed_closed=false
 redis_recovery=false
 postgres_outage=false
-postgres_readiness_failed_closed=false
+postgres_worker_fail_stop=false
 postgres_recovery=false
 object_storage_outage=false
-object_storage_core_readiness_preserved=false
+object_storage_readiness_failed_closed=false
 object_storage_recovery=false
 api_liveness_preserved=false
 
@@ -34,10 +34,10 @@ write_evidence() {
     "redisReadinessFailedClosed": $redis_readiness_failed_closed,
     "redisRecoveryVerified": $redis_recovery,
     "postgresOutageExposed": $postgres_outage,
-    "postgresReadinessFailedClosed": $postgres_readiness_failed_closed,
+    "postgresWorkerFailStopObserved": $postgres_worker_fail_stop,
     "postgresRecoveryVerified": $postgres_recovery,
     "objectStorageOutageExposed": $object_storage_outage,
-    "inactiveEvidenceStorageDoesNotPoisonCoreReadiness": $object_storage_core_readiness_preserved,
+    "objectStorageReadinessFailedClosed": $object_storage_readiness_failed_closed,
     "objectStorageRecoveryVerified": $object_storage_recovery,
     "objectStorageGate": "Object Storage Integration",
     "apiLivenessPreserved": $api_liveness_preserved
@@ -93,6 +93,27 @@ wait_service_healthy() {
   return 1
 }
 
+container_restart_count() {
+  local service="$1"
+  local container_id
+  container_id="$(docker compose -f "$COMPOSE_FILE" ps -q "$service")"
+  [[ -n "$container_id" ]] || return 1
+  docker inspect --format '{{.RestartCount}}' "$container_id"
+}
+
+wait_service_restarted() {
+  local service="$1"
+  local previous_count="$2"
+  local restart_count
+  for _ in $(seq 1 30); do
+    restart_count="$(container_restart_count "$service" || true)"
+    if [[ "$restart_count" =~ ^[0-9]+$ ]] && (( restart_count > previous_count )); then return 0; fi
+    sleep 1
+  done
+  echo "service ${service} did not restart after required-worker failure" >&2
+  return 1
+}
+
 # Baseline: active runtime dependencies and the isolated storage service are healthy.
 wait_http_status health 200
 wait_http_status ready 200
@@ -113,27 +134,31 @@ wait_service_healthy redis
 wait_http_status ready 200
 redis_recovery=true
 
-# PostgreSQL outage: the persistent API must become not-ready without losing liveness.
+# PostgreSQL loss makes required workers fail-stop the process. Compose models
+# the service supervisor: the process must restart, stay non-ready while the
+# database is unavailable, and recover only after PostgreSQL is healthy.
+api_restart_before="$(container_restart_count api)"
 docker compose -f "$COMPOSE_FILE" stop postgres >/dev/null
 wait_service_running postgres false
 postgres_outage=true
-wait_http_status health 200
-wait_http_status ready 503
-postgres_readiness_failed_closed=true
+wait_service_restarted api "$api_restart_before"
+postgres_worker_fail_stop=true
 
 docker compose -f "$COMPOSE_FILE" start postgres >/dev/null
 wait_service_healthy postgres
+wait_service_healthy api
+wait_http_status health 200
 wait_http_status ready 200
 postgres_recovery=true
 
-# Object Storage is not an active dependency of main.ts yet. Its full
-# PostgreSQL-backed EvidenceService path is enforced by Object Storage Integration.
+# Object storage is an active Evidence runtime dependency. Its loss must leave
+# liveness available while readiness fails closed, then recover explicitly.
 docker compose -f "$COMPOSE_FILE" stop minio >/dev/null
 wait_service_running minio false
 object_storage_outage=true
 wait_http_status health 200
-wait_http_status ready 200
-object_storage_core_readiness_preserved=true
+wait_http_status ready 503
+object_storage_readiness_failed_closed=true
 
 docker compose -f "$COMPOSE_FILE" start minio >/dev/null
 wait_service_healthy minio

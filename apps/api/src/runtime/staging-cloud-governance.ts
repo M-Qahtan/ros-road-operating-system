@@ -412,7 +412,10 @@ async function digestFile(path: string): Promise<string> {
 
 export async function verifyTerraformPlanFile(
   terraformPlanPath: string,
-  options: { readonly terraformExecutable?: string } = {}
+  options: {
+    readonly terraformExecutable?: string;
+    readonly terraformArgumentsPrefix?: readonly string[];
+  } = {}
 ): Promise<VerifiedTerraformPlan> {
   const planPath = resolve(text(terraformPlanPath, 'terraformPlanPath', 2048));
   const planInfo = await lstat(planPath);
@@ -421,12 +424,16 @@ export async function verifyTerraformPlanFile(
   }
 
   const terraformExecutable = options.terraformExecutable ?? 'terraform';
-  if (terraformExecutable !== 'terraform' && process.env.NODE_ENV !== 'test') {
+  const argumentPrefix = options.terraformArgumentsPrefix ?? [];
+  if ((terraformExecutable !== 'terraform' || argumentPrefix.length > 0) && process.env.NODE_ENV !== 'test') {
     throw new Error('alternate Terraform executable is allowed only in test mode');
+  }
+  if (argumentPrefix.length > 4 || argumentPrefix.some((value) => typeof value !== 'string' || value.length === 0 || value.length > 2048)) {
+    throw new Error('Terraform test argument prefix is invalid');
   }
 
   const beforeSha256 = await digestFile(planPath);
-  const { stdout } = await execFileAsync(terraformExecutable, ['show', '-json', planPath], {
+  const { stdout } = await execFileAsync(terraformExecutable, [...argumentPrefix, 'show', '-json', planPath], {
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: 16 * 1024 * 1024,

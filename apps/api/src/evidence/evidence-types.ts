@@ -42,6 +42,7 @@ export interface EvidenceAuditContext {
 export interface EvidenceRepository {
   create(record: EvidenceRecord, audit: EvidenceAuditContext): Promise<void>;
   findById(id: string): Promise<EvidenceRecord | undefined>;
+  appendAccessAudit(record: EvidenceRecord, audit: EvidenceAuditContext): Promise<void>;
   markPreserved(
     id: string,
     actualSizeBytes: number,

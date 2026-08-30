@@ -6,6 +6,7 @@ import {
 import {
   IntegrationPrincipalBinding,
   IntegrationPrincipalPolicy,
+  IntegrationPrincipalRole,
   IntegrationPurpose
 } from '../integrations/integration-principal.js';
 import { HttpsJwksDocumentFetcher, JwksHttpFetchPort } from '../integrations/jwks-https-fetcher.js';
@@ -21,6 +22,9 @@ const PURPOSES = new Set<IntegrationPurpose>([
   'ROUTE_COORDINATION'
 ]);
 const MAX_BINDINGS = 64;
+const PRINCIPAL_ROLES = new Set<IntegrationPrincipalRole>([
+  'FIELD_USER', 'OPERATOR', 'SUPERVISOR', 'AUDITOR', 'INTEGRATION_SERVICE'
+]);
 
 export interface RuntimeActorResolverDependencies { readonly jwksFetch?: JwksHttpFetchPort; }
 
@@ -61,10 +65,27 @@ function principalBindings(environment: NodeJS.ProcessEnv): readonly Integration
     const tenantId = requiredBindingString(value, 'tenantId');
     const purpose = requiredBindingString(value, 'purpose') as IntegrationPurpose;
     if (!PURPOSES.has(purpose)) throw new Error('OIDC_ALLOWED_BINDINGS contains an unsupported purpose');
+    const configuredRoles = value.roles;
+    let roles: readonly IntegrationPrincipalRole[] | undefined;
+    if (configuredRoles !== undefined) {
+      if (!Array.isArray(configuredRoles) || configuredRoles.length === 0) {
+        throw new Error('OIDC_ALLOWED_BINDINGS roles must be a non-empty array when supplied');
+      }
+      const parsed = configuredRoles.map((role) => {
+        if (typeof role !== 'string' || !PRINCIPAL_ROLES.has(role as IntegrationPrincipalRole)) {
+          throw new Error('OIDC_ALLOWED_BINDINGS contains an unsupported role');
+        }
+        return role as IntegrationPrincipalRole;
+      });
+      if (new Set(parsed).size !== parsed.length) {
+        throw new Error('OIDC_ALLOWED_BINDINGS roles must be unique');
+      }
+      roles = Object.freeze(parsed);
+    }
     const identity = JSON.stringify([clientId, tenantId, purpose]);
     if (seen.has(identity)) throw new Error('OIDC_ALLOWED_BINDINGS contains a duplicate binding');
     seen.add(identity);
-    return Object.freeze({ clientId, tenantId, purpose });
+    return Object.freeze({ clientId, tenantId, purpose, ...(roles === undefined ? {} : { roles }) });
   });
 }
 
