@@ -62,6 +62,7 @@ services:
         && mc mb --ignore-existing "ros-local/$$OBJECT_STORAGE_BUCKET"
 
   api:
+    restart: unless-stopped
     build:
       context: ../..
       dockerfile: infrastructure/docker/api.Dockerfile

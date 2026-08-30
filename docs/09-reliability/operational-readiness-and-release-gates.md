@@ -8,7 +8,7 @@ A release candidate is acceptable only when all mandatory gates complete with th
 
 1. Repository verification, build, lint, typecheck, and automated tests.
 2. PostgreSQL/PostGIS migrations, persistence invariants, backup, and clean restore within the engineering RTO.
-3. Isolated staging readiness and controlled Redis/object-storage fault injection with fail-closed readiness and verified recovery.
+3. Isolated staging readiness, controlled Redis/object-storage degradation, and PostgreSQL required-worker fail-stop with supervised restart and verified recovery.
 4. Deterministic Riyadh vertical-slice E2E evidence.
 5. Riyadh failure-mode safety evidence covering the complete hazard set.
 6. Security dependency audit, tracked-file secret scanning, immutable action pins, and CycloneDX SBOM evidence.
@@ -42,7 +42,7 @@ Release is blocked when:
 - any upstream job result is not exactly `success`;
 - restore verification fails or exceeds its approved engineering RTO;
 - readiness remains healthy during a dependency outage that should make the service unready;
-- liveness is lost during a controlled dependency fault without an approved architecture reason;
+- liveness is lost during a controlled dependency fault outside the documented PostgreSQL required-worker fail-stop and supervised-restart policy;
 - recovery cannot be demonstrated;
 - evidence is absent, empty, malformed, stale, or associated with another commit;
 - the external archive receipt is absent, points to another source run/SHA, lacks a version ID, or fails KMS/checksum/Object-Lock/retention verification;

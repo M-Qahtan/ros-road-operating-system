@@ -236,7 +236,7 @@ jobs:
           }
           EOF
           test -s artifacts/reliability/fault-injection.json
-          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('artifacts/reliability/fault-injection.json','utf8'));const flags=Object.entries(p.safeDegradation??{}).filter(([key])=>key!=='objectStorageGate');if(p.status!=='passed'||p.testedMergeSha!==process.env.TESTED_MERGE_SHA||flags.length!==10||flags.some(([,value])=>value!==true))process.exit(1);"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('artifacts/reliability/fault-injection.json','utf8'));const flags=Object.values(p.safeDegradation??{}).filter(value=>typeof value==='boolean');if(p.status!=='passed'||p.testedMergeSha!==process.env.TESTED_MERGE_SHA||flags.length!==10||flags.some(value=>value!==true))process.exit(1);"
           node scripts/validate-ci-evidence.mjs operational-staging-evidence.json staging-smoke
       - name: Upload staging fault evidence
         if: always()
