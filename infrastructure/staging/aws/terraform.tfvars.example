@@ -21,6 +21,10 @@ api_image_uri       = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/ros-runti
 worker_image_uri    = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/ros-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 tls_certificate_arn = "arn:aws:acm:eu-central-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
 
+# Keep empty until separately deployed browser clients have approved internal
+# HTTPS origins. Native clients without an Origin header are unaffected.
+cors_allowed_origins = []
+
 fargate_platform_version = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"
 postgres_engine_version  = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"
 redis_engine_version     = "REPLACE_WITH_APPROVED_IN_REGION_VERSION"

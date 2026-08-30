@@ -6,6 +6,19 @@ import { createEvidenceServiceForRuntime, EvidenceRuntimeCompositionError } from
 import { MalwareScanner } from './evidence-types.js';
 import { ObjectStorageCredentialProviderPort } from './object-storage-runtime.js';
 
+function syntheticStaging(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    NODE_ENV: 'production',
+    ROS_DEPLOYMENT_PROFILE: 'synthetic-staging',
+    ROS_CLOUD_REGION: 'eu-central-1',
+    ROS_CLOUD_JURISDICTION: 'Germany / European Union',
+    ROS_PILOT_GEOGRAPHY: 'Riyadh, Saudi Arabia',
+    ROS_STAGING_DATA_CLASSIFICATION: 'SYNTHETIC_NON_SENSITIVE_ONLY',
+    ROS_REAL_INCIDENT_DATA_ALLOWED: 'false',
+    ...overrides
+  };
+}
+
 class UnusedPool implements PostgresPool {
   async connect(): Promise<PostgresClient> {
     throw new Error('Evidence runtime composition must not connect during construction');
@@ -51,6 +64,30 @@ test('production EvidenceService can be composed only when a real scanner seam i
     credentialProvider: credentials
   });
   assert.ok(service);
+});
+
+test('bounded synthetic staging may compose only the quarantine-all scanner profile', () => {
+  const service = createEvidenceServiceForRuntime(syntheticStaging({
+    ...productionEnvironment,
+    ROS_MALWARE_SCANNER_PROFILE: 'quarantine-all'
+  }), {
+    postgres: new UnusedPool(),
+    roadEvents: new MemoryRoadEventRepository(),
+    credentialProvider: credentials
+  });
+  assert.ok(service);
+
+  assert.throws(
+    () => createEvidenceServiceForRuntime(syntheticStaging({
+      ...productionEnvironment,
+      ROS_MALWARE_SCANNER_PROFILE: 'trust-all'
+    }), {
+      postgres: new UnusedPool(),
+      roadEvents: new MemoryRoadEventRepository(),
+      credentialProvider: credentials
+    }),
+    EvidenceRuntimeCompositionError
+  );
 });
 
 test('non-production composition may use the deterministic local scanner without opening dependencies', () => {

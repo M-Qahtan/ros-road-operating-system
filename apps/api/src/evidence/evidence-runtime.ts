@@ -9,6 +9,8 @@ import {
 import { PostgresEvidenceRepository } from './postgres-evidence-repository.js';
 import { SafeLocalMalwareScanner } from './safe-local-malware-scanner.js';
 import { ScopedRoadEventEvidenceAuthorization } from './scoped-road-event-evidence-authorization.js';
+import { FailClosedStagingMalwareScanner } from './fail-closed-staging-malware-scanner.js';
+import { syntheticStagingEnabled } from '../runtime/synthetic-staging-profile.js';
 
 export interface EvidenceRuntimeDependencies {
   readonly postgres: PostgresPool;
@@ -35,7 +37,14 @@ export function createEvidenceServiceForRuntime(
   dependencies: EvidenceRuntimeDependencies
 ): EvidenceService {
   const production = (environment.NODE_ENV ?? 'development').trim().toLowerCase() === 'production';
-  const scanner = dependencies.malwareScanner ?? (production ? undefined : new SafeLocalMalwareScanner());
+  const syntheticStaging = syntheticStagingEnabled(environment);
+  const quarantineAll = production && syntheticStaging &&
+    environment.ROS_MALWARE_SCANNER_PROFILE?.trim() === 'quarantine-all';
+  const scanner = dependencies.malwareScanner ?? (
+    production
+      ? quarantineAll ? new FailClosedStagingMalwareScanner() : undefined
+      : new SafeLocalMalwareScanner()
+  );
   if (scanner === undefined) {
     throw new EvidenceRuntimeCompositionError(
       'Production EvidenceService requires an injected malware scanner; SafeLocalMalwareScanner is simulation-only'

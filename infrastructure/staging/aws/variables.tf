@@ -108,6 +108,30 @@ variable "container_port" {
   }
 }
 
+variable "cors_allowed_origins" {
+  description = "Exact approved lowercase canonical HTTPS DNS origins for separately deployed staging clients. Empty denies all browser origins."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = (
+      length(var.cors_allowed_origins) <= 16 &&
+      length(toset(var.cors_allowed_origins)) == length(var.cors_allowed_origins) &&
+      alltrue([
+        for origin in var.cors_allowed_origins :
+        origin == lower(origin) &&
+        can(regex("^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?::[1-9][0-9]{0,4})?$", origin)) &&
+        try(
+          tonumber(regexall(":([0-9]+)$", origin)[0][0]) <= 65535 &&
+          tonumber(regexall(":([0-9]+)$", origin)[0][0]) != 443,
+          true
+        )
+      ])
+    )
+    error_message = "cors_allowed_origins must contain at most 16 unique lowercase canonical HTTPS DNS origins without paths, credentials, query strings, fragments, default port 443, or ports above 65535."
+  }
+}
+
 variable "api_desired_count" {
   type    = number
   default = 2
@@ -143,8 +167,15 @@ variable "fargate_platform_version" {
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.fargate_platform_version))
-    error_message = "fargate_platform_version must be an exact semantic platform version such as 1.4.0; LATEST is not allowed."
+    condition = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.fargate_platform_version)) && try(
+      tonumber(split(".", var.fargate_platform_version)[0]) > 1 ||
+      (
+        tonumber(split(".", var.fargate_platform_version)[0]) == 1 &&
+        tonumber(split(".", var.fargate_platform_version)[1]) >= 4
+      ),
+      false
+    )
+    error_message = "fargate_platform_version must be an exact version >=1.4.0 so ECS task metadata v4 is available; LATEST is not allowed."
   }
 }
 

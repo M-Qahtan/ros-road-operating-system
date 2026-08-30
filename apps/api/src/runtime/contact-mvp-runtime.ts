@@ -5,6 +5,7 @@ import {
   ContactRuntimeRepositoryPort,
   RuntimeIdFactoryPort
 } from '../ros-eye/contact-orchestration.js';
+import { syntheticStagingEnabled } from './synthetic-staging-profile.js';
 
 const DEFAULT_IDLE_POLL_MS = 250;
 const DEFAULT_BATCH_SIZE = 25;
@@ -77,7 +78,9 @@ class StableContactIdFactory implements RuntimeIdFactoryPort {
  * consumer of the durable prompt/session state.
  */
 class StagingInAppContactChannel implements ContactChannelPort {
-  async send(): Promise<'SENT'> { return 'SENT'; }
+  async send(input: Parameters<ContactChannelPort['send']>[0]): Promise<'SENT' | 'UNAVAILABLE'> {
+    return input.channel === 'IN_APP' ? 'SENT' : 'UNAVAILABLE';
+  }
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -132,7 +135,10 @@ export function createContactMvpRuntime(
   dependencies: ContactMvpRuntimeDependencies = {}
 ): ContactMvpRuntime {
   const production = (environment.NODE_ENV ?? 'development').trim().toLowerCase() === 'production';
-  if (production && dependencies.channel === undefined) {
+  const syntheticStaging = syntheticStagingEnabled(environment);
+  const stagingInAppChannel = production && syntheticStaging &&
+    environment.ROS_CONTACT_CHANNEL_PROFILE?.trim() === 'in-app-only';
+  if (production && dependencies.channel === undefined && !stagingInAppChannel) {
     throw new ContactMvpRuntimeConfigurationError(
       'Production contact runtime requires an injected approved channel provider'
     );
