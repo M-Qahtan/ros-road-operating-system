@@ -173,6 +173,9 @@ jobs:
           minio="$(openssl rand -hex 24)"
           object="$(openssl rand -hex 24)"
           jwt="$(openssl rand -hex 32)"
+          for value in "$pg" "$redis" "$minio" "$object" "$jwt"; do
+            echo "::add-mask::${value}"
+          done
           {
             echo "POSTGRES_USER=ros"
             echo "POSTGRES_PASSWORD=${pg}"
@@ -187,6 +190,12 @@ jobs:
             echo "OBJECT_STORAGE_SECRET_KEY=${object}"
             echo "OBJECT_STORAGE_BUCKET=ros-evidence"
             echo "JWT_SECRET=${jwt}"
+            echo "ROS_OUTBOX_WORKER_ID=ci-outbox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "ROS_CONTACT_WORKER_ID=ci-contact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "OIDC_ISSUER=https://identity.invalid/ros-ci"
+            echo "OIDC_JWKS_URL=https://identity.invalid/ros-ci/.well-known/jwks.json"
+            echo "OIDC_AUDIENCE=ros-api-ci"
+            echo 'OIDC_ALLOWED_BINDINGS=[{"clientId":"ros-ci-client","tenantId":"11111111-1111-4111-8111-111111111111","purpose":"INCIDENT_TRIAGE","roles":["OPERATOR"]}]'
           } >> "$GITHUB_ENV"
       - name: Validate and start isolated staging stack
         run: |
@@ -207,6 +216,7 @@ jobs:
         if: always()
         shell: bash
         run: |
+          mkdir -p artifacts/reliability
           docker compose -f infrastructure/docker/docker-compose.yml ps > artifacts/reliability/staging-compose-ps.log 2>&1 || true
           docker compose -f infrastructure/docker/docker-compose.yml logs --no-color > artifacts/reliability/staging-compose.log 2>&1 || true
           cat > operational-staging-evidence.json <<EOF
@@ -226,7 +236,7 @@ jobs:
           }
           EOF
           test -s artifacts/reliability/fault-injection.json
-          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('artifacts/reliability/fault-injection.json','utf8'));if(p.status!=='passed'||p.testedMergeSha!==process.env.TESTED_MERGE_SHA)process.exit(1);"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('artifacts/reliability/fault-injection.json','utf8'));const flags=Object.entries(p.safeDegradation??{}).filter(([key])=>key!=='objectStorageGate');if(p.status!=='passed'||p.testedMergeSha!==process.env.TESTED_MERGE_SHA||flags.length!==10||flags.some(([,value])=>value!==true))process.exit(1);"
           node scripts/validate-ci-evidence.mjs operational-staging-evidence.json staging-smoke
       - name: Upload staging fault evidence
         if: always()

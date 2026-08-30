@@ -18,7 +18,7 @@ postgres_outage=false
 postgres_readiness_failed_closed=false
 postgres_recovery=false
 object_storage_outage=false
-object_storage_core_readiness_preserved=false
+object_storage_readiness_failed_closed=false
 object_storage_recovery=false
 api_liveness_preserved=false
 
@@ -37,7 +37,7 @@ write_evidence() {
     "postgresReadinessFailedClosed": $postgres_readiness_failed_closed,
     "postgresRecoveryVerified": $postgres_recovery,
     "objectStorageOutageExposed": $object_storage_outage,
-    "inactiveEvidenceStorageDoesNotPoisonCoreReadiness": $object_storage_core_readiness_preserved,
+    "objectStorageReadinessFailedClosed": $object_storage_readiness_failed_closed,
     "objectStorageRecoveryVerified": $object_storage_recovery,
     "objectStorageGate": "Object Storage Integration",
     "apiLivenessPreserved": $api_liveness_preserved
@@ -126,14 +126,14 @@ wait_service_healthy postgres
 wait_http_status ready 200
 postgres_recovery=true
 
-# Object Storage is not an active dependency of main.ts yet. Its full
-# PostgreSQL-backed EvidenceService path is enforced by Object Storage Integration.
+# Object storage is an active Evidence runtime dependency. Its loss must leave
+# liveness available while readiness fails closed, then recover explicitly.
 docker compose -f "$COMPOSE_FILE" stop minio >/dev/null
 wait_service_running minio false
 object_storage_outage=true
 wait_http_status health 200
-wait_http_status ready 200
-object_storage_core_readiness_preserved=true
+wait_http_status ready 503
+object_storage_readiness_failed_closed=true
 
 docker compose -f "$COMPOSE_FILE" start minio >/dev/null
 wait_service_healthy minio
