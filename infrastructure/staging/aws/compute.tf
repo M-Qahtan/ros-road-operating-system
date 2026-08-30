@@ -83,6 +83,17 @@ locals {
     { name = "NODE_ENV", value = "production" },
     { name = "ROS_RUNTIME_PROFILE", value = "persistent" },
     { name = "ROS_AUTH_PROFILE", value = "oidc" },
+    { name = "ROS_DEPLOYMENT_PROFILE", value = "synthetic-staging" },
+    { name = "ROS_CLOUD_REGION", value = var.aws_region },
+    { name = "ROS_CLOUD_JURISDICTION", value = var.cloud_jurisdiction },
+    { name = "ROS_PILOT_GEOGRAPHY", value = var.pilot_geography },
+    { name = "ROS_STAGING_DATA_CLASSIFICATION", value = var.staging_data_classification },
+    { name = "ROS_REAL_INCIDENT_DATA_ALLOWED", value = tostring(var.real_incident_data_allowed) },
+    { name = "ROS_CONTACT_CHANNEL_PROFILE", value = "in-app-only" },
+    { name = "ROS_MALWARE_SCANNER_PROFILE", value = "quarantine-all" },
+    { name = "ROS_WORKER_ID_SOURCE", value = "ecs-task-metadata-v4" },
+    { name = "ROS_WORKER_ID_PREFIX", value = var.name_prefix },
+    { name = "ROS_CORS_ALLOWED_ORIGINS", value = join(",", var.cors_allowed_origins) },
     { name = "PORT", value = tostring(var.container_port) },
     { name = "OIDC_ISSUER", value = var.oidc_issuer },
     { name = "OIDC_JWKS_URL", value = var.oidc_jwks_url },
@@ -184,6 +195,8 @@ resource "aws_ecs_task_definition" "worker" {
       environment = [
         { name = "NODE_ENV", value = "production" },
         { name = "ROS_RUNTIME_PROFILE", value = "persistent" },
+        { name = "ROS_WORKER_ID_SOURCE", value = "ecs-task-metadata-v4" },
+        { name = "ROS_WORKER_ID_PREFIX", value = var.name_prefix },
         { name = "REDIS_CONNECT_TIMEOUT_MS", value = "2000" },
         { name = "REDIS_MAX_RECONNECT_ATTEMPTS", value = "5" }
       ]

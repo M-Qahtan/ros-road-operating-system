@@ -27,8 +27,10 @@ import {
 import { bootstrapRoadEventRuntime } from './runtime/runtime-bootstrap.js';
 import { validateRuntimeEnvironment } from './runtime/operational-readiness.js';
 import { structuredLog, withTraceBoundary } from './runtime/telemetry.js';
+import { resolveWorkerRuntimeEnvironment } from './runtime/worker-runtime-identity.js';
 
 validateRuntimeEnvironment(process.env);
+const workerEnvironment = await resolveWorkerRuntimeEnvironment(process.env, ['outbox', 'contact']);
 const port = parsePort(process.env.PORT);
 const actorResolver = createRuntimeActorResolver(process.env);
 const corsPolicy = createCorsPolicy(process.env);
@@ -37,10 +39,10 @@ const persistentSql = runtime.postgres === null ? null : new PostgresTransaction
 const deviceRegistry = persistentSql === null ? null : new PostgresFieldCompanionDeviceRegistry(persistentSql);
 const handleRoadEvent = createRoadEventHttpHandler(runtime.application, actorResolver, deviceRegistry);
 const contactRepository = persistentSql === null ? null : new PostgresContactRuntimeRepository(persistentSql);
-const contactRuntime = contactRepository === null ? null : createContactMvpRuntime(contactRepository, process.env);
+const contactRuntime = contactRepository === null ? null : createContactMvpRuntime(contactRepository, workerEnvironment);
 const roadEventOutboxRuntime = runtime.postgres === null || runtime.redis === null
   ? null
-  : createOutboxWorkerRuntime(runtime.postgres, runtime.redis, process.env);
+  : createOutboxWorkerRuntime(runtime.postgres, runtime.redis, workerEnvironment);
 const handleHumanSafety = createHumanSafetyHttpHandler(
   runtime.application,
   persistentSql === null || contactRepository === null

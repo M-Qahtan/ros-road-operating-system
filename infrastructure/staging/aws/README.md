@@ -106,6 +106,32 @@ The task runs with `NODE_ENV=production`, `ROS_RUNTIME_PROFILE=persistent` and `
 
 OIDC issuer/JWKS/audience/bindings are mandatory. The module deliberately adds no unrestricted Internet egress. `identity_private_cidr` must be RFC1918 and its connectivity must have an explicit human review reference. If the approved identity provider cannot be reached through that private path, the real plan is **NO-GO** until a separately governed connectivity design is approved.
 
+## Synthetic-staging runtime composition
+
+The Frankfurt task remains production-hardened at the transport, identity and
+storage boundaries, while two deliberately limited adapters keep this
+synthetic-only slice bootable without implying production partner readiness:
+
+- `ROS_DEPLOYMENT_PROFILE=synthetic-staging` is accepted only when region,
+  jurisdiction, pilot geography, data classification and the real-data ban all
+  match the immutable Frankfurt governance values;
+- contact delivery is `in-app-only`: it records the durable prompt/session for
+  the authenticated Field Companion and sends no SMS, call, emergency dispatch
+  or external partner message;
+- malware handling is `quarantine-all`: no object is declared clean or made
+  downloadable until an approved production scanner is injected;
+- API and standalone outbox workers derive role-specific identities from the
+  ECS v4 task metadata `TaskARN`. This avoids a shared static worker ID when
+  `desired_count` is greater than one. Metadata resolution is restricted to the
+  ECS link-local endpoint and fails closed;
+- browser CORS origins default to an empty list and must be supplied as exact,
+  separately approved lowercase canonical HTTPS DNS origins when a browser client is deployed;
+  omit the default `:443` port.
+
+These adapters are staging constraints, not substitutes for a real contact
+provider or malware scanner. A normal production process with no injected
+approved providers still refuses to compose.
+
 ## Sensitive-data handling
 
 Never commit:
@@ -150,5 +176,6 @@ Before any real plan can be considered reviewable, freeze and independently revi
 12. on-call and rollback owners plus proof that the human on-call delivery path is operational;
 13. VPC Flow Logs plus evidence/audit retention >=365 days, CloudTrail S3 data events and log-file validation represented in the exact plan;
 14. zero unresolved P0/P1 findings for the staging slice.
+15. before any promotion beyond synthetic staging, approved contact-channel and malware-scanner adapters with their trust, timeout, idempotency, quarantine and outage evidence.
 
 A successful static validation is **not** a real Terraform plan, **not** deployment readiness, **not** Saudi data-residency evidence and **not** production authorization.
