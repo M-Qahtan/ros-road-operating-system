@@ -433,12 +433,23 @@ export async function verifyTerraformPlanFile(
   }
 
   const beforeSha256 = await digestFile(planPath);
-  const { stdout } = await execFileAsync(terraformExecutable, [...argumentPrefix, 'show', '-json', planPath], {
-    encoding: 'utf8',
-    timeout: 120_000,
-    maxBuffer: 16 * 1024 * 1024,
-    windowsHide: true
-  });
+  let stdout: string;
+  try {
+    const result = await execFileAsync(terraformExecutable, [...argumentPrefix, 'show', '-json', planPath], {
+      encoding: 'utf8',
+      timeout: 120_000,
+      maxBuffer: 16 * 1024 * 1024,
+      windowsHide: true
+    });
+    stdout = result.stdout;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('Terraform executable is unavailable');
+    }
+    throw new Error(
+      'terraform show -json failed; captured command output was suppressed to protect sensitive plan/input data'
+    );
+  }
   const afterSha256 = await digestFile(planPath);
   if (beforeSha256 !== afterSha256) {
     throw new Error('Terraform plan changed while it was being analyzed');

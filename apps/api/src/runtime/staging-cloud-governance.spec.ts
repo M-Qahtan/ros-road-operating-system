@@ -269,6 +269,54 @@ test('Terraform plan changing while terraform show runs is rejected', async () =
   });
 });
 
+test('terraform show failure suppresses captured output and plan paths', async () => {
+  const rawPackage = packageFixture();
+  await withFixtureRoot(rawPackage, terraformJson(), async ({ root, planPath }) => {
+    const failingTerraform = join(root, 'terraform-failing-fixture.mjs');
+    const sensitiveCanary = 'ROS_TERRAFORM_SENSITIVE_CANARY';
+    await writeFile(
+      failingTerraform,
+      `process.stdout.write(${JSON.stringify(sensitiveCanary + ' stdout')});process.stderr.write(${JSON.stringify(sensitiveCanary + ' stderr')});process.exit(7);\n`,
+      'utf8'
+    );
+
+    await assert.rejects(
+      verifyTerraformPlanFile(planPath, {
+        terraformExecutable: process.execPath,
+        terraformArgumentsPrefix: [failingTerraform]
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(
+          error.message,
+          'terraform show -json failed; captured command output was suppressed to protect sensitive plan/input data'
+        );
+        assert.equal(error.message.includes(sensitiveCanary), false);
+        assert.equal(error.message.includes(planPath), false);
+        return true;
+      }
+    );
+  });
+});
+
+test('missing Terraform executable fails closed without exposing plan paths', async () => {
+  const rawPackage = packageFixture();
+  await withFixtureRoot(rawPackage, terraformJson(), async ({ root, planPath }) => {
+    const missingTerraform = join(root, 'terraform-does-not-exist');
+
+    await assert.rejects(
+      verifyTerraformPlanFile(planPath, { terraformExecutable: missingTerraform }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, 'Terraform executable is unavailable');
+        assert.equal(error.message.includes(planPath), false);
+        assert.equal(error.message.includes(missingTerraform), false);
+        return true;
+      }
+    );
+  });
+});
+
 test('wrong trusted candidate head is rejected before review', async () => {
   const rawPackage = packageFixture();
   await assert.rejects(
