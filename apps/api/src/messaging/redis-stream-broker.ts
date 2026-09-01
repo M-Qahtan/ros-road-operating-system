@@ -1,7 +1,12 @@
 import { EventBroker, OutboxMessage } from './outbox-types.js';
 
 export interface RedisStreamClient {
-  xadd(stream: string, id: '*', fields: Readonly<Record<string, string>>): Promise<string>;
+  xadd(
+    stream: string,
+    id: '*',
+    fields: Readonly<Record<string, string>>,
+    signal?: AbortSignal
+  ): Promise<string>;
 }
 
 function requireStreamName(value: string): string {
@@ -21,7 +26,7 @@ export class RedisStreamEventBroker implements EventBroker {
     this.stream = requireStreamName(stream);
   }
 
-  async publish(message: OutboxMessage): Promise<void> {
+  async publish(message: OutboxMessage, signal?: AbortSignal): Promise<void> {
     if (message.aggregateType === 'RoadEvent' && (message.tenantId === undefined || message.purpose === undefined)) {
       throw new Error(`RoadEvent outbox message ${message.id} is missing trusted access scope`);
     }
@@ -41,6 +46,6 @@ export class RedisStreamEventBroker implements EventBroker {
     if (message.traceId !== undefined) fields.traceId = message.traceId;
     if (message.tenantId !== undefined) fields.tenantId = message.tenantId;
     if (message.purpose !== undefined) fields.purpose = message.purpose;
-    await this.client.xadd(this.stream, '*', fields);
+    await this.client.xadd(this.stream, '*', fields, signal);
   }
 }

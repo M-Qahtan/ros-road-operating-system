@@ -10,6 +10,7 @@ export interface OutboxWorkerOptions {
   readonly workerId: string;
   readonly batchSize: number;
   readonly lockDurationMs: number;
+  readonly publishTimeoutMs: number;
   readonly maximumAttempts: number;
   readonly baseRetryDelayMs: number;
   readonly maximumRetryDelayMs: number;
@@ -33,6 +34,12 @@ function normalizeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.trim().replace(/\s+/g, ' ');
   return (normalized.length === 0 ? 'unknown delivery failure' : normalized).slice(0, 1_000);
+}
+
+function throwIfWorkerAborted(signal?: AbortSignal): void {
+  if (signal?.aborted === true) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('Outbox worker aborted');
+  }
 }
 
 export function calculateRetryDelayMs(
@@ -68,35 +75,51 @@ export class OutboxWorker {
     }
     requirePositiveInteger(options.batchSize, 'batchSize');
     requirePositiveInteger(options.lockDurationMs, 'lockDurationMs');
+    requirePositiveInteger(options.publishTimeoutMs, 'publishTimeoutMs');
     requirePositiveInteger(options.maximumAttempts, 'maximumAttempts');
     requirePositiveInteger(options.baseRetryDelayMs, 'baseRetryDelayMs');
     requirePositiveInteger(options.maximumRetryDelayMs, 'maximumRetryDelayMs');
     if (options.baseRetryDelayMs > options.maximumRetryDelayMs) {
       throw new RangeError('baseRetryDelayMs cannot exceed maximumRetryDelayMs');
     }
+    if (options.publishTimeoutMs + 1_000 > options.lockDurationMs) {
+      throw new RangeError('publishTimeoutMs must leave at least 1000ms inside lockDurationMs');
+    }
     this.now = options.now ?? (() => new Date());
     this.random = options.random ?? Math.random;
   }
 
-  async runOnce(): Promise<OutboxRunResult> {
-    const messages = await this.repository.claimBatch(
-      this.options.workerId,
-      this.options.batchSize,
-      this.options.lockDurationMs
-    );
-    this.metrics.claimed(messages.length);
-
+  async runOnce(signal?: AbortSignal): Promise<OutboxRunResult> {
+    let claimed = 0;
     let published = 0;
     let retried = 0;
     let deadLettered = 0;
-    for (const message of messages) {
+    for (let index = 0; index < this.options.batchSize; index += 1) {
+      throwIfWorkerAborted(signal);
+      // Claim one row at a time so every message receives a fresh lease only
+      // after the preceding publish and acknowledgement have settled.
+      const messages = await this.repository.claimBatch(
+        this.options.workerId,
+        1,
+        this.options.lockDurationMs
+      );
+      if (messages.length === 0) break;
+      if (messages.length !== 1) throw new Error('Outbox repository returned more rows than requested');
+      const message = messages[0]!;
+      claimed += 1;
+      this.metrics.claimed(1);
       try {
-        await this.broker.publish(message);
+        const timeoutSignal = AbortSignal.timeout(this.options.publishTimeoutMs);
+        const deliverySignal = signal === undefined
+          ? timeoutSignal
+          : AbortSignal.any([signal, timeoutSignal]);
+        await this.broker.publish(message, deliverySignal);
         const publishedAt = this.now();
         await this.repository.markPublished(message.id, this.options.workerId, publishedAt);
         this.metrics.published(message);
         published += 1;
       } catch (error) {
+        throwIfWorkerAborted(signal);
         const attempt = message.retryCount + 1;
         const failedAt = this.now();
         const isDeadLetter = attempt >= this.options.maximumAttempts;
@@ -121,9 +144,12 @@ export class OutboxWorker {
           this.metrics.retried(message, nextAttemptAt);
           retried += 1;
         }
+        // A delivery failure may indicate dependency loss. Return to the
+        // runtime preflight before acquiring another lease.
+        break;
       }
     }
 
-    return { claimed: messages.length, published, retried, deadLettered };
+    return { claimed, published, retried, deadLettered };
   }
 }

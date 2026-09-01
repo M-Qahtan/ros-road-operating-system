@@ -12,9 +12,9 @@ import { SimulatedAgencyConsumer, SimulatedAgencyNotification } from './simulate
 const MESSAGE_ID = '11111111-1111-4111-8111-111111111111';
 const MESSAGE_SCOPE = { tenantId: 'riyadh-pilot', purpose: 'road-safety-response' } as const;
 
-function message(retryCount = 0): OutboxMessage {
+function message(retryCount = 0, id = MESSAGE_ID): OutboxMessage {
   return {
-    id: MESSAGE_ID,
+    id,
     aggregateType: 'RoadEvent',
     aggregateId: '22222222-2222-4222-8222-222222222222',
     eventType: 'SafetyEscalated',
@@ -30,8 +30,13 @@ function message(retryCount = 0): OutboxMessage {
 class MemoryRepository implements OutboxRepository {
   readonly published: string[] = [];
   readonly failures: Array<{ id: string; deadLettered: boolean; nextAttemptAt: Date }> = [];
-  constructor(private readonly batch: readonly OutboxMessage[]) {}
-  async claimBatch(): Promise<readonly OutboxMessage[]> { return this.batch; }
+  readonly requestedBatchSizes: number[] = [];
+  private readonly remaining: OutboxMessage[];
+  constructor(batch: readonly OutboxMessage[]) { this.remaining = [...batch]; }
+  async claimBatch(_worker: string, batchSize: number): Promise<readonly OutboxMessage[]> {
+    this.requestedBatchSizes.push(batchSize);
+    return this.remaining.splice(0, batchSize);
+  }
   async markPublished(id: string): Promise<void> { this.published.push(id); }
   async markFailed(id: string, _worker: string, _error: string, nextAttemptAt: Date, deadLetteredAt?: Date): Promise<void> {
     this.failures.push({ id, deadLettered: deadLetteredAt !== undefined, nextAttemptAt });
@@ -60,6 +65,7 @@ test('worker publishes and acknowledges a claimed message', async () => {
   const broker: EventBroker = { publish: async () => undefined };
   const worker = new OutboxWorker(repository, broker, {
     workerId: 'worker-a', batchSize: 10, lockDurationMs: 30_000, maximumAttempts: 3,
+    publishTimeoutMs: 5_000,
     baseRetryDelayMs: 1_000, maximumRetryDelayMs: 10_000,
     now: () => new Date('2026-07-25T03:05:00.000Z'), random: () => 1
   });
@@ -72,6 +78,7 @@ test('failed delivery retries predictably and poison messages dead-letter', asyn
   const retryRepository = new MemoryRepository([message(0)]);
   const retryWorker = new OutboxWorker(retryRepository, broker, {
     workerId: 'worker-a', batchSize: 10, lockDurationMs: 30_000, maximumAttempts: 3,
+    publishTimeoutMs: 5_000,
     baseRetryDelayMs: 1_000, maximumRetryDelayMs: 10_000,
     now: () => new Date('2026-07-25T03:05:00.000Z'), random: () => 1
   });
@@ -82,6 +89,7 @@ test('failed delivery retries predictably and poison messages dead-letter', asyn
   const poisonRepository = new MemoryRepository([message(2)]);
   const poisonWorker = new OutboxWorker(poisonRepository, broker, {
     workerId: 'worker-b', batchSize: 10, lockDurationMs: 30_000, maximumAttempts: 3,
+    publishTimeoutMs: 5_000,
     baseRetryDelayMs: 1_000, maximumRetryDelayMs: 10_000,
     now: () => new Date('2026-07-25T03:05:00.000Z'), random: () => 1
   });
@@ -92,6 +100,20 @@ test('failed delivery retries predictably and poison messages dead-letter', asyn
 test('retry delay is capped and jitter remains bounded', () => {
   assert.equal(calculateRetryDelayMs(1, 1_000, 10_000, () => 0), 500);
   assert.equal(calculateRetryDelayMs(20, 1_000, 10_000, () => 1), 10_000);
+});
+
+test('worker acquires a fresh one-row lease for every message in a configured batch', async () => {
+  const secondId = '55555555-5555-4555-8555-555555555555';
+  const repository = new MemoryRepository([message(), message(0, secondId)]);
+  const worker = new OutboxWorker(repository, { publish: async () => undefined }, {
+    workerId: 'worker-a', batchSize: 10, lockDurationMs: 30_000, publishTimeoutMs: 5_000,
+    maximumAttempts: 3, baseRetryDelayMs: 1_000, maximumRetryDelayMs: 10_000,
+    now: () => new Date('2026-07-25T03:05:00.000Z'), random: () => 1
+  });
+
+  assert.deepEqual(await worker.runOnce(), { claimed: 2, published: 2, retried: 0, deadLettered: 0 });
+  assert.deepEqual(repository.published, [MESSAGE_ID, secondId]);
+  assert.deepEqual(repository.requestedBatchSizes, [1, 1, 1]);
 });
 
 test('simulated agency consumer tolerates duplicate delivery and preserves trusted scope', async () => {
