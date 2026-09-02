@@ -41,5 +41,20 @@ if (/image:\s*\S+:latest(?:\s|$)/u.test(compose)) {
 if (!compose.includes('127.0.0.1:')) {
   throw new Error('Development service ports must bind to loopback.');
 }
+if (!compose.includes('pg_isready -h 127.0.0.1 -U ${POSTGRES_USER} -d ${POSTGRES_DB}')) {
+  throw new Error('PostgreSQL health must wait for the final TCP server, not the temporary init socket.');
+}
+
+const dockerIgnoreLines = new Set(
+  (await readFile('.dockerignore', 'utf8'))
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+);
+for (const requiredIgnore of ['.git', 'node_modules', '**/node_modules', '**/dist', '.env', '.env.*']) {
+  if (!dockerIgnoreLines.has(requiredIgnore)) {
+    throw new Error(`.dockerignore must exclude ${requiredIgnore} from runtime image build contexts.`);
+  }
+}
 
 console.log(`ROS repository verification passed (${required.length} required assets).`);

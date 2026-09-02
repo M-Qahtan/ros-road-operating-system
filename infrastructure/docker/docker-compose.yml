@@ -9,7 +9,10 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      # The PostGIS entrypoint starts a temporary Unix-socket-only server while
+      # initialization scripts run. Probe TCP so dependants wait for the final
+      # server instead of racing its controlled shutdown/restart.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
