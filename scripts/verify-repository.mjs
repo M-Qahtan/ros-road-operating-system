@@ -44,6 +44,12 @@ if (!compose.includes('127.0.0.1:')) {
 if (!compose.includes('pg_isready -h 127.0.0.1 -U ${POSTGRES_USER} -d ${POSTGRES_DB}')) {
   throw new Error('PostgreSQL health must wait for the final TCP server, not the temporary init socket.');
 }
+if (!compose.includes('PGCTLTIMEOUT: "300"')) {
+  throw new Error('PostGIS cold-start shutdown must allow pg_ctl enough time to finish its final checkpoint.');
+}
+if (!compose.includes('start_period: 5m')) {
+  throw new Error('PostgreSQL health must allow the cold PostGIS initialization window before counting failures.');
+}
 
 const dockerIgnoreLines = new Set(
   (await readFile('.dockerignore', 'utf8'))
