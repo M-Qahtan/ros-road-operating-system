@@ -26,7 +26,7 @@ export interface OutboxRepository {
 }
 
 export interface EventBroker {
-  publish(message: OutboxMessage): Promise<void>;
+  publish(message: OutboxMessage, signal?: AbortSignal): Promise<void>;
 }
 
 export interface DeliveryMetrics {

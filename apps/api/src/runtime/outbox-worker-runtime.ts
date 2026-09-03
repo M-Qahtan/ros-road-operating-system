@@ -2,10 +2,11 @@ import { OutboxRunResult, OutboxWorker } from '../messaging/outbox-worker.js';
 import { PostgresOutboxRepository } from '../messaging/postgres-outbox-repository.js';
 import { RedisStreamEventBroker } from '../messaging/redis-stream-broker.js';
 import { RedisRuntimeClient } from '../messaging/node-redis-stream-client.js';
-import { PostgresPool } from '../persistence/postgres/postgres-types.js';
+import { PgRuntimePool } from '../persistence/postgres/pg-postgres-pool.js';
 
 const DEFAULT_BATCH_SIZE = 5;
 const DEFAULT_LOCK_DURATION_MS = 30_000;
+const DEFAULT_PUBLISH_TIMEOUT_MS = 5_000;
 const DEFAULT_MAXIMUM_ATTEMPTS = 8;
 const DEFAULT_BASE_RETRY_DELAY_MS = 500;
 const DEFAULT_MAXIMUM_RETRY_DELAY_MS = 30_000;
@@ -16,6 +17,7 @@ export interface OutboxRuntimeOptions {
   readonly stream: string;
   readonly batchSize: number;
   readonly lockDurationMs: number;
+  readonly publishTimeoutMs: number;
   readonly maximumAttempts: number;
   readonly baseRetryDelayMs: number;
   readonly maximumRetryDelayMs: number;
@@ -69,6 +71,13 @@ export function readOutboxRuntimeOptions(environment: NodeJS.ProcessEnv): Outbox
       1_000,
       60 * 60 * 1_000
     ),
+    publishTimeoutMs: boundedInteger(
+      environment,
+      'ROS_OUTBOX_PUBLISH_TIMEOUT_MS',
+      DEFAULT_PUBLISH_TIMEOUT_MS,
+      100,
+      60_000
+    ),
     maximumAttempts: boundedInteger(
       environment,
       'ROS_OUTBOX_MAXIMUM_ATTEMPTS',
@@ -101,6 +110,11 @@ export function readOutboxRuntimeOptions(environment: NodeJS.ProcessEnv): Outbox
       'ROS_OUTBOX_BASE_RETRY_DELAY_MS cannot exceed ROS_OUTBOX_MAXIMUM_RETRY_DELAY_MS'
     );
   }
+  if (options.publishTimeoutMs + 1_000 > options.lockDurationMs) {
+    throw new OutboxRuntimeConfigurationError(
+      'ROS_OUTBOX_PUBLISH_TIMEOUT_MS must leave at least 1000ms inside ROS_OUTBOX_LOCK_DURATION_MS'
+    );
+  }
   return options;
 }
 
@@ -123,8 +137,8 @@ export class OutboxWorkerRuntime {
   private readonly idlePollMs: number;
 
   constructor(
-    postgres: PostgresPool,
-    redis: RedisRuntimeClient,
+    private readonly postgres: PgRuntimePool,
+    private readonly redis: RedisRuntimeClient,
     options: OutboxRuntimeOptions
   ) {
     const repository = new PostgresOutboxRepository(postgres);
@@ -133,6 +147,7 @@ export class OutboxWorkerRuntime {
       workerId: options.workerId,
       batchSize: options.batchSize,
       lockDurationMs: options.lockDurationMs,
+      publishTimeoutMs: options.publishTimeoutMs,
       maximumAttempts: options.maximumAttempts,
       baseRetryDelayMs: options.baseRetryDelayMs,
       maximumRetryDelayMs: options.maximumRetryDelayMs
@@ -141,19 +156,42 @@ export class OutboxWorkerRuntime {
   }
 
   async runOnce(): Promise<OutboxRunResult> {
+    // Recover and verify Redis before PostgreSQL grants any outbox lease. XADD
+    // is deliberately fail-fast after claim, so an intentional reconnect loop
+    // cannot consume the row's ownership window. Delivery remains at-least-once:
+    // eventId and consumer-side durable idempotency fence duplicate effects.
+    await this.redis.verifyConnection();
     return this.worker.runOnce();
   }
-
   async run(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
-      const result = await this.worker.runOnce();
+      try {
+        await this.redis.verifyConnection(signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        // A simultaneous PostgreSQL failure must retain the required-worker
+        // fail-stop behavior instead of being hidden behind Redis recovery.
+        await this.postgres.verifyConnection();
+        await delay(this.idlePollMs, signal);
+        continue;
+      }
+      if (signal.aborted) return;
+      // Do not catch claim or publish bookkeeping errors here. PostgreSQL loss
+      // and ownership conflicts remain fatal to the required worker process.
+      let result: OutboxRunResult;
+      try {
+        result = await this.worker.runOnce(signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        throw error;
+      }
       if (result.claimed === 0) await delay(this.idlePollMs, signal);
     }
   }
 }
 
 export function createOutboxWorkerRuntime(
-  postgres: PostgresPool,
+  postgres: PgRuntimePool,
   redis: RedisRuntimeClient,
   environment: NodeJS.ProcessEnv
 ): OutboxWorkerRuntime {

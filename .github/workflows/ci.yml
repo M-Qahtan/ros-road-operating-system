@@ -384,7 +384,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          pnpm simulate:riyadh | tee riyadh-pilot-result.json
+          pnpm simulate:riyadh | tee riyadh-pilot.log
       - name: Write Riyadh E2E evidence manifest
         if: always()
         shell: bash
@@ -410,7 +410,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s riyadh-pilot-result.json
+          test -s riyadh-pilot.log
           test -s artifacts/riyadh-pilot/result.json
           test -s docs/08-pilot-riyadh/pilot-e2e-readiness.md
           node scripts/validate-ci-evidence.mjs riyadh-e2e-evidence.json riyadh-e2e
@@ -421,7 +421,7 @@ jobs:
         with:
           name: riyadh-e2e-${{ env.CANDIDATE_HEAD_SHA }}-${{ env.TESTED_MERGE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            riyadh-pilot-result.json
+            riyadh-pilot.log
             artifacts/riyadh-pilot/result.json
             docs/08-pilot-riyadh/pilot-e2e-readiness.md
             riyadh-e2e-evidence.json
