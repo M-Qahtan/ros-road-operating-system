@@ -1,7 +1,7 @@
 import type { HumanSafetyActorRole } from '@ros/contracts';
 import { HumanSafetyCommandCenterController, type CommandCenterFilter } from './human-safety-command-center.js';
 import { HttpHumanSafetyCommandCenterGateway } from './human-safety-gateway.js';
-import { renderHumanSafetyCommandCenter } from './human-safety-render.js';
+import { renderHumanSafetyCommandCenter, renderNextEvidence } from './human-safety-render.js';
 import {
   requireTrustedBrowserSession,
   type OperationsWindow,
@@ -21,10 +21,13 @@ function startCommandCenter(appRoot: HTMLElement, session: TrustedBrowserSession
   const roles: readonly HumanSafetyActorRole[] = session.roles;
   const gateway = new HttpHumanSafetyCommandCenterGateway(document.documentElement.dataset.apiBase ?? '', session);
   const controller = new HumanSafetyCommandCenterController(gateway, { actorId: session.actorId, roles });
+  let renderedAdvice: string | null = null;
 
   function paint(): void {
     controller.refreshStaleness();
-    appRoot.innerHTML = renderHumanSafetyCommandCenter(controller.state, controller, new Date());
+    const paintedAt = new Date();
+    appRoot.innerHTML = renderHumanSafetyCommandCenter(controller.state, controller, paintedAt);
+    renderedAdvice = controller.state.selected === null ? null : renderNextEvidence(controller.state.selected, paintedAt, controller.state.stale);
     appRoot.querySelector('#refresh-button')?.addEventListener('click', () => { void reload(); });
     appRoot.querySelector<HTMLSelectElement>('#case-filter')?.addEventListener('change', (event) => {
       const value = (event.currentTarget as HTMLSelectElement).value;
@@ -82,6 +85,17 @@ function startCommandCenter(appRoot: HTMLElement, session: TrustedBrowserSession
 
   void reload();
   window.setInterval(() => { void reload(); }, 5000);
+  // Expire advice even when a network refresh is still pending. Update only this
+  // read-only panel so the operator's action form and keyboard focus are retained.
+  window.setInterval(() => {
+    const state = controller.refreshStaleness();
+    const panel = appRoot.querySelector('#next-evidence-panel');
+    if (panel !== null && state.selected !== null) {
+      const markup = renderNextEvidence(state.selected, new Date(), state.stale);
+      // Re-inserting an unchanged role=alert would repeatedly interrupt screen readers.
+      if (markup !== renderedAdvice) { panel.outerHTML = markup; renderedAdvice = markup; }
+    }
+  }, 1000);
 }
 
 function field(event: SubmitEvent, name: string): string {

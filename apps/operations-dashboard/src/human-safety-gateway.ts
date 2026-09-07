@@ -2,8 +2,10 @@ import type {
   HumanContactSessionContract,
   HumanSafetyActorRole,
   HumanSafetyCaseContract,
+  NextEvidenceAdvice,
   SafetyFusionRecommendation
 } from '@ros/contracts';
+import { suggestNextEvidence } from '@ros/contracts';
 import { authenticatedApiRequest, type AuthenticatedRequestFailure } from './authenticated-http.js';
 import type { OperationsAccessTokenProvider } from './trusted-browser-session.js';
 
@@ -37,6 +39,8 @@ export interface CommandCenterCaseView {
   readonly safetyCase: HumanSafetyCaseContract;
   readonly contactSession: HumanContactSessionContract | null;
   readonly recommendation: SafetyFusionRecommendation | null;
+  /** Optional while older API responses remain supported. Never synthesized by the live client. */
+  readonly nextEvidenceAdvice?: NextEvidenceAdvice;
   readonly evidenceState: CommandCenterEvidenceState;
   readonly connectivity: CommandCenterConnectivity;
   readonly dependencyHealth: CommandCenterDependencyHealth;
@@ -133,16 +137,17 @@ export class SimulatedHumanSafetyCommandCenterGateway implements HumanSafetyComm
   private readonly cases = new Map<string, CommandCenterCaseView>();
   private readonly idempotentResults = new Map<string, CommandCenterCaseView>();
 
-  constructor(seed: readonly CommandCenterCaseView[] = seedCommandCenterCases()) {
+  constructor(seed: readonly CommandCenterCaseView[] = seedCommandCenterCases(), private readonly now: () => Date = () => new Date()) {
     for (const item of seed) this.cases.set(item.safetyCase.id, clone(item));
   }
 
   async list(): Promise<CommandCenterPage> {
-    return { items: [...this.cases.values()].map(clone), generatedAt: new Date().toISOString(), simulation: true };
+    const generatedAt = this.now().toISOString();
+    return { items: [...this.cases.values()].map((item) => simulatedAdvice(clone(item), generatedAt)), generatedAt, simulation: true };
   }
 
   async get(caseId: string): Promise<CommandCenterCaseView> {
-    return clone(this.requireCase(caseId));
+    return simulatedAdvice(clone(this.requireCase(caseId)), this.now().toISOString());
   }
 
   async takeover(caseId: string, input: CommandCenterActionInput): Promise<CommandCenterCaseView> {
@@ -267,10 +272,10 @@ export class SimulatedHumanSafetyCommandCenterGateway implements HumanSafetyComm
     if ((current.contactSession?.version ?? null) !== input.expectedContactVersion) throw new Error('تعارض إصدار جلسة التواصل؛ حدّث البيانات');
     if (current.dependencyHealth === 'UNAVAILABLE') throw new Error('الاعتماديات الحرجة غير متاحة');
     const next = transform(current);
-    const result: CommandCenterCaseView = {
+    const result = simulatedAdvice({
       ...next,
       audit: [...current.audit, auditEntry(next, input, action, reasonCode)]
-    };
+    }, input.occurredAt);
     this.cases.set(caseId, clone(result));
     this.idempotentResults.set(input.idempotencyKey, clone(result));
     return clone(result);
@@ -372,8 +377,18 @@ function recommendation(caseId: string, currentSeverity: SafetyFusionRecommendat
     requiresHumanReview: true, authority: 'RECOMMENDATION_ONLY', autonomousDowngradePermitted: false,
     autonomousClosurePermitted: false, autonomousDispatchPermitted: false, policyVersion: 'ros-eye.safety-fusion.v1',
     ruleSetVersion: 'ros-eye.rules.baseline.v1', thresholdVersion: 'ros-eye.safety-fusion.thresholds.v1',
-    deterministicFingerprint: `simulation-${caseId}`
+    // Synthetic identifiers only; the page is explicitly marked simulation.
+    deterministicFingerprint: (caseId.endsWith('001') ? '1' : caseId.endsWith('002') ? '2' : '3').repeat(64)
   };
+}
+
+function simulatedAdvice(item: CommandCenterCaseView, now: string): CommandCenterCaseView {
+  return { ...item, nextEvidenceAdvice: suggestNextEvidence({
+    ...item,
+    evidenceState: item.provenance.some((entry) => entry.status !== 'ACTIVE' || entry.integrity === 'INVALID') ? 'QUARANTINED' : item.evidenceState,
+    contextObservedAt: [item.safetyCase.openedAt, ...item.safetyCase.indicators.map((entry) => entry.observedAt),
+      ...item.provenance.map((entry) => entry.receivedAt), ...item.audit.map((entry) => entry.occurredAt)]
+  }, now) };
 }
 
 function auditSeed(eventId: string, action: string, actorRole: HumanSafetyActorRole, actorId: string, reasonCode: string, traceId: string, occurredAt: string, caseVersion: number): CommandCenterAuditEntry {

@@ -10,8 +10,10 @@ import {
   HumanContactSessionContract,
   HumanSafetyActorRole,
   HumanSafetyCaseContract,
+  NextEvidenceAdvice,
   SafetyFusionRecommendation,
-  decideHumanContactTransition
+  decideHumanContactTransition,
+  suggestNextEvidence
 } from '@ros/contracts';
 import { RoadEventApplicationService } from '../application/road-event-application.js';
 import { AuthenticatedActor, IdempotencyInFlightError, IdempotencyPort, RoadEventReadModel } from '../application/ports.js';
@@ -49,6 +51,7 @@ export interface HumanSafetyCaseView {
   readonly safetyCase: HumanSafetyCaseContract;
   readonly contactSession: HumanContactSessionContract | null;
   readonly recommendation: SafetyFusionRecommendation | null;
+  readonly nextEvidenceAdvice: NextEvidenceAdvice;
   readonly evidenceState: EvidenceState;
   readonly connectivity: 'HEALTHY' | 'DEGRADED' | 'LOST';
   readonly dependencyHealth: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE';
@@ -358,10 +361,10 @@ function stateOf(event: RoadEventReadModel, contact: ContactSessionRecord | null
   return states[contact.state];
 }
 
-function view(event: RoadEventReadModel, actor: AuthenticatedActor, backing: HumanSafetyBacking): HumanSafetyCaseView {
+function view(event: RoadEventReadModel, actor: AuthenticatedActor, backing: HumanSafetyBacking, generatedAt: string): HumanSafetyCaseView {
   const contact = backing.contact;
   const authorization = event.closureAuthorization;
-  return {
+  const current: Omit<HumanSafetyCaseView, 'nextEvidenceAdvice'> = {
     tenantId: actor.tenantId,
     safetyCase: {
       id: event.id, roadEventId: event.id, state: stateOf(event, contact),
@@ -384,6 +387,16 @@ function view(event: RoadEventReadModel, actor: AuthenticatedActor, backing: Hum
     evidenceState: backing.evidenceState,
     connectivity: 'HEALTHY', dependencyHealth: 'HEALTHY',
     provenance: backing.provenance, audit: backing.audit
+  };
+  return {
+    ...current,
+    nextEvidenceAdvice: suggestNextEvidence({
+      ...current,
+      evidenceState: backing.provenance.some((entry) => entry.status !== 'ACTIVE' || entry.integrity === 'INVALID')
+        ? 'QUARANTINED' : backing.evidenceState,
+      contextObservedAt: [event.occurredAt, ...(contact === null ? [] : [contact.updatedAt]),
+        ...backing.provenance.map((entry) => entry.receivedAt), ...backing.audit.map((entry) => entry.occurredAt)]
+    }, generatedAt)
   };
 }
 
@@ -453,14 +466,14 @@ export function createHumanSafetyHttpHandler(
         const limit = Math.min(numberQuery(request.query.limit, 20), 100);
         const offset = numberQuery(request.query.offset, 0);
         const page = await application.list({ limit, offset }, actor);
-        const items = await Promise.all(page.items.map(async (event) => view(event, actor, await store.read(actor, event.id))));
+        const items = await Promise.all(page.items.map(async (event) => view(event, actor, await store.read(actor, event.id), now().toISOString())));
         return { status: 200, body: envelope(true, { items, generatedAt: now().toISOString(), simulation: false }, null, request.traceId) };
       }
       if (caseMatch !== null) {
         if (request.method !== 'GET') throw new HumanSafetyHttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET is supported');
         requireRole(actor, ['OPERATOR', 'SUPERVISOR', 'AUDITOR']);
         const event = await application.getById(caseMatch[1]!, actor);
-        return { status: 200, body: envelope(true, view(event, actor, await store.read(actor, event.id)), null, request.traceId) };
+        return { status: 200, body: envelope(true, view(event, actor, await store.read(actor, event.id), now().toISOString()), null, request.traceId) };
       }
       if (actionMatch === null) throw new HumanSafetyHttpError(404, 'NOT_FOUND', 'Route not found');
       if (request.method !== 'POST') throw new HumanSafetyHttpError(405, 'METHOD_NOT_ALLOWED', 'Only POST is supported');
@@ -500,7 +513,7 @@ export function createHumanSafetyHttpHandler(
           });
         }
         const updatedEvent = await application.getById(caseId, actor);
-        return view(updatedEvent, actor, await store.read(actor, caseId));
+        return view(updatedEvent, actor, await store.read(actor, caseId), now().toISOString());
       });
       return { status: 200, body: envelope(true, result, null, request.traceId) };
     } catch (error) {

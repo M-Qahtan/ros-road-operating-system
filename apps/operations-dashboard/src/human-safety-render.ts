@@ -1,4 +1,4 @@
-import type { HumanContactState, HumanSafetyCaseState, SafetyFusionGuardDisposition, SafetyFusionReasonCode } from '@ros/contracts';
+import type { HumanContactState, HumanSafetyCaseState, NextEvidenceReason, NextEvidenceSuggestion, SafetyFusionGuardDisposition, SafetyFusionReasonCode } from '@ros/contracts';
 import { deadlineRemainingSeconds, deadlineState, type HumanSafetyCommandCenterState, type HumanSafetyCommandCenterController } from './human-safety-command-center.js';
 import type { CommandCenterCaseView } from './human-safety-gateway.js';
 
@@ -34,7 +34,7 @@ export function renderHumanSafetyCommandCenter(state: HumanSafetyCommandCenterSt
     ${simulation}${stale}${error}
     <section class="metric-grid" aria-label="مؤشرات الحالات الحرجة">${metricCard('إجمالي الحالات', metrics.total, '')}${metricCard('متجاوزة للمهلة', metrics.overdue, metrics.overdue > 0 ? 'danger' : '')}${metricCard('تقترب من المهلة', metrics.imminent, metrics.imminent > 0 ? 'warning-card' : '')}${metricCard('حرجة S4', metrics.severityFour, metrics.severityFour > 0 ? 'danger' : '')}${metricCard('غير مسندة', metrics.unassigned, metrics.unassigned > 0 ? 'warning-card' : '')}</section>
     <div class="command-layout"><section class="panel queue" aria-labelledby="human-queue-title"><div class="section-title"><div><h2 id="human-queue-title">طابور السلامة</h2><small>الحالات العاجلة تبقى ظاهرة مهما كان المرشح.</small></div><label class="compact-control">المرشح<select id="case-filter">${filterOption('ALL', 'الكل', state.filter)}${filterOption('URGENT', 'العاجلة', state.filter)}${filterOption('UNASSIGNED', 'غير المسندة', state.filter)}${filterOption('MY_CASES', 'حالاتي', state.filter)}</select></label></div>${queueContent(state, controller.visibleItems(), now)}</section>
-    ${renderCaseDetail(state.selected, controller, now)}</div>
+    ${renderCaseDetail(state.selected, controller, now, state.stale)}</div>
   </main>`;
 }
 
@@ -57,7 +57,7 @@ function queueRow(item: CommandCenterCaseView, now: Date, selectedId: string | n
   </button>`;
 }
 
-function renderCaseDetail(item: CommandCenterCaseView | null, controller: Pick<HumanSafetyCommandCenterController, 'canTakeover' | 'canEscalate' | 'canReassign' | 'canAuthorizeResolution'>, now: Date): string {
+function renderCaseDetail(item: CommandCenterCaseView | null, controller: Pick<HumanSafetyCommandCenterController, 'canTakeover' | 'canEscalate' | 'canReassign' | 'canAuthorizeResolution'>, now: Date, stale: boolean): string {
   if (item === null) return '<section class="panel detail" aria-labelledby="case-detail-title"><h2 id="case-detail-title">تفاصيل حالة الإنسان</h2><p class="muted">اختر حالة من طابور السلامة.</p></section>';
   const safety = item.safetyCase;
   const contact = item.contactSession;
@@ -75,6 +75,7 @@ function renderCaseDetail(item: CommandCenterCaseView | null, controller: Pick<H
       <article><h3>مصادر الإشارة</h3>${item.provenance.length === 0 ? '<p class="muted">لا توجد بيانات مصدر معروضة.</p>' : `<ul class="compact-list">${item.provenance.map((entry) => `<li><strong>${escape(entry.sourceType)}</strong><span>${escape(entry.integrity)} · ${escape(entry.status)} · ${escape(new Date(entry.receivedAt).toLocaleTimeString('ar-SA'))}</span></li>`).join('')}</ul>`}</article>
     </div>
     ${renderRecommendation(item)}
+    ${renderNextEvidence(item, now, stale)}
     <section class="action-grid" aria-label="إجراءات المشغل والمشرف">
       <form id="takeover-form" class="action-box"><h3>استحواذ المشغل</h3><p>يوقف الأتمتة المتعارضة ويجعل المشغل مسؤولًا عن التواصل.</p>${reasonField('takeover-reason', disabledTakeover)}<button type="submit" class="primary" ${disabledTakeover}>استحواذ بشري</button></form>
       <form id="escalate-form" class="action-box critical"><h3>تصعيد الحالة</h3><p>لا يرسل جهة حقيقية؛ يسجل الحاجة إلى تدخل بشري أعلى.</p>${reasonField('escalate-reason', disabledEscalate)}<button type="submit" ${disabledEscalate}>تصعيد</button></form>
@@ -91,6 +92,52 @@ function renderRecommendation(item: CommandCenterCaseView): string {
   return `<section class="recommendation-panel" aria-labelledby="recommendation-title"><div class="section-title"><div><h3 id="recommendation-title">توصية سلامة قابلة للتفسير</h3><p>توصية فقط — لا تملك سلطة خفض الخطورة أو الحل أو الإرسال.</p></div><span class="badge severity-${recommendation.recommendedSeverity}">${escape(recommendation.recommendedSeverity)} · ثقة ${Math.round(recommendation.confidence * 100)}٪</span></div>
     <div class="recommendation-grid"><div><strong>عدم اليقين</strong><span>${Math.round(recommendation.uncertainty * 100)}٪</span></div><div><strong>المراجعة البشرية</strong><span>${recommendation.requiresHumanReview ? 'إلزامية' : 'غير مطلوبة'}</span></div><div><strong>السلطة</strong><span>${escape(recommendation.authority)}</span></div><div><strong>البصمة</strong><code>${escape(recommendation.deterministicFingerprint)}</code></div></div>
     <ul class="reason-list">${recommendation.reasonCodes.map((code) => `<li>${escape(REASON_AR[code] ?? code)}</li>`).join('')}</ul><div class="guard-grid">${recommendation.guardResults.map((guard) => `<span class="guard guard-${guard.disposition}">${escape(guard.kind)}: ${escape(GUARD_AR[guard.disposition])}</span>`).join('')}</div></section>`;
+}
+
+const NEXT_EVIDENCE_AR: Readonly<Record<NextEvidenceSuggestion, string>> = {
+  REVIEW_CONTACT_OUTCOME: 'راجع آخر نتيجة للتواصل مع الشخص وحالة تسلّم المشغّل للمسؤولية.',
+  REVIEW_CONTRADICTORY_EVIDENCE: 'راجع الأدلة المتعارضة ومصادرها قبل ترجيح إحداها.',
+  REVIEW_RECENT_TRUSTED_SOURCE: 'تحقق من وجود دليل حديث موثوق ضمن البيانات المصرح بها.',
+  REVIEW_INDEPENDENT_CORROBORATION: 'تحقق من وجود مصدر مستقل يؤيد الإشارة ضمن الأدلة المتاحة.',
+  REVIEW_DEVICE_HEALTH: 'راجع حالة الجهاز وتوقيت إشاراته المسجلة.',
+  REVIEW_LOCATION_QUALITY: 'راجع جودة تقدير الموقع المسجل وحدود دقته.',
+  REVIEW_SOURCE_INTEGRITY: 'راجع سلامة المصدر ونتائج بوابات الحماية.'
+};
+const NEXT_REASON_AR: Readonly<Record<NextEvidenceReason, string>> = {
+  SOURCE_SNAPSHOT_UNVERIFIED: 'لم تُثبت مطابقة التوصية لجميع البيانات الحالية.',
+  NO_RECOMMENDATION: 'لا توجد توصية دمج متاحة.', INVALID_CONTEXT: 'تعذر التحقق من سياق الحالة أو توقيته.',
+  CASE_INACTIVE: 'الحالة محلولة.', SCOPE_MISMATCH: 'سياق المصدر لا يطابق الحالة.',
+  INVALID_RECOMMENDATION: 'بيانات التوصية غير مكتملة أو غير مدعومة.', SOURCE_EXPIRED: 'انتهت صلاحية مصدر الاقتراح.',
+  SOURCE_IN_FUTURE: 'توقيت المصدر في المستقبل.', CONTEXT_CHANGED: 'تغيرت بيانات الحالة بعد تقييم المصدر.',
+  GUARD_REVIEW_REQUIRED: 'بوابات الحماية تتطلب مراجعة بشرية.', EVIDENCE_QUARANTINED: 'توجد أدلة معزولة أو مسحوبة.',
+  NO_TARGETED_GAP: 'لا توجد فجوة محددة يمكن اقتراحها؛ يستمر التقييم البشري.'
+};
+
+export function renderNextEvidence(item: CommandCenterCaseView, now: Date, stale: boolean): string {
+  const advice = item.nextEvidenceAdvice;
+  if (advice === undefined) return '<section id="next-evidence-panel" class="recommendation-panel" aria-label="الدليل التالي"><h3>الدليل التالي</h3><p>خدمة الاقتراح غير متاحة في هذا الرد؛ يستمر التقييم البشري.</p></section>';
+  const source = item.recommendation;
+  const expiry = advice.expiresAt === null ? NaN : Date.parse(advice.expiresAt);
+  const evaluatedAt = advice.sourceEvaluatedAt === null ? NaN : Date.parse(advice.sourceEvaluatedAt);
+  const generatedAt = advice.generatedAt === null ? NaN : Date.parse(advice.generatedAt);
+  const current = !stale && Number.isFinite(now.getTime()) && Number.isFinite(expiry) && now.getTime() < expiry &&
+    evaluatedAt <= now.getTime() && generatedAt <= now.getTime() && item.safetyCase.state !== 'RESOLVED' &&
+    advice.caseVersion === item.safetyCase.version && advice.contactVersion === (item.contactSession?.version ?? null) &&
+    source !== null && advice.sourceFingerprint === source.deterministicFingerprint &&
+    source.caseId === item.safetyCase.id && source.tenantId === item.tenantId && source.currentSeverity === item.safetyCase.severity &&
+    advice.sourceInputVersion === source.inputVersion && evaluatedAt === Date.parse(source.evaluatedAt);
+  const showSuggestions = current && advice.status === 'SUGGESTED' && advice.mode === 'SHADOW_ONLY' &&
+    advice.authority === 'RECOMMENDATION_ONLY' && advice.policyVersion === 'ros-eye.next-evidence.v1' &&
+    advice.sourceSnapshotStatus === 'UNVERIFIED' && advice.activationAuthorized === false && advice.collectionPermitted === false;
+  const urgent = advice.reviewPriority === 'URGENT' || (item.safetyCase.state !== 'RESOLVED' &&
+    (['S3', 'S4'].includes(item.safetyCase.severity) || ['NO_RESPONSE', 'UNREACHABLE', 'ESCALATED'].includes(item.safetyCase.state) || deadlineState(item, now) === 'OVERDUE'));
+  return `<section id="next-evidence-panel" class="recommendation-panel" aria-labelledby="next-evidence-title"><h3 id="next-evidence-title">الدليل التالي — مراجعة استشارية</h3>
+    <p${urgent ? ' role="alert"' : ''}>${urgent ? 'مراجعة بشرية عاجلة؛ لا تنتظر اقتراح العقل لبدء متابعة الحالة.' : 'تخضع الاقتراحات لتقييم المشغّل البشري.'}</p>
+    <p>اقتراح تجريبي للمراجعة فقط. جمع أي بيانات جديدة يحتاج تفويضًا مستقلًا.</p>
+    ${showSuggestions ? `<ol>${advice.suggestions.map((code) => `<li>${escape(NEXT_EVIDENCE_AR[code] ?? 'يلزم تقييم بشري.')}</li>`).join('')}</ol>` : '<p class="muted">لا يوجد اقتراح صالح للعرض حاليًا؛ حدّث الحالة وراجع الأدلة بشريًا.</p>'}
+    <ul class="reason-list">${advice.reasons.map((reason) => `<li>${escape(NEXT_REASON_AR[reason] ?? 'يلزم تقييم بشري.')}</li>`).join('')}</ul>
+    ${advice.sourceEvaluatedAt === null ? '' : `<p class="muted">تقييم المصدر: ${escape(advice.sourceEvaluatedAt)} · انتهاء الاقتراح: ${escape(advice.expiresAt)}</p>`}
+  </section>`;
 }
 
 function renderAudit(item: CommandCenterCaseView): string {

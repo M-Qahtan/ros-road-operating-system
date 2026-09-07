@@ -11,6 +11,7 @@ import { AuthenticatedActor, IdempotencyPort, IdempotencyRecord } from '../appli
 import { ActorResolver } from './actor-resolver.js';
 import {
   HumanSafetyBacking,
+  HumanSafetyCaseView,
   HumanSafetyStore,
   createHumanSafetyHttpHandler
 } from './human-safety-http.js';
@@ -50,10 +51,15 @@ function contact(version = 3): ContactSessionRecord {
 class FakeStore implements HumanSafetyStore {
   current = contact();
   mutations = 0;
+  reads = 0;
+  recommendation: HumanSafetyBacking['recommendation'] = null;
+  provenance: HumanSafetyBacking['provenance'] = [];
+  audit: HumanSafetyBacking['audit'] = [];
   evidenceState: HumanSafetyBacking['evidenceState'] = 'TRUSTED';
 
   async read(): Promise<HumanSafetyBacking> {
-    return { contact: this.current, recommendation: null, evidenceState: this.evidenceState, provenance: [], audit: [] };
+    this.reads += 1;
+    return { contact: this.current, recommendation: this.recommendation, evidenceState: this.evidenceState, provenance: this.provenance, audit: this.audit };
   }
 
   async mutate(input: Parameters<HumanSafetyStore['mutate']>[0]): Promise<void> {
@@ -123,6 +129,82 @@ test('list and detail expose live scoped RoadEvents with durable contact state',
   assert.deepEqual(page.items.map((item) => [item.safetyCase.id, item.safetyCase.state]), [[CASE_ID, 'NO_RESPONSE']]);
   const detail = await handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
   assert.equal(detail?.status, 200);
+});
+
+function fusionRecommendation(): NonNullable<HumanSafetyBacking['recommendation']> {
+  return {
+    tenantId: OPERATOR.tenantId, caseId: CASE_ID, inputVersion: 37, evaluatedAt: '2026-08-20T23:59:30.000Z',
+    currentSeverity: 'S4', recommendedSeverity: 'S2', score: 45, confidence: 0.6, uncertainty: 0.5,
+    reasonCodes: ['FUSION_NO_RESPONSE'], missingEvidenceFlags: ['MISSING_CONTACT_OUTCOME'], contributions: [],
+    guardResults: (['DATA_QUALITY', 'DRIFT', 'OUT_OF_DISTRIBUTION', 'ADVERSARIAL_INPUT'] as const).map((kind) => ({
+      kind, disposition: 'CLEAR', reasonCode: 'clear', guardVersion: 'test.v1', evaluatedInputVersion: 37
+    })),
+    requiresHumanReview: true, authority: 'RECOMMENDATION_ONLY', autonomousDowngradePermitted: false,
+    autonomousClosurePermitted: false, autonomousDispatchPermitted: false, policyVersion: 'ros-eye.safety-fusion.v1',
+    ruleSetVersion: 'ros-eye.rules.baseline.v1', thresholdVersion: 'ros-eye.safety-fusion.thresholds.v1', deterministicFingerprint: 'b'.repeat(64)
+  };
+}
+
+test('authorized list and detail derive shadow advice without mutation or severity replacement', async () => {
+  const { handler, store } = await fixture();
+  store.recommendation = fusionRecommendation();
+  const list = await handler(request('GET', '/api/v1/human-safety/cases'));
+  const page = (list!.body as { data: { items: HumanSafetyCaseView[] } }).data;
+  const detail = await handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+  const item = (detail!.body as { data: HumanSafetyCaseView }).data;
+  assert.equal(list?.status, 200);
+  assert.equal(detail?.status, 200);
+  assert.deepEqual(item.nextEvidenceAdvice, page.items[0]!.nextEvidenceAdvice);
+  assert.equal(item.safetyCase.severity, 'S4');
+  assert.equal(item.safetyCase.version, 1);
+  assert.equal(item.nextEvidenceAdvice.sourceInputVersion, 37);
+  assert.equal(item.nextEvidenceAdvice.status, 'SUGGESTED');
+  assert.equal(item.nextEvidenceAdvice.generatedAt, NOW.toISOString());
+  assert.equal(item.nextEvidenceAdvice.sourceSnapshotStatus, 'UNVERIFIED');
+  assert.equal(item.nextEvidenceAdvice.collectionPermitted, false);
+  assert.equal(item.nextEvidenceAdvice.reviewPriority, 'URGENT');
+  assert.equal(store.mutations, 0);
+  assert.equal(store.current.version, 3);
+});
+
+test('read advice remains behind role, tenant and purpose authorization', async () => {
+  for (const actor of [
+    { ...OPERATOR, roles: ['FIELD_USER'] as AuthenticatedActor['roles'] },
+    { ...OPERATOR, tenantId: 'other-tenant' }, { ...OPERATOR, purpose: 'other-purpose' }
+  ]) {
+    const { handler, store } = await fixture(actor);
+    store.recommendation = fusionRecommendation();
+    const response = await handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+    assert.ok(response?.status === 403 || response?.status === 404);
+    assert.equal(store.reads, 0);
+    assert.equal(store.mutations, 0);
+    assert.doesNotMatch(JSON.stringify(response?.body), /nextEvidenceAdvice|bbbbbbbb/);
+  }
+});
+
+test('absent or incompatible advice preserves the live case and urgent human path', async () => {
+  const setups: readonly ((store: FakeStore) => void)[] = [
+    () => {},
+    (store) => { store.recommendation = { ...fusionRecommendation(), evaluatedAt: '2026-08-20T23:54:00.000Z' }; },
+    (store) => { store.recommendation = { ...fusionRecommendation(), evaluatedAt: '2026-08-21T00:01:00.000Z' }; },
+    (store) => { store.recommendation = { ...fusionRecommendation(), guardResults: [] }; },
+    (store) => { store.recommendation = fusionRecommendation(); store.current = { ...store.current, updatedAt: NOW.toISOString() }; },
+    (store) => { store.recommendation = fusionRecommendation(); store.provenance = [{ evidenceId: 'evidence-1', sourceType: 'PHONE', integrity: 'VERIFIED', status: 'ACTIVE', receivedAt: NOW.toISOString() }]; },
+    (store) => { store.recommendation = fusionRecommendation(); store.provenance = [{ evidenceId: 'evidence-1', sourceType: 'PHONE', integrity: 'VERIFIED', status: 'REVOKED', receivedAt: '2026-08-20T23:58:00.000Z' }]; },
+    (store) => { store.recommendation = fusionRecommendation(); store.audit = [{ eventId: 'audit-1', action: 'contact.updated', actorId: ACTOR_ID, actorRole: 'OPERATOR', reason: 'updated', reasonCode: 'updated', traceId: TRACE_ID, occurredAt: NOW.toISOString(), caseVersion: 1, immutable: true }]; }
+  ];
+  for (const setup of setups) {
+    const { handler, store } = await fixture();
+    setup(store);
+    const response = await handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+    assert.equal(response?.status, 200);
+    const item = (response!.body as { data: HumanSafetyCaseView }).data;
+    assert.equal(item.nextEvidenceAdvice.status, 'ABSTAIN');
+    assert.equal(item.nextEvidenceAdvice.reviewPriority, 'URGENT');
+    assert.equal(item.safetyCase.severity, 'S4');
+    assert.equal(item.safetyCase.state, 'NO_RESPONSE');
+    assert.equal(store.mutations, 0);
+  }
 });
 
 test('takeover uses only the trusted principal and replays without a second mutation', async () => {
