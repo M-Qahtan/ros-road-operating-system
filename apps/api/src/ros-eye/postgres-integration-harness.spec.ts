@@ -15,8 +15,20 @@ test('PostgreSQL integration runner fails explicitly before claiming an unexecut
   assert.ok(runner.indexOf('Running ${test_file}') < runner.indexOf('integration checks passed'));
   assert.match(localHarness, /postgis\/postgis:16-3\.4/);
   assert.match(localHarness, /trap cleanup EXIT/);
-  assert.match(localHarness, /--publish "127\.0\.0\.1:/);
+  assert.doesNotMatch(localHarness, /--publish|--network host/);
   assert.match(localHarness, /bash scripts\/run-postgres-integration\.sh/);
+});
+
+test('local journey uses container-owned clients and restarts before the recovery assertion', () => {
+  assert.match(localHarness, /command -v docker/);
+  assert.match(localHarness, /--volume "\$\(pwd\):\/workspace:ro"/);
+  assert.match(localHarness, /docker exec "\$container_name" pg_isready/);
+  assert.match(localHarness, /docker exec --interactive --workdir \/workspace "\$container_name" psql/);
+  assert.match(localHarness, /export -f pg_isready psql/);
+  assert.match(localHarness, /ROS_POSTGRES_RESTART_BEFORE_TEST="0011_ros_brain_journey_reconnect\.sql"/);
+  assert.match(runner, /docker restart -- "\$ROS_POSTGRES_RESTART_CONTAINER"/);
+  assert.ok(runner.indexOf('docker restart --') < runner.indexOf('echo "Running ${test_file}"'));
+  assert.match(runner, /wait_for_postgres "after restart"/);
 });
 
 test('ordered SQL journey covers current read, source invalidation, rollback and a new client connection', () => {
