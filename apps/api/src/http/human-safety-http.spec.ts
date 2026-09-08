@@ -10,11 +10,13 @@ import { RoadEventApplicationService } from '../application/road-event-applicati
 import { AuthenticatedActor, IdempotencyPort, IdempotencyRecord } from '../application/ports.js';
 import { ActorResolver } from './actor-resolver.js';
 import {
+  GovernedRecommendationReader,
   HumanSafetyBacking,
   HumanSafetyCaseView,
   HumanSafetyStore,
   createHumanSafetyHttpHandler
 } from './human-safety-http.js';
+import type { GovernedRecommendationQueryResult } from '../ros-eye/recommendation-query-postgres.js';
 import { HttpRequest } from './road-event-http.js';
 import { ContactSessionRecord } from '../ros-eye/contact-orchestration.js';
 
@@ -80,6 +82,18 @@ class FakeStore implements HumanSafetyStore {
   }
 }
 
+class FakeGovernedRecommendations implements GovernedRecommendationReader {
+  reads = 0;
+  actor: AuthenticatedActor | null = null;
+  constructor(readonly result: GovernedRecommendationQueryResult) {}
+  async read(actor: AuthenticatedActor, caseId: string): Promise<GovernedRecommendationQueryResult> {
+    this.reads += 1;
+    this.actor = actor;
+    assert.equal(caseId, CASE_ID);
+    return this.result;
+  }
+}
+
 class TrackingIdempotency implements IdempotencyPort {
   readonly memory = new MemoryIdempotencyAdapter();
   gets = 0;
@@ -95,7 +109,7 @@ class TrackingIdempotency implements IdempotencyPort {
   }
 }
 
-async function fixture(actor: AuthenticatedActor = OPERATOR) {
+async function fixture(actor: AuthenticatedActor = OPERATOR, governed: GovernedRecommendationReader | null = null) {
   const repository = new MemoryRoadEventRepository();
   const appIdempotency = new MemoryIdempotencyAdapter();
   const application = new RoadEventApplicationService(
@@ -109,7 +123,10 @@ async function fixture(actor: AuthenticatedActor = OPERATOR) {
   const store = new FakeStore();
   const idempotency = new TrackingIdempotency();
   const resolver: ActorResolver = { resolve: async () => actor };
-  return { store, idempotency, handler: createHumanSafetyHttpHandler(application, store, idempotency, resolver, () => new Date(NOW)) };
+  return {
+    store, idempotency,
+    handler: createHumanSafetyHttpHandler(application, store, idempotency, resolver, () => new Date(NOW), governed)
+  };
 }
 
 function request(
@@ -165,6 +182,68 @@ test('authorized list and detail derive shadow advice without mutation or severi
   assert.equal(item.nextEvidenceAdvice.reviewPriority, 'URGENT');
   assert.equal(store.mutations, 0);
   assert.equal(store.current.version, 3);
+});
+
+test('current governed recommendation replaces legacy compatibility only for the authorized read', async () => {
+  const recommendation = { ...fusionRecommendation(), deterministicFingerprint: `sha256:${'c'.repeat(64)}` };
+  const governed = new FakeGovernedRecommendations({
+    status: 'AVAILABLE',
+    snapshot: { status: 'VERIFIED', reason: 'VERIFIED', sourceSnapshotDigest: 'd'.repeat(64) },
+    recommendation, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false
+  });
+  const { handler, store } = await fixture(OPERATOR, governed);
+  store.recommendation = fusionRecommendation();
+  const response = await handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+  const item = (response!.body as { data: HumanSafetyCaseView }).data;
+  assert.equal(response?.status, 200);
+  assert.equal(item.recommendation?.deterministicFingerprint, recommendation.deterministicFingerprint);
+  assert.deepEqual(item.recommendationState, {
+    source: 'GOVERNED_JOURNAL', status: 'CURRENT', humanReviewStatus: 'PENDING',
+    snapshotReason: 'VERIFIED', mode: 'SHADOW_ONLY', activationAuthorized: false
+  });
+  assert.equal(item.nextEvidenceAdvice.status, 'SUGGESTED');
+  assert.equal(item.nextEvidenceAdvice.sourceFingerprint, recommendation.deterministicFingerprint);
+  assert.equal(governed.actor, OPERATOR);
+  assert.equal(store.mutations, 0);
+});
+
+test('withheld governed recommendation suppresses legacy fallback and preserves urgent human review', async () => {
+  const governed = new FakeGovernedRecommendations({
+    status: 'WITHHELD',
+    snapshot: { status: 'INVALIDATED', reason: 'CURRENT_INPUT_CHANGED', sourceSnapshotDigest: 'd'.repeat(64) },
+    recommendation: null, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false
+  });
+  const { handler, store } = await fixture(OPERATOR, governed);
+  store.recommendation = fusionRecommendation();
+  const response = await handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+  const item = (response!.body as { data: HumanSafetyCaseView }).data;
+  assert.equal(response?.status, 200);
+  assert.equal(item.recommendation, null);
+  assert.deepEqual(item.recommendationState, {
+    source: 'GOVERNED_JOURNAL', status: 'WITHHELD', humanReviewStatus: 'PENDING',
+    snapshotReason: 'CURRENT_INPUT_CHANGED', mode: 'SHADOW_ONLY', activationAuthorized: false
+  });
+  assert.equal(item.nextEvidenceAdvice.status, 'ABSTAIN');
+  assert.equal(item.nextEvidenceAdvice.reviewPriority, 'URGENT');
+  assert.equal(item.safetyCase.severity, 'S4');
+  assert.equal(store.mutations, 0);
+});
+
+test('missing governed journal retains legacy recommendation only as explicitly unverified compatibility', async () => {
+  const governed = new FakeGovernedRecommendations({
+    status: 'NOT_FOUND', snapshot: null, recommendation: null,
+    humanReviewStatus: null, mode: null, activationAuthorized: false
+  });
+  const { handler, store } = await fixture(OPERATOR, governed);
+  store.recommendation = fusionRecommendation();
+  const response = await handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+  const item = (response!.body as { data: HumanSafetyCaseView }).data;
+  assert.equal(response?.status, 200);
+  assert.equal(item.recommendation?.deterministicFingerprint, fusionRecommendation().deterministicFingerprint);
+  assert.deepEqual(item.recommendationState, {
+    source: 'LEGACY_COMPATIBILITY', status: 'UNVERIFIED', humanReviewStatus: null,
+    snapshotReason: 'LEGACY_UNBOUND', mode: 'SHADOW_ONLY', activationAuthorized: false
+  });
 });
 
 test('read advice remains behind role, tenant and purpose authorization', async () => {

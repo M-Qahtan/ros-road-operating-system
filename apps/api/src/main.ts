@@ -11,6 +11,7 @@ import {
   PostgresNotificationAudit
 } from './http/mobile-mvp-http.js';
 import { PostgresContactRuntimeRepository } from './ros-eye/contact-orchestration-postgres.js';
+import { createPostgresGovernedRecommendationQuery } from './ros-eye/recommendation-query-postgres.js';
 import { PostgresTransactionPool } from './persistence/postgres/postgres-transaction-pool.js';
 import { createEvidenceServiceForRuntime } from './evidence/evidence-runtime.js';
 import { createEvidenceObjectStorageForRuntime } from './evidence/object-storage-runtime.js';
@@ -49,7 +50,9 @@ const handleHumanSafety = createHumanSafetyHttpHandler(
     ? null
     : new PostgresHumanSafetyStore(persistentSql, contactRepository),
   runtime.idempotency,
-  actorResolver
+  actorResolver,
+  undefined,
+  persistentSql === null ? null : createPostgresGovernedRecommendationQuery(persistentSql)
 );
 const handleMobileMvp = createMobileMvpHttpHandler(
   runtime.roadEvents,

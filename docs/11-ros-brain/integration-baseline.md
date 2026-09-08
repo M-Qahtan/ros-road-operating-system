@@ -261,6 +261,16 @@ Fresh local verification passed 5/5 new governed-read behaviors and 11/11 focuse
 
 Result: **AUTHORIZED CURRENT-RECOMMENDATION READ LOCALLY VERIFIED; LIVE DATABASE AND CASE CONSUMER OPEN.** Tests use SQL-port doubles. No PostgreSQL engine executed migrations `0016` through `0021`, transaction isolation, constraints, rollback, restart, or recovery. The adapter is not yet connected to the existing authorized Human-Safety case reader, no public surface changed, and no PR, CI/archive receipt, merge, deployment, or operational readiness was established.
 
+The Human-Safety compatibility increment resumed from GitHub candidate `f5abdfdc63554f3f2e30c0348f5a1642364693d4`. Live comparison resolved `main` to `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch sixteen commits ahead and zero behind, with no open branch PR and no workflow run on the resume commit.
+
+The existing authorized list, detail, and post-action case views now consume the governed recommendation reader through a narrow read port. `CURRENT` exposes only the journal recommendation and its explicit `PENDING / SHADOW_ONLY / activationAuthorized=false` state. `WITHHELD` removes the recommendation from the view even when a legacy row exists, preserves the invalidation reason and urgent human-review path, and never changes case severity or state. Only a true journal `NOT_FOUND` may retain the legacy row, clearly labeled `LEGACY_COMPATIBILITY / UNVERIFIED`; absence remains `NONE / ABSENT`. The runtime composition supplies the concrete PostgreSQL governed reader without adding an endpoint.
+
+The compatibility proof also corrected the advice validator to accept the canonical `sha256:` fingerprint emitted by governed fusion while retaining raw 64-hex support for legacy rows. Without this correction, a verified journal recommendation would have been incorrectly treated as invalid advice after integration.
+
+Fresh local verification passed 3/3 new compatibility behaviors and 15/15 focused Human-Safety/query tests. All five TypeScript builds and no-emit checks passed; 596/596 workspace tests passed (API 523, dashboard 30, mobile 36, domain 7). Repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests.
+
+Result: **GOVERNED JOURNAL READ INTEGRATED BEHIND THE AUTHORIZED CASE VIEW LOCALLY; LIVE DATABASE RECOVERY EVIDENCE OPEN.** The proof still uses SQL-port doubles. No PostgreSQL engine executed migrations `0016` through `0021`, read-only repeatable-read behavior, constraints, rollback, restart, or recovery. Legacy fallback remains during compatibility and is never promoted to verified. No PR, external archive receipt, merge, deployment, or operational readiness was established.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries

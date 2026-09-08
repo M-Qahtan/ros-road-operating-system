@@ -20,6 +20,7 @@ import { AuthenticatedActor, IdempotencyInFlightError, IdempotencyPort, RoadEven
 import { ApplicationConflictError, IdempotencyConflictError } from '../application/road-event-application.js';
 import { AuthorizationDeniedError } from '../application/local-adapters.js';
 import { ContactSqlPoolPort, ContactSqlRow } from '../ros-eye/contact-orchestration-postgres.js';
+import type { GovernedRecommendationQueryResult } from '../ros-eye/recommendation-query-postgres.js';
 import { ActorResolver } from './actor-resolver.js';
 import { HttpRequest, HttpResponse } from './road-event-http.js';
 
@@ -51,12 +52,22 @@ export interface HumanSafetyCaseView {
   readonly safetyCase: HumanSafetyCaseContract;
   readonly contactSession: HumanContactSessionContract | null;
   readonly recommendation: SafetyFusionRecommendation | null;
+  readonly recommendationState: HumanSafetyRecommendationState;
   readonly nextEvidenceAdvice: NextEvidenceAdvice;
   readonly evidenceState: EvidenceState;
   readonly connectivity: 'HEALTHY' | 'DEGRADED' | 'LOST';
   readonly dependencyHealth: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE';
   readonly provenance: readonly HumanSafetyProvenanceEntry[];
   readonly audit: readonly HumanSafetyAuditEntry[];
+}
+
+export interface HumanSafetyRecommendationState {
+  readonly source: 'GOVERNED_JOURNAL' | 'LEGACY_COMPATIBILITY' | 'NONE';
+  readonly status: 'CURRENT' | 'WITHHELD' | 'UNVERIFIED' | 'ABSENT';
+  readonly humanReviewStatus: 'PENDING' | null;
+  readonly snapshotReason: string | null;
+  readonly mode: 'SHADOW_ONLY';
+  readonly activationAuthorized: false;
 }
 
 export interface HumanSafetyBacking {
@@ -84,6 +95,10 @@ export interface HumanSafetyStore {
     readonly traceId: string;
     readonly occurredAt: string;
   }): Promise<void>;
+}
+
+export interface GovernedRecommendationReader {
+  read(actor: AuthenticatedActor, caseId: string): Promise<GovernedRecommendationQueryResult>;
 }
 
 export class HumanSafetyHttpError extends Error {
@@ -361,9 +376,16 @@ function stateOf(event: RoadEventReadModel, contact: ContactSessionRecord | null
   return states[contact.state];
 }
 
-function view(event: RoadEventReadModel, actor: AuthenticatedActor, backing: HumanSafetyBacking, generatedAt: string): HumanSafetyCaseView {
+function view(
+  event: RoadEventReadModel,
+  actor: AuthenticatedActor,
+  backing: HumanSafetyBacking,
+  governed: GovernedRecommendationQueryResult | null,
+  generatedAt: string
+): HumanSafetyCaseView {
   const contact = backing.contact;
   const authorization = event.closureAuthorization;
+  const selected = selectRecommendation(backing.recommendation, governed);
   const current: Omit<HumanSafetyCaseView, 'nextEvidenceAdvice'> = {
     tenantId: actor.tenantId,
     safetyCase: {
@@ -383,7 +405,8 @@ function view(event: RoadEventReadModel, actor: AuthenticatedActor, backing: Hum
       }
     },
     contactSession: contact === null ? null : contact,
-    recommendation: backing.recommendation,
+    recommendation: selected.recommendation,
+    recommendationState: selected.state,
     evidenceState: backing.evidenceState,
     connectivity: 'HEALTHY', dependencyHealth: 'HEALTHY',
     provenance: backing.provenance, audit: backing.audit
@@ -398,6 +421,36 @@ function view(event: RoadEventReadModel, actor: AuthenticatedActor, backing: Hum
         ...backing.provenance.map((entry) => entry.receivedAt), ...backing.audit.map((entry) => entry.occurredAt)]
     }, generatedAt)
   };
+}
+
+function selectRecommendation(
+  legacy: SafetyFusionRecommendation | null,
+  governed: GovernedRecommendationQueryResult | null
+): { readonly recommendation: SafetyFusionRecommendation | null; readonly state: HumanSafetyRecommendationState } {
+  if (governed?.status === 'AVAILABLE' && governed.recommendation !== null && governed.snapshot?.status === 'VERIFIED') {
+    return { recommendation: governed.recommendation, state: recommendationState('GOVERNED_JOURNAL', 'CURRENT', 'PENDING', 'VERIFIED') };
+  }
+  if (governed !== null && governed.status !== 'NOT_FOUND') {
+    return {
+      recommendation: null,
+      state: recommendationState(
+        governed.status === 'WITHHELD' ? 'GOVERNED_JOURNAL' : 'NONE',
+        'WITHHELD', governed.humanReviewStatus, governed.snapshot?.reason ?? null
+      )
+    };
+  }
+  return legacy === null
+    ? { recommendation: null, state: recommendationState('NONE', 'ABSENT', null, null) }
+    : { recommendation: legacy, state: recommendationState('LEGACY_COMPATIBILITY', 'UNVERIFIED', null, 'LEGACY_UNBOUND') };
+}
+
+function recommendationState(
+  source: HumanSafetyRecommendationState['source'],
+  status: HumanSafetyRecommendationState['status'],
+  humanReviewStatus: HumanSafetyRecommendationState['humanReviewStatus'],
+  snapshotReason: string | null
+): HumanSafetyRecommendationState {
+  return Object.freeze({ source, status, humanReviewStatus, snapshotReason, mode: 'SHADOW_ONLY', activationAuthorized: false });
 }
 
 function envelope(success: boolean, data: unknown, error: { readonly code: string; readonly message: string } | null, traceId: string) {
@@ -451,7 +504,8 @@ export function createHumanSafetyHttpHandler(
   store: HumanSafetyStore | null,
   idempotency: IdempotencyPort,
   actorResolver: ActorResolver,
-  now: () => Date = () => new Date()
+  now: () => Date = () => new Date(),
+  governedRecommendations: GovernedRecommendationReader | null = null
 ): (request: HttpRequest) => Promise<HttpResponse | undefined> {
   return async (request) => {
     if (!request.path.startsWith('/api/v1/human-safety/')) return undefined;
@@ -466,14 +520,24 @@ export function createHumanSafetyHttpHandler(
         const limit = Math.min(numberQuery(request.query.limit, 20), 100);
         const offset = numberQuery(request.query.offset, 0);
         const page = await application.list({ limit, offset }, actor);
-        const items = await Promise.all(page.items.map(async (event) => view(event, actor, await store.read(actor, event.id), now().toISOString())));
+        const items = await Promise.all(page.items.map(async (event) => {
+          const [backing, governed] = await Promise.all([
+            store.read(actor, event.id),
+            governedRecommendations?.read(actor, event.id) ?? Promise.resolve(null)
+          ]);
+          return view(event, actor, backing, governed, now().toISOString());
+        }));
         return { status: 200, body: envelope(true, { items, generatedAt: now().toISOString(), simulation: false }, null, request.traceId) };
       }
       if (caseMatch !== null) {
         if (request.method !== 'GET') throw new HumanSafetyHttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET is supported');
         requireRole(actor, ['OPERATOR', 'SUPERVISOR', 'AUDITOR']);
         const event = await application.getById(caseMatch[1]!, actor);
-        return { status: 200, body: envelope(true, view(event, actor, await store.read(actor, event.id), now().toISOString()), null, request.traceId) };
+        const [backing, governed] = await Promise.all([
+          store.read(actor, event.id),
+          governedRecommendations?.read(actor, event.id) ?? Promise.resolve(null)
+        ]);
+        return { status: 200, body: envelope(true, view(event, actor, backing, governed, now().toISOString()), null, request.traceId) };
       }
       if (actionMatch === null) throw new HumanSafetyHttpError(404, 'NOT_FOUND', 'Route not found');
       if (request.method !== 'POST') throw new HumanSafetyHttpError(405, 'METHOD_NOT_ALLOWED', 'Only POST is supported');
@@ -513,7 +577,11 @@ export function createHumanSafetyHttpHandler(
           });
         }
         const updatedEvent = await application.getById(caseId, actor);
-        return view(updatedEvent, actor, await store.read(actor, caseId), now().toISOString());
+        const [updatedBacking, updatedGoverned] = await Promise.all([
+          store.read(actor, caseId),
+          governedRecommendations?.read(actor, caseId) ?? Promise.resolve(null)
+        ]);
+        return view(updatedEvent, actor, updatedBacking, updatedGoverned, now().toISOString());
       });
       return { status: 200, body: envelope(true, result, null, request.traceId) };
     } catch (error) {

@@ -130,7 +130,7 @@ function validRecommendation(value: SafetyFusionRecommendation): boolean {
     typeof value.ruleSetVersion === 'string' && value.ruleSetVersion.trim().length > 0 &&
     value.authority === 'RECOMMENDATION_ONLY' && value.autonomousDowngradePermitted === false &&
     value.autonomousClosurePermitted === false && value.autonomousDispatchPermitted === false &&
-    typeof value.deterministicFingerprint === 'string' && /^[a-f0-9]{64}$/.test(value.deterministicFingerprint) &&
+    typeof value.deterministicFingerprint === 'string' && /^(?:sha256:)?[a-f0-9]{64}$/.test(value.deterministicFingerprint) &&
     Array.isArray(value.reasonCodes) && value.reasonCodes.every((code) => typeof code === 'string') &&
     Array.isArray(value.missingEvidenceFlags) && value.missingEvidenceFlags.every((flag) => flags.includes(flag)) &&
     Array.isArray(value.guardResults) && value.guardResults.length === kinds.length &&
