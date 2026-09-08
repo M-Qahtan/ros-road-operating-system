@@ -84,20 +84,86 @@ function row(version = 1) {
   };
 }
 
-test('create writes scoped RoadEvent, audit and outbox in one transaction using parameters', async () => {
+test('create writes scoped RoadEvent, independent revision receipts, audit and outbox in one transaction', async () => {
   const client = new FakeClient(() => ({ rows: [], rowCount: 1 }));
   const repository = new PostgresRoadEventRepository(new FakePool(client));
   await repository.create(event(), context);
 
-  assert.deepEqual(client.queries.map((query) => query.text.trim().split(/\s+/)[0]), ['BEGIN', 'INSERT', 'INSERT', 'INSERT', 'COMMIT']);
+  assert.deepEqual(client.queries.map((query) => query.text.trim().split(/\s+/)[0]), ['BEGIN', 'INSERT', 'INSERT', 'INSERT', 'INSERT', 'INSERT', 'COMMIT']);
   assert.match(client.queries[1]!.text, /tenant_id, purpose/);
   assert.match(client.queries[1]!.text, /ST_SetSRID\(ST_MakePoint\(\$10, \$11\)/);
   assert.equal(client.queries[1]!.values[0], EVENT_ID);
   assert.equal(client.queries[1]!.values[1], SCOPE.tenantId);
   assert.equal(client.queries[1]!.values[2], SCOPE.purpose);
-  assert.equal(client.queries[2]!.values[7], TRACE_ID);
-  assert.equal(client.queries[3]!.values[3], CORRELATION_ID);
+  assert.deepEqual(client.queries[2]!.values.slice(0, 5), [SCOPE.tenantId, SCOPE.purpose, EVENT_ID, 'CASE', 1]);
+  assert.deepEqual(client.queries[3]!.values.slice(0, 5), [SCOPE.tenantId, SCOPE.purpose, EVENT_ID, 'SEVERITY', 1]);
+  assert.match(String(client.queries[2]!.values[5]), /^[a-f0-9]{64}$/);
+  assert.match(String(client.queries[3]!.values[5]), /^[a-f0-9]{64}$/);
+  assert.notEqual(client.queries[2]!.values[5], client.queries[3]!.values[5]);
+  assert.equal(client.queries[4]!.values[7], TRACE_ID);
+  assert.equal(client.queries[5]!.values[3], CORRELATION_ID);
   assert.equal(client.released, true);
+});
+
+async function initialLedgerDigests(): Promise<Readonly<Record<string, string>>> {
+  const client = new FakeClient(() => ({ rows: [], rowCount: 1 }));
+  await new PostgresRoadEventRepository(new FakePool(client)).create(event(), context);
+  return Object.fromEntries(
+    client.queries
+      .filter((query) => query.text.includes('INSERT INTO road_event_revision_ledger'))
+      .map((query) => [String(query.values[3]), String(query.values[5])])
+  );
+}
+
+test('severity reassessment verifies both ledgers and appends only a new severity receipt', async () => {
+  const digests = await initialLedgerDigests();
+  const client = new FakeClient((text, values) => {
+    if (text.includes('FROM road_events') && text.includes('FOR UPDATE')) return { rows: [row(1)], rowCount: 1 };
+    if (text.includes('UPDATE road_events')) return { rows: [{ version: 2 }], rowCount: 1 };
+    if (text.includes('SELECT revision, digest FROM road_event_revision_ledger')) {
+      return { rows: [{ revision: 1, digest: digests[String(values[3])] }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  });
+  const updated = event();
+  updated.assessSeverity({
+    level: SeverityLevel.High, score: 82, confidence: 0.91,
+    reasonCodes: ['verified_impact'], requiresHumanReview: true
+  });
+  await new PostgresRoadEventRepository(new FakePool(client)).update(updated, 1, {
+    ...context, action: 'road_event.severity_reassessed', eventType: 'RoadEventSeverityReassessed'
+  });
+
+  const appended = client.queries.filter((query) => query.text.includes('INSERT INTO road_event_revision_ledger'));
+  assert.equal(appended.length, 1);
+  assert.deepEqual(appended[0]?.values.slice(3, 5), ['SEVERITY', 2]);
+  assert.equal(client.queries.at(-1)?.text, 'COMMIT');
+});
+
+test('ledger drift rolls back the RoadEvent update before audit or outbox', async () => {
+  const digests = await initialLedgerDigests();
+  const client = new FakeClient((text, values) => {
+    if (text.includes('FROM road_events') && text.includes('FOR UPDATE')) return { rows: [row(1)], rowCount: 1 };
+    if (text.includes('UPDATE road_events')) return { rows: [{ version: 2 }], rowCount: 1 };
+    if (text.includes('SELECT revision, digest FROM road_event_revision_ledger')) {
+      const component = String(values[3]);
+      return { rows: [{ revision: 1, digest: component === 'CASE' ? 'f'.repeat(64) : digests[component] }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  });
+  const updated = event();
+  updated.assessSeverity({
+    level: SeverityLevel.High, score: 82, confidence: 0.91,
+    reasonCodes: ['verified_impact'], requiresHumanReview: true
+  });
+
+  await assert.rejects(
+    () => new PostgresRoadEventRepository(new FakePool(client)).update(updated, 1, context),
+    /receipt does not match/
+  );
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO audit_logs')), false);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO outbox_events')), false);
+  assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
 });
 
 test('update rejects a stale expected version before writing audit or outbox', async () => {

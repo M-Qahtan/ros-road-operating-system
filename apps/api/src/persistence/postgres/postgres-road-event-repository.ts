@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   RoadEvent,
   RoadEventAccessScope,
@@ -39,10 +40,15 @@ interface RoadEventRow {
 }
 
 interface VersionRow { readonly version: number; }
+interface RevisionLedgerRow { readonly revision: number | string; readonly digest: string; }
 interface PostgresErrorLike { readonly code?: string; }
 
 export class InvalidPersistenceIdentifierError extends Error {
   override readonly name = 'InvalidPersistenceIdentifierError';
+}
+
+export class RoadEventRevisionLedgerError extends Error {
+  override readonly name = 'RoadEventRevisionLedgerError';
 }
 
 function isPostgresError(error: unknown): error is PostgresErrorLike {
@@ -130,6 +136,36 @@ function snapshot(event: RoadEvent): Readonly<Record<string, unknown>> {
   });
 }
 
+type RoadEventRevisionComponent = 'CASE' | 'SEVERITY';
+
+function authoritativeDigest(event: RoadEvent, scope: RoadEventAccessScope, component: RoadEventRevisionComponent): string {
+  const material = component === 'CASE'
+    ? {
+        policyVersion: 'road-event.case-revision.v1', tenantId: scope.tenantId, purpose: scope.purpose,
+        caseId: event.id, reporterActorId: event.reporterActorId, status: event.status,
+        location: { latitude: event.latitude, longitude: event.longitude }, occurredAt: event.occurredAt.toISOString(),
+        closureAuthorization: event.closureAuthorization === undefined ? null : {
+          actorId: event.closureAuthorization.actorId,
+          authorizedAt: event.closureAuthorization.authorizedAt.toISOString(),
+          reason: event.closureAuthorization.reason
+        }
+      }
+    : {
+        policyVersion: 'road-event.severity-revision.v1', tenantId: scope.tenantId, purpose: scope.purpose,
+        caseId: event.id, level: event.severity.level, score: event.severity.score,
+        confidence: event.severity.confidence, reasonCodes: [...event.severity.reasonCodes],
+        requiresHumanReview: event.severity.requiresHumanReview
+      };
+  return createHash('sha256').update(canonicalize(material), 'utf8').digest('hex');
+}
+
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
+  const source = value as Record<string, unknown>;
+  return `{${Object.keys(source).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(source[key])}`).join(',')}}`;
+}
+
 function validateContext(context: RoadEventWriteContext): { readonly occurredAt: Date; readonly scope: RoadEventAccessScope } {
   requireText(context.actorType, 'actorType', 64);
   requireText(context.action, 'action', 128);
@@ -215,6 +251,7 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
             trustedReporterActorId
           ]
         );
+        await this.appendInitialRevisionReceipts(client, event, scope, occurredAt);
         await this.appendAuditAndOutbox(client, event, null, afterState, context, occurredAt);
       });
     } catch (error) {
@@ -282,6 +319,7 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         ]
       );
       if (updated.rowCount !== 1) throw new RoadEventConcurrencyError(`RoadEvent ${event.id} changed during update`);
+      await this.appendChangedRevisionReceipts(client, mapRoadEvent(row), event, scope, occurredAt);
       await this.appendAuditAndOutbox(client, event, beforeState, afterState, context, occurredAt);
     });
   }
@@ -370,6 +408,66 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         context.purpose
       ]
     );
+  }
+
+  private async appendInitialRevisionReceipts(
+    client: PostgresClient,
+    event: RoadEvent,
+    scope: RoadEventAccessScope,
+    recordedAt: Date
+  ): Promise<void> {
+    for (const component of ['CASE', 'SEVERITY'] as const) {
+      await this.insertRevisionReceipt(client, event, scope, component, 1, authoritativeDigest(event, scope, component), recordedAt);
+    }
+  }
+
+  private async appendChangedRevisionReceipts(
+    client: PostgresClient,
+    before: RoadEvent,
+    after: RoadEvent,
+    scope: RoadEventAccessScope,
+    recordedAt: Date
+  ): Promise<void> {
+    for (const component of ['CASE', 'SEVERITY'] as const) {
+      const latest = await client.query<RevisionLedgerRow>(
+        `SELECT revision, digest FROM road_event_revision_ledger
+         WHERE tenant_id = $1 AND purpose = $2 AND case_id = $3::uuid AND component = $4
+         ORDER BY revision DESC LIMIT 1 FOR UPDATE`,
+        [scope.tenantId, scope.purpose, after.id, component]
+      );
+      const receipt = latest.rows[0];
+      if (latest.rowCount !== 1 || receipt === undefined) {
+        throw new RoadEventRevisionLedgerError(`${component} revision receipt is missing`);
+      }
+      const revision = Number(receipt.revision);
+      if (!Number.isSafeInteger(revision) || revision < 1 || !/^[a-f0-9]{64}$/.test(receipt.digest)) {
+        throw new RoadEventRevisionLedgerError(`${component} revision receipt is invalid`);
+      }
+      const beforeDigest = authoritativeDigest(before, scope, component);
+      if (receipt.digest !== beforeDigest) throw new RoadEventRevisionLedgerError(`${component} revision receipt does not match RoadEvent state`);
+      const afterDigest = authoritativeDigest(after, scope, component);
+      if (afterDigest !== beforeDigest) {
+        await this.insertRevisionReceipt(client, after, scope, component, revision + 1, afterDigest, recordedAt);
+      }
+    }
+  }
+
+  private async insertRevisionReceipt(
+    client: PostgresClient,
+    event: RoadEvent,
+    scope: RoadEventAccessScope,
+    component: RoadEventRevisionComponent,
+    revision: number,
+    digest: string,
+    recordedAt: Date
+  ): Promise<void> {
+    const result = await client.query(
+      `INSERT INTO road_event_revision_ledger (
+         tenant_id, purpose, case_id, component, revision, digest, recorded_at
+       ) VALUES ($1, $2, $3::uuid, $4, $5, $6, $7)`,
+      [scope.tenantId, scope.purpose, event.id, component, revision, digest, recordedAt]
+    );
+    if (result.rowCount !== 1) throw new RoadEventRevisionLedgerError(`${component} revision receipt was not appended`);
   }
 
   private async withTransaction<T>(operation: (client: PostgresClient) => Promise<T>): Promise<T> {
