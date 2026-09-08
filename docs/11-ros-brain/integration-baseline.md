@@ -251,6 +251,16 @@ Fresh local verification passed 5/5 new authorization/composition behaviors, 10/
 
 Result: **TRUSTED INTERNAL SNAPSHOT-TO-JOURNAL COMPOSITION LOCALLY VERIFIED; LIVE DATABASE AND CONSUMER PATH OPEN.** The full proof still uses SQL-port doubles. No PostgreSQL engine executed migrations `0016` through `0021`, transaction isolation, constraints, locks, rollback, idempotent retry after restart, or recovery. No case-read consumer exposes the new journal; no PR, CI/archive receipt, merge, deployment, or operational readiness was established.
 
+The governed-read increment resumed from GitHub candidate `516e261e48d5cba1f8447905cab35af0a4b07946`. Live comparison resolved `main` to `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch fifteen commits ahead and zero behind, with no open branch PR and no workflow run on the resume commit.
+
+`PostgresGovernedRecommendationQuery` is an exact `Tenant + Purpose + case` read model for `OPERATOR`, `SUPERVISOR`, and read-only `AUDITOR` identities. It validates a journal row through the writer's exact safety schema, reloads its persisted input snapshot and all five current module-owned receipts inside one `REPEATABLE READ, READ ONLY` transaction, then exposes the recommendation only when `assessRecommendationSnapshotBinding` returns `VERIFIED`. Any current revision change, unavailable owner, malformed payload, forged activation/review column, or cross-scope access returns no recommendation. A valid historical row remains visibly pending human review while its stale recommendation is `WITHHELD`; malformed rows cannot claim a persisted review state. Source reads stop at the first unavailable owner.
+
+Review found and removed `FOR SHARE` clauses from the read-only queries. PostgreSQL forbids row-locking clauses in read-only transactions; repeatable-read snapshot consistency is sufficient for this non-mutating view. The regression assertion keeps both SQL statements lock-free while preserving `READ ONLY` transaction mode.
+
+Fresh local verification passed 5/5 new governed-read behaviors and 11/11 focused journal/query tests. All five TypeScript builds and no-emit checks passed; 593/593 workspace tests passed (API 520, dashboard 30, mobile 36, domain 7). Repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests.
+
+Result: **AUTHORIZED CURRENT-RECOMMENDATION READ LOCALLY VERIFIED; LIVE DATABASE AND CASE CONSUMER OPEN.** Tests use SQL-port doubles. No PostgreSQL engine executed migrations `0016` through `0021`, transaction isolation, constraints, rollback, restart, or recovery. The adapter is not yet connected to the existing authorized Human-Safety case reader, no public surface changed, and no PR, CI/archive receipt, merge, deployment, or operational readiness was established.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries

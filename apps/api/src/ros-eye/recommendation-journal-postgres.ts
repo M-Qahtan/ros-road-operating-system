@@ -113,6 +113,11 @@ function validRecommendation(request: AppendRecommendationRequest): boolean {
     Array.isArray(request.recommendation.guardResults) && request.recommendation.guardResults.every((item) => exactKeys(item as unknown as Record<string, unknown>, GUARD_KEYS));
 }
 
+/** Shared by read adapters so persisted payloads receive the writer's exact safety validation. */
+export function isValidRecommendationJournalEntry(request: AppendRecommendationRequest): boolean {
+  return validRecommendation(request);
+}
+
 function validRegistry(entry: SafetyFusionRuleSetRegistryEntry | null, recommendation: SafetyFusionRecommendation): boolean {
   return entry !== null && entry.schemaVersion === SAFETY_FUSION_REGISTRY_SCHEMA_VERSION && entry.status === 'ACTIVE' &&
     entry.ruleSetVersion === recommendation.ruleSetVersion && entry.thresholdVersion === recommendation.thresholdVersion &&
