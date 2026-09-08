@@ -38,7 +38,9 @@ function verifier(claims: VerifiedOidcClaims = CLAIMS): OidcTokenVerifierPort {
 test('accepts only an exact binding returned by the trusted verifier', async () => {
   assert.deepEqual(await resolveTrustedIntegrationPrincipal('signed-token', verifier(), POLICY, NOW), {
     subject: 'integration-service-1', clientId: 'traffic-sandbox', tenantId: 'riyadh-pilot',
-    purpose: 'TRAFFIC_COORDINATION', mfaVerified: true, roles: ['INTEGRATION_SERVICE']
+    purpose: 'TRAFFIC_COORDINATION', mfaVerified: true, roles: ['INTEGRATION_SERVICE'],
+    issuedAt: new Date((NOW - 60) * 1_000).toISOString(),
+    expiresAt: new Date((NOW + 300) * 1_000).toISOString()
   });
 });
 

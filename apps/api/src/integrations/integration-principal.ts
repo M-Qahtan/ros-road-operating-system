@@ -54,6 +54,9 @@ export interface TrustedIntegrationPrincipal {
   readonly purpose: IntegrationPurpose;
   readonly mfaVerified: boolean;
   readonly roles: readonly IntegrationPrincipalRole[];
+  /** Preserved from verified claims so downstream capabilities cannot outlive the authenticated session. */
+  readonly issuedAt: string;
+  readonly expiresAt: string;
 }
 
 export class IntegrationPrincipalError extends Error {
@@ -165,5 +168,13 @@ export async function resolveTrustedIntegrationPrincipal(
   const mfaVerified = methods.includes('mfa');
   if (policy.requireMfa && !mfaVerified) throw new IntegrationPrincipalError('Explicit MFA authentication is required');
 
-  return Object.freeze({ subject, clientId, tenantId, purpose, mfaVerified, roles });
+  const issuedAt = epochIso(claims.issuedAtEpochSeconds, 'issued-at');
+  const expiresAt = epochIso(claims.expiresAtEpochSeconds, 'expiry');
+  return Object.freeze({ subject, clientId, tenantId, purpose, mfaVerified, roles, issuedAt, expiresAt });
+}
+
+function epochIso(value: number, field: string): string {
+  const date = new Date(value * 1_000);
+  if (!Number.isFinite(date.getTime())) throw new IntegrationPrincipalError(`Token ${field} timestamp is invalid`);
+  return date.toISOString();
 }
