@@ -1,6 +1,6 @@
-# ROS Brain daily delivery plan
+# ROS Brain delivery plan
 
-Status: **DAILY ENGINEERING CADENCE — SHADOW_ONLY — WIP LIMIT 1**
+Status: **HOURLY ENGINEERING CADENCE — SHADOW_ONLY — WIP LIMIT 1**
 
 - Start baseline: `8096312169dc7f769a45b419d5678b5bd5f461ad` (`8096312`).
 - Planning date: 2026-09-07.
@@ -9,9 +9,9 @@ Status: **DAILY ENGINEERING CADENCE — SHADOW_ONLY — WIP LIMIT 1**
 - Rollback owner: **Mohamed Qahtan**.
 - Architecture and gap register: [integration baseline](integration-baseline.md).
 
-The founder requested daily delivery cycles to increase speed while preserving accuracy and stability. Each cycle delivers one small, integrated, reviewable behavior with fresh evidence. A cycle ends with an accepted result or an explicit carry-over; the calendar does not turn incomplete work into completion.
+The founder replaced the prior daily schedule with hourly continuation cycles on 2026-09-08. Each cycle advances one small, integrated, reviewable behavior with fresh evidence. A cycle ends with an accepted result or an explicit carry-over; the clock does not turn incomplete work into completion and an unfinished write surface is resumed rather than overlapped.
 
-This plan sets the order of work, not a promised date for completing the full product. A cycle can repeat or be split when its actual evidence shows that the slice is too large. Any scheduled daily check supports the cadence but does not by itself prove code was built, tested, merged, or deployed.
+This plan sets the order of work, not a promised date for completing the full product. A cycle can repeat or be split when its actual evidence shows that the slice is too large. Any scheduled hourly check supports the cadence but does not by itself prove code was built, tested, merged, or deployed.
 
 ## Working agreement
 
@@ -22,9 +22,9 @@ This plan sets the order of work, not a promised date for completing the full pr
 5. Run targeted checks that exercise the changed public behavior, then proportionate affected checks and required gates. A failed, stale, skipped, cancelled, or missing check stays visible.
 6. Integrate only after inspecting the combined diff and fresh results. Do not begin the next outcome while a safety-relevant failure remains unresolved in the active slice.
 7. Preserve `SHADOW_ONLY`, recommendation-only authority, human review, tenant/purpose isolation, privacy, and append-only history throughout.
-8. Daily engineering does not spend on cloud services, apply infrastructure, deploy, activate external adapters, or establish a public-road pilot. The founder reported prior AWS resources deleted; no cycle assumes those resources still exist.
+8. Hourly engineering does not spend on cloud services, apply infrastructure, deploy, activate external adapters, or establish a public-road pilot. The founder reported prior AWS resources deleted; no cycle assumes those resources still exist.
 
-## Daily cycle structure
+## Hourly cycle structure
 
 | Stage | Required output | Exit condition |
 |---|---|---|
@@ -32,9 +32,9 @@ This plan sets the order of work, not a promised date for completing the full pr
 | Demonstrate | A focused reproduction or acceptance test at the real seam. | The missing behavior or risk is observable; assumptions are written down. |
 | Build | Minimal cohesive code, contract, and relevant documentation changes. | The new behavior exists without expanding authority or unrelated scope. |
 | Verify | Fresh commands, exit statuses, scenario results, candidate identity, and explicit unverified boundaries. | Acceptance criteria map to direct evidence; failures are resolved or the cycle is carried over. |
-| Review and hand off | Diff review, risk/rollback note, daily report, and next objective. | Mohamed Qahtan can see what works, what remains open, and the next concrete step. |
+| Review and hand off | Diff review, risk/rollback note, hourly report, and next objective. | Mohamed Qahtan can see what works, what remains open, and the next concrete step. |
 
-## Ordered daily outcomes
+## Ordered delivery outcomes
 
 These are dependency-ordered cycles, not a commitment that all listed outcomes finish on consecutive calendar days. If an outcome needs more than one cycle, finish its safe sub-slice and retain the parent objective as the sole active item.
 
@@ -64,7 +64,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Review delivery | Branch `codex/ros-brain-next-evidence-daily`; no PR opened because current PR workflows can automatically invoke AWS archival. Preserve those gates and resolve this no-spend workflow dependency explicitly. |
 | Next handoff | Cycle 2 snapshot contract and authoritative revision/data ownership decisions. |
 
-## Daily report and definition of done
+## Cycle 2 progress record — authoritative snapshot contract
+
+| Field | Current record |
+|---|---|
+| Resume point | Branch `codex/ros-brain-next-evidence-daily` at `6d1c94afe8e0d947b6fdd87d964a7c0c7a03a2dd`; `main` remained `8096312169dc7f769a45b419d5678b5bd5f461ad`. The worktree was clean before this increment. |
+| Delivered sub-slice | Versioned contract and fail-closed assessment for binding one recommendation fingerprint/input version to one snapshot digest and exact case, severity, contact, evidence, and indicator revision/digest tuple. |
+| Invalidation behavior | A revision change, content correction with the same revision but a different digest, contact creation/removal, scope drift, source mismatch, or invalid chronology prevents `VERIFIED`. Missing or malformed receipts remain `UNVERIFIED`. |
+| Ownership boundary | Source modules still own their revisions and canonical digests. The contract verifies receipts but does not mint them, read new data, mutate a case, or grant authority. |
+| Fresh local evidence | Relevant TypeScript builds and no-emit checks passed; 4/4 new snapshot tests, 13/13 snapshot/advisor focused tests, and 526/526 workspace tests passed. Repository/retention/negative gates passed, including 8/8 external-evidence logic tests. |
+| Result | **PARTIAL CYCLE 2 CONTRACT VERIFIED; DURABLE SNAPSHOT NOT IMPLEMENTED.** No production snapshot loader/writer, PostgreSQL concurrency proof, migration, CI/archive receipt, merge, deployment, or field readiness was established. |
+| Next handoff | Implement the smallest tenant+purpose-scoped durable snapshot capture/read seam with optimistic concurrency, using authoritative component revisions/digests rather than projected counts. |
+
+## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
 
@@ -82,12 +94,12 @@ The report must stand alone and lead with observable progress. Use this compact 
 
 A local cycle is done when its behavior is implemented, acceptance is directly evidenced on the combined candidate, the diff is reviewed, limitations are explicit, and the next handoff is ready. Documentation alone cannot close an implementation objective. Tests of the planner alone cannot close API/dashboard integration.
 
-The existing executive task was updated successfully on **2026-09-07 at 23:20 UTC** to one cycle at **09:00 Asia/Riyadh**, starting **2026-09-08**. The returned configuration confirms `is_enabled=true` and `RRULE:FREQ=DAILY`; the old hourly executive schedule was replaced. A scheduled run must locate the current branch/main state, continue any unfinished safety-relevant work first, and report only actions actually performed. If its available tools cannot edit, test, or persist code, it records that limitation rather than claiming a completed build. A successful schedule update does not prove a future execution has happened.
+The founder's **2026-09-08** instruction replaces the prior 09:00 daily cadence with one continuation cycle every hour. A scheduled run must locate the current branch/main state, continue any unfinished safety-relevant work first, and report only actions actually performed. If its available tools cannot edit, test, or persist code, it records that limitation rather than claiming a completed build. A successful schedule update does not prove a future execution has happened.
 
 ## Quality, evidence, and scope gates
 
 - Preserve the accepted [Modular Monolith architecture](../02-architecture/adr/ADR-001-modular-monolith.md) and existing [Human Safety lifecycle/authority policy](../10-human-safety/lifecycle-and-authority.md).
-- Follow [operational release gates](../09-reliability/operational-readiness-and-release-gates.md) for release acceptance. Daily progress never bypasses protected-branch reviews, mandatory checks, or candidate/base/tested-merge evidence binding.
+- Follow [operational release gates](../09-reliability/operational-readiness-and-release-gates.md) for release acceptance. Hourly progress never bypasses protected-branch reviews, mandatory checks, or candidate/base/tested-merge evidence binding.
 - REL-013 still requires the approved external immutable archive with effective retention of at least 365 days and independently verified encryption, integrity, object version, and receipt provenance. Its availability after AWS deletion is unverified; a release stays blocked until the requirement is satisfied. A different archive implementation would require a reviewed governance change, not an implicit substitution in a daily task.
 - Preserve [pilot hard-stop criteria](../07-pilot/kpi-stop-criteria.md) and the [shadow/rollback protocol](../07-pilot/shadow-canary-rollback.md). Numeric performance targets require their existing baseline and approval process.
 - There is no automatic permission escalation from recommendation to execution. No day in this plan authorizes cloud spend/apply/deploy, government dispatch, public-road intervention, production-camera access, or vehicle control.

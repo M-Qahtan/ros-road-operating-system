@@ -87,4 +87,5 @@ export interface RoadEventPageResponse {
 export * from './human-safety.js';
 export * from './human-contact-protocol.js';
 export * from './safety-fusion.js';
+export * from './input-snapshot.js';
 export * from './next-evidence.js';
