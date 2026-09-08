@@ -8,6 +8,7 @@ import type {
   OutboxDeliveryDisposition,
   ProcessClaimedOutboxInput
 } from './contact-orchestration.js';
+import { contactRevisionDigest } from './contact-revision.js';
 
 export type ContactSqlRow = Readonly<Record<string, unknown>>;
 
@@ -28,7 +29,7 @@ export interface ContactSqlPoolPort extends ContactSqlConnectionPort {
   transaction<T>(work: (connection: ContactSqlConnectionPort) => Promise<T>): Promise<T>;
 }
 
-const SESSION_COLUMNS = `
+export const CONTACT_SESSION_COLUMNS = `
   tenant_id, case_id, session_id, owner_actor_id, state, version, protocol_version,
   prompt_policy_version, accessibility_policy_version, language,
   identity_confidence, active_channel, attempt_count, response_deadline_at,
@@ -43,7 +44,7 @@ const OUTBOX_COLUMNS = `
   delivery_started_at, delivery_deadline_at`;
 
 export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
-  getSessionForUpdate: `SELECT ${SESSION_COLUMNS} FROM ros_eye_contact_sessions
+  getSessionForUpdate: `SELECT ${CONTACT_SESSION_COLUMNS} FROM ros_eye_contact_sessions
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
     FOR UPDATE`,
   claimDueSessions: `WITH due AS (
@@ -154,7 +155,7 @@ export class PostgresContactRuntimeRepository implements ContactRuntimeRepositor
   async claimDueSessions(input: { workerId: string; now: string; leaseMs: number; limit: number }): Promise<ContactSessionRecord[]> {
     return this.pool.transaction(async (connection) => {
       const result = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.claimDueSessions, [input.workerId, input.now, input.leaseMs, input.limit]);
-      return result.rows.map(mapSession);
+      return result.rows.map(mapContactSessionRow);
     });
   }
 
@@ -257,11 +258,12 @@ class PostgresContactRuntimeTransaction implements ContactRuntimeTransaction {
 
   async getSessionForUpdate(scope: ContactScope): Promise<ContactSessionRecord | null> {
     const result = await this.connection.query(POSTGRES_CONTACT_RUNTIME_SQL.getSessionForUpdate, [scope.tenantId, scope.caseId, scope.sessionId]);
-    return result.rows[0] === undefined ? null : mapSession(result.rows[0]);
+    return result.rows[0] === undefined ? null : mapContactSessionRow(result.rows[0]);
   }
 
   async insertSession(session: ContactSessionRecord): Promise<void> {
-    await this.connection.query(`INSERT INTO ros_eye_contact_sessions (
+    const revisionState = await this.loadRevisionState(session);
+    const inserted = await this.connection.query(`INSERT INTO ros_eye_contact_sessions (
       tenant_id, case_id, session_id, owner_actor_id, state, version, protocol_version,
       prompt_policy_version, accessibility_policy_version, language,
       identity_confidence, active_channel, attempt_count, response_deadline_at,
@@ -271,9 +273,14 @@ class PostgresContactRuntimeTransaction implements ContactRuntimeTransaction {
       $1,$2,$3,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::timestamptz,$15::timestamptz,
       $16::timestamptz,$17,$18,$19::jsonb,$20,$21::timestamptz,$22::timestamptz
     )`, sessionValues(session));
+    if (inserted.rowCount !== 1) throw new Error('contact session was not inserted');
+    await this.appendRevision(revisionState, [...revisionState.sessions, session], session.updatedAt);
   }
 
   async updateSession(session: ContactSessionRecord, expectedVersion: number): Promise<'UPDATED' | 'CONFLICT'> {
+    const revisionState = await this.loadRevisionState(session);
+    const current = revisionState.sessions.find((candidate) => candidate.sessionId === session.sessionId);
+    if (current === undefined || current.version !== expectedVersion) return 'CONFLICT';
     const result = await this.connection.query(`UPDATE ros_eye_contact_sessions SET
       state=$5, version=$6, protocol_version=$7, prompt_policy_version=$8,
       accessibility_policy_version=$9, language=$10, identity_confidence=$11,
@@ -284,7 +291,13 @@ class PostgresContactRuntimeTransaction implements ContactRuntimeTransaction {
       WHERE tenant_id=$1 AND case_id=$2 AND session_id=$3
         AND owner_actor_id IS NOT DISTINCT FROM $4::uuid AND version=$23`,
     [...sessionValues(session), expectedVersion]);
-    return result.rowCount === 1 ? 'UPDATED' : 'CONFLICT';
+    if (result.rowCount !== 1) return 'CONFLICT';
+    await this.appendRevision(
+      revisionState,
+      revisionState.sessions.map((candidate) => candidate.sessionId === session.sessionId ? session : candidate),
+      session.updatedAt
+    );
+    return 'UPDATED';
   }
 
   async insertInboxIfAbsent(scope: ContactScope, idempotencyKey: string): Promise<'INSERTED' | 'EXISTS'> {
@@ -341,6 +354,58 @@ class PostgresContactRuntimeTransaction implements ContactRuntimeTransaction {
         AND delivered_at IS NULL AND cancelled_at IS NULL`,
     [scope.tenantId, scope.caseId, scope.sessionId, occurredAt]);
   }
+
+  private async loadRevisionState(scope: ContactScope): Promise<ContactRevisionState> {
+    const parent = await this.connection.query(`SELECT purpose FROM road_events
+      WHERE tenant_id=$1 AND id::text=$2
+      FOR UPDATE`, [scope.tenantId, scope.caseId]);
+    if (parent.rowCount !== 1 || parent.rows.length !== 1 || typeof parent.rows[0]?.purpose !== 'string') {
+      throw new Error('contact revision parent RoadEvent is unavailable or ambiguous');
+    }
+    const purpose = parent.rows[0].purpose;
+    const sessions = await this.connection.query(`SELECT ${CONTACT_SESSION_COLUMNS}
+      FROM ros_eye_contact_sessions
+      WHERE tenant_id=$1 AND case_id=$2
+      ORDER BY session_id`, [scope.tenantId, scope.caseId]);
+    const mapped = sessions.rows.map(mapContactSessionRow);
+    const latest = await this.connection.query(`SELECT revision, digest
+      FROM ros_eye_contact_revision_ledger
+      WHERE tenant_id=$1 AND purpose=$2 AND case_id::text=$3
+      ORDER BY revision DESC LIMIT 1
+      FOR UPDATE`, [scope.tenantId, purpose, scope.caseId]);
+    const receipt = latest.rows[0];
+    if (mapped.length === 0) {
+      if (receipt !== undefined || latest.rowCount !== 0) throw new Error('contact revision ledger exists without contact state');
+      return { tenantId: scope.tenantId, purpose, caseId: scope.caseId, sessions: mapped, revision: 0 };
+    }
+    if (latest.rowCount !== 1 || latest.rows.length !== 1 || receipt === undefined) {
+      throw new Error('contact revision receipt is missing or ambiguous');
+    }
+    const revision = integer(receipt, 'revision');
+    const digest = text(receipt, 'digest');
+    if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('invalid contact revision digest');
+    const expected = contactRevisionDigest({ tenantId: scope.tenantId, purpose, caseId: scope.caseId }, mapped);
+    if (digest !== expected) throw new Error('contact revision receipt does not match current contact state');
+    return { tenantId: scope.tenantId, purpose, caseId: scope.caseId, sessions: mapped, revision };
+  }
+
+  private async appendRevision(state: ContactRevisionState, sessions: readonly ContactSessionRecord[], recordedAt: string): Promise<void> {
+    const digest = contactRevisionDigest(state, sessions);
+    const result = await this.connection.query(`INSERT INTO ros_eye_contact_revision_ledger (
+      tenant_id, purpose, case_id, revision, status, digest, recorded_at
+    ) VALUES ($1,$2,$3::uuid,$4,'PRESENT',$5,$6::timestamptz)`, [
+      state.tenantId, state.purpose, state.caseId, state.revision + 1, digest, recordedAt
+    ]);
+    if (result.rowCount !== 1) throw new Error('contact revision receipt was not appended');
+  }
+}
+
+interface ContactRevisionState {
+  readonly tenantId: string;
+  readonly purpose: string;
+  readonly caseId: string;
+  readonly sessions: readonly ContactSessionRecord[];
+  readonly revision: number;
 }
 
 async function readDispositionWithConnection(
@@ -373,7 +438,7 @@ function sessionValues(session: ContactSessionRecord): readonly unknown[] {
   ];
 }
 
-function mapSession(row: ContactSqlRow): ContactSessionRecord {
+export function mapContactSessionRow(row: ContactSqlRow): ContactSessionRecord {
   return {
     tenantId: text(row, 'tenant_id'),
     caseId: text(row, 'case_id'),
