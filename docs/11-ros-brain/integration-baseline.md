@@ -201,6 +201,16 @@ Fresh local verification passed 7/7 Indicator ledger tests, 48/48 affected Human
 
 Result: **ALL FIVE AUTHORITATIVE SOURCE TYPES IMPLEMENTED; RUNTIME COMPOSITION OPEN.** Evidence uses SQL-port doubles. No PostgreSQL engine executed migration `0020`, constraints, writer serialization, or rollback. The five adapters have not yet been wired into one runtime capture factory, so BRAIN-01 remains partial and BRAIN-02 has not started.
 
+The concrete PostgreSQL composition increment resumed from GitHub candidate `b1037f54d8af6b9248a11c7c74791caa9970bab7`. GitHub resolved `main` to `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch ten commits ahead and zero behind, with no open branch PR and no workflow run on the resume commit.
+
+`createPostgresAuthoritativeInputSnapshotCaptureService` is the single internal composition root for the five module-owned sources: RoadEvent CASE, RoadEvent SEVERITY, Contact, Evidence, and Human Safety Indicators. It supplies only read adapters to `AuthoritativeInputSnapshotCaptureService`; it exposes no source writer, collection seam, recommendation store, dispatch, closure, severity mutation, or actuation authority.
+
+The concrete integration test executes both snapshot versions through that factory. Version 1 binds the exact five authoritative receipts. A later Indicator correction advances only the Human-Safety-owned revision/digest, and version 2 carries that new receipt. Assessing the version-1 recommendation against the version-2 current receipts deterministically returns `INVALIDATED / CURRENT_INPUT_CHANGED`. The captured SQL contains no recommendation insert, so this increment does not imply recommendation persistence.
+
+Fresh local verification passed 1/1 concrete composition/invalidation test, 17/17 focused capture/binding/Indicator tests, and 567/567 workspace tests (API 494, dashboard 30, mobile 36, domain 7). All five TypeScript builds and repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests. The two-file code/test manifest SHA-256 is `0769ef2e7c67ee2a716e1ddeaf43078a35ef8c57bd0546230fa20e9e41661e57`.
+
+Result: **BRAIN-01 LOCALLY INTEGRATED; LIVE DATABASE AND RUNTIME INVOCATION OPEN.** Verification still uses SQL-port doubles. No PostgreSQL engine executed migrations `0016` through `0020`, isolation, locks, constraints, or rollback, and no HTTP/worker command invokes the factory. BRAIN-02 governed evaluation and durable recommendation writing has not started.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries
