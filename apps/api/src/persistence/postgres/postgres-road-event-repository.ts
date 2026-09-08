@@ -136,9 +136,9 @@ function snapshot(event: RoadEvent): Readonly<Record<string, unknown>> {
   });
 }
 
-type RoadEventRevisionComponent = 'CASE' | 'SEVERITY';
+export type RoadEventRevisionComponent = 'CASE' | 'SEVERITY';
 
-function authoritativeDigest(event: RoadEvent, scope: RoadEventAccessScope, component: RoadEventRevisionComponent): string {
+export function roadEventRevisionDigest(event: RoadEvent, scope: RoadEventAccessScope, component: RoadEventRevisionComponent): string {
   const material = component === 'CASE'
     ? {
         policyVersion: 'road-event.case-revision.v1', tenantId: scope.tenantId, purpose: scope.purpose,
@@ -417,7 +417,7 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     recordedAt: Date
   ): Promise<void> {
     for (const component of ['CASE', 'SEVERITY'] as const) {
-      await this.insertRevisionReceipt(client, event, scope, component, 1, authoritativeDigest(event, scope, component), recordedAt);
+      await this.insertRevisionReceipt(client, event, scope, component, 1, roadEventRevisionDigest(event, scope, component), recordedAt);
     }
   }
 
@@ -443,9 +443,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
       if (!Number.isSafeInteger(revision) || revision < 1 || !/^[a-f0-9]{64}$/.test(receipt.digest)) {
         throw new RoadEventRevisionLedgerError(`${component} revision receipt is invalid`);
       }
-      const beforeDigest = authoritativeDigest(before, scope, component);
+      const beforeDigest = roadEventRevisionDigest(before, scope, component);
       if (receipt.digest !== beforeDigest) throw new RoadEventRevisionLedgerError(`${component} revision receipt does not match RoadEvent state`);
-      const afterDigest = authoritativeDigest(after, scope, component);
+      const afterDigest = roadEventRevisionDigest(after, scope, component);
       if (afterDigest !== beforeDigest) {
         await this.insertRevisionReceipt(client, after, scope, component, revision + 1, afterDigest, recordedAt);
       }
