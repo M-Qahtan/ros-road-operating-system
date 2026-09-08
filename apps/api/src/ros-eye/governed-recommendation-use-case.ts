@@ -7,6 +7,7 @@ import {
 } from '@ros/contracts';
 import type { ContactSqlConnectionPort, ContactSqlPoolPort } from './contact-orchestration-postgres.js';
 import type { GovernedSafetyFusionOrchestrator } from './governed-safety-fusion.js';
+import type { SafetyFusionEvidenceAuthorityPort } from './governed-safety-fusion.js';
 import { PostgresInputSnapshotRepository, type InputSnapshotScope } from './input-snapshot-postgres.js';
 import { PostgresRecommendationJournal, type RecommendationJournalResult } from './recommendation-journal-postgres.js';
 
@@ -31,6 +32,7 @@ export interface AuthoritativeSafetyFusionInputReceipt {
   readonly authority: 'SOURCE_LEDGER';
   readonly sourceSnapshotDigest: string;
   readonly input: SafetyFusionInput;
+  readonly evidenceAuthority: SafetyFusionEvidenceAuthorityPort;
 }
 export interface AuthoritativeSafetyFusionInputPort {
   load(connection: ContactSqlConnectionPort, scope: InputSnapshotScope, snapshot: SafetyFusionInputSnapshot): Promise<AuthoritativeSafetyFusionInputReceipt | null>;
@@ -75,7 +77,7 @@ export class GovernedRecommendationUseCase {
       if (source === null || source.authority !== 'SOURCE_LEDGER') return output('REJECTED', 'SOURCE_UNAVAILABLE', null);
       if (!validSource(source, request, snapshot)) return output('REJECTED', 'SOURCE_MISMATCH', null);
 
-      const recommendation = await this.fusion.recommend(source.input);
+      const recommendation = await this.fusion.recommend(source.input, source.evidenceAuthority);
       if (recommendation.guardResults.some((guard) => guard.disposition === 'BLOCK_AND_REVIEW')) {
         return output('REJECTED', 'EVALUATION_BLOCKED', recommendation);
       }

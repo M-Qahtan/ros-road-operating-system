@@ -89,9 +89,15 @@ class InputLoader implements AuthoritativeSafetyFusionInputPort {
   calls = 0;
   digest = snapshot().snapshotDigest;
   available = true;
+  evidenceAuthority: SafetyFusionEvidenceAuthorityPort = new EvidenceAuthority();
   async load() {
     this.calls += 1;
-    return this.available ? { authority: 'SOURCE_LEDGER' as const, sourceSnapshotDigest: this.digest, input: fusionInput } : null;
+    return this.available ? {
+      authority: 'SOURCE_LEDGER' as const,
+      sourceSnapshotDigest: this.digest,
+      input: fusionInput,
+      evidenceAuthority: this.evidenceAuthority
+    } : null;
   }
 }
 
@@ -115,6 +121,7 @@ class SequenceClock implements SafetyFusionClockPort {
 }
 
 function useCase(pool: EvaluationPool, authorization = new Authorization(), input = new InputLoader(), evidenceAuthority = new EvidenceAuthority()) {
+  input.evidenceAuthority = evidenceAuthority;
   const registry = new StaticSafetyFusionRegistry([ACTIVE_SAFETY_FUSION_RULE_SET]);
   const fusion = new GovernedSafetyFusionOrchestrator(
     registry, DEFAULT_SAFETY_FUSION_GUARDS, new SequenceClock(['2026-09-08T14:00:01.000Z']),

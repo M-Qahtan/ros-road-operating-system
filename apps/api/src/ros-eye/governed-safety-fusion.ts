@@ -59,7 +59,10 @@ export class GovernedSafetyFusionOrchestrator {
     private readonly evidenceAuthority: SafetyFusionEvidenceAuthorityPort
   ) {}
 
-  async recommend(input: SafetyFusionInput): Promise<SafetyFusionRecommendation> {
+  async recommend(
+    input: SafetyFusionInput,
+    evidenceAuthority: SafetyFusionEvidenceAuthorityPort = this.evidenceAuthority
+  ): Promise<SafetyFusionRecommendation> {
     const trustedNow = await trustedTime(this.clock);
     const guardConfigurationValid = validGuardConfiguration(this.guards);
     const shapeValid = trustedNow !== null && strictInputShape(input) && validContactTime(input, trustedNow);
@@ -77,7 +80,7 @@ export class GovernedSafetyFusionOrchestrator {
     for (const requested of input.evidence) {
       let receipt: SafetyFusionEvidenceAuthorityReceipt | null;
       try {
-        receipt = await this.evidenceAuthority.findEvidence({
+        receipt = await evidenceAuthority.findEvidence({
           tenantId: input.tenantId,
           caseId: input.caseId,
           evidenceId: requested.evidenceId,
