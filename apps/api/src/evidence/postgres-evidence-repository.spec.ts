@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PostgresEvidenceRepository } from './postgres-evidence-repository.js';
+import { evidenceRevisionDigest } from './evidence-revision.js';
 import { EvidenceRecord } from './evidence-types.js';
 import { PostgresClient, PostgresPool, PostgresQueryResult } from '../persistence/postgres/postgres-types.js';
 
 const EVIDENCE_ID = '11111111-1111-4111-8111-111111111111';
 const EVENT_ID = '22222222-2222-4222-8222-222222222222';
+const TENANT_ID = 'tenant-riyadh';
+const PURPOSE = 'road-safety-response';
 
 interface CapturedQuery { readonly text: string; readonly values: readonly unknown[]; }
 class FakeClient implements PostgresClient {
@@ -65,18 +68,34 @@ function row(status: EvidenceRecord['status'] = 'PENDING_UPLOAD') {
 const audit = { actorId: 'operator-a', traceId: 'trace-1', action: 'evidence.upload_intent_created' } as const;
 
 test('create stores metadata and audit atomically', async () => {
-  const client = new FakeClient(() => ({ rows: [], rowCount: 1 }));
+  const client = new FakeClient((text) => {
+    if (text.includes('FROM road_events')) return {
+      rows: [{ tenant_id: TENANT_ID, purpose: PURPOSE, case_id: EVENT_ID }], rowCount: 1
+    };
+    if (text.includes('FROM evidence_objects') && text.includes('ORDER BY id')) return { rows: [], rowCount: 0 };
+    if (text.includes('FROM evidence_revision_ledger')) return { rows: [], rowCount: 0 };
+    return { rows: [], rowCount: 1 };
+  });
   const repository = new PostgresEvidenceRepository(new FakePool(client));
   await repository.create(record(), audit);
-  assert.deepEqual(client.queries.map((query) => query.text.trim().split(/\s+/)[0]), ['BEGIN', 'INSERT', 'INSERT', 'COMMIT']);
-  assert.match(client.queries[1]!.text, /INSERT INTO evidence_objects/);
-  assert.match(client.queries[2]!.text, /INSERT INTO evidence_audit_logs/);
+  assert.match(client.queries.find((query) => query.text.includes('FROM road_events'))!.text, /FOR UPDATE/);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO evidence_objects')), true);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO evidence_audit_logs')), true);
+  const receipt = client.queries.find((query) => query.text.includes('INSERT INTO evidence_revision_ledger'))!;
+  assert.deepEqual(receipt.values.slice(0, 4), [TENANT_ID, PURPOSE, EVENT_ID, 1]);
   assert.equal(client.released, true);
 });
 
 test('preservation locks pending metadata and appends audit in one transaction', async () => {
+  const digest = evidenceRevisionDigest({ tenantId: TENANT_ID, purpose: PURPOSE, caseId: EVENT_ID }, [record()]);
   const client = new FakeClient((text) => {
-    if (text.includes('FOR UPDATE')) return { rows: [row()], rowCount: 1 };
+    if (text.includes('SELECT road_event_id::text')) return { rows: [{ road_event_id: EVENT_ID }], rowCount: 1 };
+    if (text.includes('FROM road_events')) return {
+      rows: [{ tenant_id: TENANT_ID, purpose: PURPOSE, case_id: EVENT_ID }], rowCount: 1
+    };
+    if (text.includes('FROM evidence_objects') && text.includes('ORDER BY id')) return { rows: [row()], rowCount: 1 };
+    if (text.includes('FROM evidence_revision_ledger')) return { rows: [{ revision: 1, digest }], rowCount: 1 };
+    if (text.includes('FROM evidence_objects') && text.includes('FOR UPDATE')) return { rows: [row()], rowCount: 1 };
     if (text.startsWith('UPDATE evidence_objects')) return { rows: [row('PRESERVED')], rowCount: 1 };
     return { rows: [], rowCount: 1 };
   });
@@ -91,6 +110,7 @@ test('preservation locks pending metadata and appends audit in one transaction',
   assert.equal(completed.status, 'PRESERVED');
   assert.equal(client.queries.some((query) => query.text.includes('FOR UPDATE')), true);
   assert.equal(client.queries.some((query) => query.text.includes("status = 'PENDING_UPLOAD'")), true);
+  assert.equal(client.queries.find((query) => query.text.includes('INSERT INTO evidence_revision_ledger'))!.values[3], 2);
   assert.equal(client.queries.at(-1)?.text, 'COMMIT');
 });
 
@@ -107,9 +127,40 @@ test('download intent appends a durable access audit without mutating evidence m
   assert.equal(client.queries.some((query) => query.text.includes('UPDATE evidence_objects')), false);
 });
 
+test('missing or drifted Evidence receipt blocks integrity transition before metadata update', async () => {
+  for (const ledgerRows of [[], [{ revision: 1, digest: 'f'.repeat(64) }]]) {
+    const client = new FakeClient((text) => {
+      if (text.includes('SELECT road_event_id::text')) return { rows: [{ road_event_id: EVENT_ID }], rowCount: 1 };
+      if (text.includes('FROM road_events')) return {
+        rows: [{ tenant_id: TENANT_ID, purpose: PURPOSE, case_id: EVENT_ID }], rowCount: 1
+      };
+      if (text.includes('FROM evidence_objects') && text.includes('ORDER BY id')) return { rows: [row()], rowCount: 1 };
+      if (text.includes('FROM evidence_revision_ledger')) return { rows: ledgerRows, rowCount: ledgerRows.length };
+      return { rows: [], rowCount: 1 };
+    });
+    const repository = new PostgresEvidenceRepository(new FakePool(client));
+    await assert.rejects(
+      () => repository.markPreserved(
+        EVIDENCE_ID, 1024, 'a'.repeat(64), new Date('2026-07-25T04:01:00.000Z'),
+        { ...audit, action: 'evidence.preserved' }
+      ),
+      /Evidence revision receipt/
+    );
+    assert.equal(client.queries.some((query) => query.text.startsWith('UPDATE evidence_objects')), false);
+    assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
+  }
+});
+
 test('transition rollback preserves the original failure', async () => {
+  const digest = evidenceRevisionDigest({ tenantId: TENANT_ID, purpose: PURPOSE, caseId: EVENT_ID }, [record()]);
   const client = new FakeClient((text) => {
-    if (text.includes('FOR UPDATE')) return { rows: [row()], rowCount: 1 };
+    if (text.includes('SELECT road_event_id::text')) return { rows: [{ road_event_id: EVENT_ID }], rowCount: 1 };
+    if (text.includes('FROM road_events')) return {
+      rows: [{ tenant_id: TENANT_ID, purpose: PURPOSE, case_id: EVENT_ID }], rowCount: 1
+    };
+    if (text.includes('FROM evidence_objects') && text.includes('ORDER BY id')) return { rows: [row()], rowCount: 1 };
+    if (text.includes('FROM evidence_revision_ledger')) return { rows: [{ revision: 1, digest }], rowCount: 1 };
+    if (text.includes('FROM evidence_objects') && text.includes('FOR UPDATE')) return { rows: [row()], rowCount: 1 };
     if (text.startsWith('UPDATE evidence_objects')) throw new Error('database failure');
     return { rows: [], rowCount: 1 };
   });

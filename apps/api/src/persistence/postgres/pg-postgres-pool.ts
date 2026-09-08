@@ -23,6 +23,7 @@ const REQUIRED_RUNTIME_RELATIONS = Object.freeze([
   'ros_eye_safety_fusion_input_snapshots',
   'road_event_revision_ledger',
   'ros_eye_contact_revision_ledger',
+  'evidence_revision_ledger',
   'field_companion_devices',
   'field_notification_deliveries'
 ]);
@@ -47,7 +48,11 @@ const REQUIRED_RUNTIME_COLUMNS = Object.freeze([
   { tableName: 'ros_eye_contact_revision_ledger', columnName: 'tenant_id' },
   { tableName: 'ros_eye_contact_revision_ledger', columnName: 'purpose' },
   { tableName: 'ros_eye_contact_revision_ledger', columnName: 'case_id' },
-  { tableName: 'ros_eye_contact_revision_ledger', columnName: 'revision' }
+  { tableName: 'ros_eye_contact_revision_ledger', columnName: 'revision' },
+  { tableName: 'evidence_revision_ledger', columnName: 'tenant_id' },
+  { tableName: 'evidence_revision_ledger', columnName: 'purpose' },
+  { tableName: 'evidence_revision_ledger', columnName: 'case_id' },
+  { tableName: 'evidence_revision_ledger', columnName: 'revision' }
 ]);
 
 interface RuntimeSchemaProbeRow {
