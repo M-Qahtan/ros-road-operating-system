@@ -55,30 +55,33 @@ export class PostgresRecommendationJournal {
   }
 
   async append(request: AppendRecommendationRequest): Promise<RecommendationJournalResult> {
+    return this.pool.transaction((connection) => this.appendWithin(connection, request));
+  }
+
+  /** Used by the controlled evaluation use case so snapshot load and append share one transaction. */
+  async appendWithin(connection: ContactSqlConnectionPort, request: AppendRecommendationRequest): Promise<RecommendationJournalResult> {
     if (!validRecommendation(request)) return result('REJECTED', 'RECOMMENDATION_INVALID');
     const registry = await this.registry.findRuleSet(request.recommendation.ruleSetVersion).catch(() => null);
     if (!validRegistry(registry, request.recommendation)) return result('REJECTED', 'GOVERNANCE_INVALID');
 
-    return this.pool.transaction(async (connection) => {
-      const snapshot = await this.snapshots.readWithin(connection, request, request.recommendation.inputVersion);
-      if (snapshot === null) return result('REJECTED', 'SNAPSHOT_NOT_FOUND');
-      const current = {
-        tenantId: snapshot.tenantId, caseId: snapshot.caseId, case: snapshot.case, severity: snapshot.severity,
-        contact: snapshot.contact, evidence: snapshot.evidence, indicators: snapshot.indicators
-      };
-      const assessment = assessRecommendationSnapshotBinding(request.recommendation, snapshot, request.binding, current);
-      if (assessment.status !== 'VERIFIED') return result('REJECTED', 'BINDING_INVALID');
+    const snapshot = await this.snapshots.readWithin(connection, request, request.recommendation.inputVersion);
+    if (snapshot === null) return result('REJECTED', 'SNAPSHOT_NOT_FOUND');
+    const current = {
+      tenantId: snapshot.tenantId, caseId: snapshot.caseId, case: snapshot.case, severity: snapshot.severity,
+      contact: snapshot.contact, evidence: snapshot.evidence, indicators: snapshot.indicators
+    };
+    const assessment = assessRecommendationSnapshotBinding(request.recommendation, snapshot, request.binding, current);
+    if (assessment.status !== 'VERIFIED') return result('REJECTED', 'BINDING_INVALID');
 
-      const existing = await readExact(connection, request);
-      if (existing !== null) return sameEntry(existing, request) ? result('IDEMPOTENT', 'EXACT_REPLAY') : result('CONFLICT', 'DUPLICATE_INPUT');
+    const existing = await readExact(connection, request);
+    if (existing !== null) return sameEntry(existing, request) ? result('IDEMPOTENT', 'EXACT_REPLAY') : result('CONFLICT', 'DUPLICATE_INPUT');
 
-      const inserted = await connection.query(POSTGRES_RECOMMENDATION_JOURNAL_SQL.insert, values(request));
-      if (inserted.rowCount === 1) return result('CREATED', 'STORED');
-      const winner = await readExact(connection, request);
-      return winner !== null && sameEntry(winner, request)
-        ? result('IDEMPOTENT', 'EXACT_REPLAY')
-        : result('CONFLICT', 'DUPLICATE_INPUT');
-    });
+    const inserted = await connection.query(POSTGRES_RECOMMENDATION_JOURNAL_SQL.insert, values(request));
+    if (inserted.rowCount === 1) return result('CREATED', 'STORED');
+    const winner = await readExact(connection, request);
+    return winner !== null && sameEntry(winner, request)
+      ? result('IDEMPOTENT', 'EXACT_REPLAY')
+      : result('CONFLICT', 'DUPLICATE_INPUT');
   }
 }
 
