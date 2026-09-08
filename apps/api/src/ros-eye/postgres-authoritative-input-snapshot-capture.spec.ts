@@ -133,7 +133,7 @@ function recommendationFor(snapshot: SafetyFusionInputSnapshot): SafetyFusionRec
     contributions: [], guardResults: [], requiresHumanReview: true, authority: 'RECOMMENDATION_ONLY',
     autonomousDowngradePermitted: false, autonomousClosurePermitted: false, autonomousDispatchPermitted: false,
     policyVersion: 'ros-eye.safety-fusion.v1', ruleSetVersion: 'test.v1',
-    thresholdVersion: 'ros-eye.safety-fusion.thresholds.v1', deterministicFingerprint: digest('f')
+    thresholdVersion: 'ros-eye.safety-fusion.thresholds.v1', deterministicFingerprint: `sha256:${digest('f')}`
   };
 }
 

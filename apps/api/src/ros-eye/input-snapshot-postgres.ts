@@ -84,6 +84,13 @@ export class PostgresInputSnapshotRepository {
     return row.rows[0] === undefined ? null : mapSnapshot(row.rows[0]);
   }
 
+  /** Keeps a recommendation journal read in the same transaction as its append. */
+  async readWithin(connection: ContactSqlConnectionPort, scope: InputSnapshotScope, inputVersion: number): Promise<SafetyFusionInputSnapshot | null> {
+    validateScope(scope);
+    if (!positive(inputVersion)) throw new TypeError('inputVersion must be a positive integer');
+    return this.readWith(connection, scope, inputVersion);
+  }
+
   private async readWith(connection: ContactSqlConnectionPort, scope: InputSnapshotScope, inputVersion: number) {
     const result = await connection.query(POSTGRES_INPUT_SNAPSHOT_SQL.readExact, [scope.tenantId, scope.purpose, scope.caseId, inputVersion]);
     return result.rows[0] === undefined ? null : mapSnapshot(result.rows[0]);

@@ -85,6 +85,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **BRAIN-01 LOCALLY INTEGRATED; LIVE DATABASE PROOF OPEN.** The five module-owned PostgreSQL sources now have one concrete capture composition and correction invalidation is evidenced across the source, snapshot, and binding boundaries. This remains SQL-port evidence: migrations `0016`-`0020`, isolation, locks, constraints, and rollback were not executed on a live PostgreSQL engine, and no runtime command invokes the factory yet. No recommendation persistence, CI/archive receipt, merge, deployment, or field readiness was established. |
 | Next handoff | Begin BRAIN-02 with an append-only PostgreSQL recommendation journal that accepts only a governed `RECOMMENDATION_ONLY` evaluation bound to one persisted snapshot and keeps human review mandatory. |
 
+## Cycle 3 progress record — durable governed evaluation
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub branch `codex/ros-brain-next-evidence-daily` at `e8e62c374b7253565ab889a756f5ec482523fcb8`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, with no branch PR or workflow run on the resume commit. |
+| Safety correction | Snapshot binding now accepts the `sha256:` fingerprint format emitted by the real fusion service. The prior raw-hex-only validator rejected every real service recommendation and was fixed before adding a write surface. |
+| Durable writer sub-slice | A new append-only recommendation journal is foreign-keyed to the exact Tenant + Purpose + case + input-version snapshot. The writer reloads that snapshot inside the transaction, validates the binding and active governed registry entry, enforces the exact structured recommendation shape, and stores only `RECOMMENDATION_ONLY / SHADOW_ONLY / activationAuthorized=false / PENDING human review`. Exact retry is idempotent; a different concurrent winner conflicts. |
+| Failure behavior | Missing persisted snapshots, source-digest/fingerprint/chronology mismatch, unavailable or inactive governance, unknown fields, absent human review, and forged autonomous authority produce no insert. Existing RoadEvent, source ledgers, and snapshots are not mutated. |
+| Fresh local evidence | 6/6 writer and migration-guard behaviors, 11/11 focused journal/binding/composition tests, and 573/573 workspace tests passed. All five TypeScript builds and repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests. |
+| Result | **LOCAL DURABLE WRITER VERIFIED; CONTROLLED END-TO-END USE CASE OPEN.** SQL-port doubles were used; PostgreSQL migration/constraints/trigger/isolation/restart were not executed on a live engine. No runtime command yet composes authoritative loading, governed fusion, binding issuance, and append, and the case reader still uses the legacy recommendation table. |
+| Next handoff | Build one internal authorized use case that loads the persisted snapshot and authoritative fusion input, invokes `GovernedSafetyFusionOrchestrator`, issues the binding, and appends through this journal atomically without adding an HTTP action or operational authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

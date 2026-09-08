@@ -10,6 +10,7 @@ import {
 } from '@ros/contracts';
 
 const digest = (character: string): string => character.repeat(64);
+const recommendationDigest = (character: string): string => `sha256:${digest(character)}`;
 const revision = (value: number, character: string) => ({ revision: value, digest: digest(character) });
 
 const recommendation = (): SafetyFusionRecommendation => ({
@@ -19,7 +20,7 @@ const recommendation = (): SafetyFusionRecommendation => ({
   authority: 'RECOMMENDATION_ONLY', autonomousDowngradePermitted: false, autonomousClosurePermitted: false,
   autonomousDispatchPermitted: false, policyVersion: 'ros-eye.safety-fusion.v1',
   ruleSetVersion: 'test.v1', thresholdVersion: 'ros-eye.safety-fusion.thresholds.v1',
-  deterministicFingerprint: digest('a')
+  deterministicFingerprint: recommendationDigest('a')
 });
 
 const snapshot = (): SafetyFusionInputSnapshot => ({
@@ -31,7 +32,7 @@ const snapshot = (): SafetyFusionInputSnapshot => ({
 
 const binding = (): RecommendationSnapshotBinding => ({
   policyVersion: SAFETY_FUSION_INPUT_SNAPSHOT_POLICY_VERSION, inputVersion: 11,
-  recommendationFingerprint: digest('a'), sourceSnapshotDigest: digest('1'), boundAt: '2026-09-08T04:01:01.000Z'
+  recommendationFingerprint: recommendationDigest('a'), sourceSnapshotDigest: digest('1'), boundAt: '2026-09-08T04:01:01.000Z'
 });
 
 const current = (): CurrentInputRevisions => {
@@ -73,7 +74,7 @@ test('missing or malformed receipts never become verified', () => {
 
 test('scope, source identity and chronology mismatches fail closed', () => {
   assert.equal(assessRecommendationSnapshotBinding({ ...recommendation(), tenantId: 'tenant-b' }, snapshot(), binding(), current()).reason, 'SCOPE_MISMATCH');
-  assert.equal(assessRecommendationSnapshotBinding(recommendation(), snapshot(), { ...binding(), recommendationFingerprint: digest('9') }, current()).reason, 'SOURCE_MISMATCH');
+  assert.equal(assessRecommendationSnapshotBinding(recommendation(), snapshot(), { ...binding(), recommendationFingerprint: recommendationDigest('9') }, current()).reason, 'SOURCE_MISMATCH');
   assert.equal(assessRecommendationSnapshotBinding({ ...recommendation(), inputVersion: 12 }, snapshot(), binding(), current()).reason, 'SOURCE_MISMATCH');
   assert.equal(assessRecommendationSnapshotBinding(recommendation(), { ...snapshot(), capturedAt: '2026-09-08T04:02:00.000Z' }, binding(), current()).reason, 'SOURCE_MISMATCH');
   assert.equal(assessRecommendationSnapshotBinding(recommendation(), snapshot(), { ...binding(), boundAt: '2026-09-08T04:00:30.000Z' }, current()).reason, 'SOURCE_MISMATCH');

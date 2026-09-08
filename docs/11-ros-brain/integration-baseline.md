@@ -211,13 +211,23 @@ Fresh local verification passed 1/1 concrete composition/invalidation test, 17/1
 
 Result: **BRAIN-01 LOCALLY INTEGRATED; LIVE DATABASE AND RUNTIME INVOCATION OPEN.** Verification still uses SQL-port doubles. No PostgreSQL engine executed migrations `0016` through `0020`, isolation, locks, constraints, or rollback, and no HTTP/worker command invokes the factory. BRAIN-02 governed evaluation and durable recommendation writing has not started.
 
+## Durable governed recommendation progress
+
+The first BRAIN-02 increment resumed from GitHub candidate `e8e62c374b7253565ab889a756f5ec482523fcb8`, with `main` still at `8096312169dc7f769a45b419d5678b5bd5f461ad`, no open branch PR, and no workflow run on the resume commit. It first corrected the snapshot binding contract to accept the `sha256:` recommendation fingerprint format actually emitted by `SafetyFusionService`; the earlier 64-hex-only check could never verify a real governed recommendation.
+
+Migration `0021_ros_eye_recommendation_journal.sql` and `PostgresRecommendationJournal` add a separate immutable Tenant + Purpose + case journal linked by a composite foreign key to the exact persisted input snapshot. The writer re-reads that snapshot inside the append transaction, verifies chronology and fingerprint/digest binding, rechecks an active governed rule entry with rollback and regression evidence, and accepts only the exact structured recommendation shape with `RECOMMENDATION_ONLY`, all autonomous permissions false, and mandatory human review. Every durable row is constrained to `SHADOW_ONLY`, `activation_authorized=false`, and `human_review_status=PENDING`. Exact retry is idempotent; a different winner for the same input conflicts; missing snapshots, stale bindings, inactive/unavailable governance, unknown fields, and forged authority fail before persistence.
+
+Fresh local verification passed 6/6 journal and migration-guard behaviors, 11/11 focused journal/binding/composition tests, and 573/573 workspace tests (API 500, dashboard 30, mobile 36, domain 7). All five TypeScript builds and repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests. The eight-file code/test/migration manifest SHA-256 is `3444a3c9ce5f1cad567288d286a28ebc77ee57fbcb4bb24dde449349cfb1f684`.
+
+Result: **BRAIN-02 DURABLE WRITER LOCALLY IMPLEMENTED; END-TO-END GOVERNED RUNTIME OPEN.** Tests use SQL-port doubles. No PostgreSQL engine executed migration `0021`, its foreign key, append-only trigger, constraints, transaction isolation, or restart behavior. The writer consumes a recommendation and verifies its structure, binding, and registry state, but no runtime command yet loads authoritative source data, invokes `GovernedSafetyFusionOrchestrator`, creates the binding, and appends the result as one controlled use case. No case-read consumer has switched to this journal.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries
 
 The existing [release gates](../09-reliability/operational-readiness-and-release-gates.md), [evidence contract](../09-reliability/ci-evidence-contract.md), [artifact retention policy](../10-engineering/artifact-retention.md), [pilot stop criteria](../07-pilot/kpi-stop-criteria.md), and [shadow/rollback protocol](../07-pilot/shadow-canary-rollback.md) remain controlling.
 
-- Daily local acceptance is not release acceptance. Mandatory results must remain exactly `success` on the same candidate head, reviewed base, and tested merge revision where required.
+- Hourly local acceptance is not release acceptance. Mandatory results must remain exactly `success` on the same candidate head, reviewed base, and tested merge revision where required.
 - A missing or unverified external archive receipt remains an open release gate. No retention, encryption, immutability, or provenance requirement is weakened to compensate for deleted AWS resources.
 - A green build does not authorize a real pilot, dispatch, road intervention, camera program, or vehicle actuation.
 - Controlled environment proposals and any future hosting choice require a concrete scope and cost decision before activation. This daily work creates no paid resource and runs no infrastructure apply or deployment.

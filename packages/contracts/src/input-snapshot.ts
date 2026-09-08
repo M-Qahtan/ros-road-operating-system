@@ -109,7 +109,7 @@ function validSnapshot(value: SafetyFusionInputSnapshot): boolean {
 
 function validBinding(value: RecommendationSnapshotBinding): boolean {
   return value.policyVersion === SAFETY_FUSION_INPUT_SNAPSHOT_POLICY_VERSION && positive(value.inputVersion) &&
-    validDigest(value.recommendationFingerprint) && validDigest(value.sourceSnapshotDigest) && validTimestamp(value.boundAt);
+    validRecommendationDigest(value.recommendationFingerprint) && validDigest(value.sourceSnapshotDigest) && validTimestamp(value.boundAt);
 }
 
 function validCurrent(value: CurrentInputRevisions): boolean {
@@ -119,7 +119,7 @@ function validCurrent(value: CurrentInputRevisions): boolean {
 
 function validRecommendationIdentity(value: SafetyFusionRecommendation | null): value is SafetyFusionRecommendation {
   return typeof value === 'object' && value !== null && validScope(value.tenantId) && validScope(value.caseId) &&
-    positive(value.inputVersion) && validTimestamp(value.evaluatedAt) && validDigest(value.deterministicFingerprint);
+    positive(value.inputVersion) && validTimestamp(value.evaluatedAt) && validRecommendationDigest(value.deterministicFingerprint);
 }
 
 function validRevision(value: AuthoritativeRevisionBinding): boolean {
@@ -127,6 +127,9 @@ function validRevision(value: AuthoritativeRevisionBinding): boolean {
 }
 
 function validDigest(value: string): boolean { return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value); }
+function validRecommendationDigest(value: string): boolean {
+  return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
+}
 function validScope(value: string): boolean { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value); }
 function positive(value: number): boolean { return Number.isSafeInteger(value) && value > 0; }
 function validTimestamp(value: string): boolean {
