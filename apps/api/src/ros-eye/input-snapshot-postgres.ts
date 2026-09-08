@@ -49,28 +49,32 @@ export class PostgresInputSnapshotRepository {
 
   async capture(request: CaptureInputSnapshotRequest): Promise<InputSnapshotCaptureDisposition> {
     validateRequest(request);
-    return this.pool.transaction(async (connection) => {
-      const scopeValues = [request.tenantId, request.purpose, request.caseId] as const;
-      const authorized = await connection.query(POSTGRES_INPUT_SNAPSHOT_SQL.authorizeCase, scopeValues);
-      if (authorized.rowCount !== 1) return 'NOT_FOUND';
+    return this.pool.transaction((connection) => this.captureWithin(connection, request));
+  }
 
-      const exact = await this.readWith(connection, request, request.snapshot.inputVersion);
-      if (exact !== null) return sameSnapshot(exact, request.snapshot) ? 'IDEMPOTENT' : 'CONFLICT';
+  /** Used by the governed capture service so source reads and the append share one transaction. */
+  async captureWithin(connection: ContactSqlConnectionPort, request: CaptureInputSnapshotRequest): Promise<InputSnapshotCaptureDisposition> {
+    validateRequest(request);
+    const scopeValues = [request.tenantId, request.purpose, request.caseId] as const;
+    const authorized = await connection.query(POSTGRES_INPUT_SNAPSHOT_SQL.authorizeCase, scopeValues);
+    if (authorized.rowCount !== 1) return 'NOT_FOUND';
 
-      const latest = await connection.query<VersionRow>(POSTGRES_INPUT_SNAPSHOT_SQL.readLatestVersion, scopeValues);
-      const latestVersion = latest.rows[0] === undefined ? 0 : integer(latest.rows[0].input_version, 'input_version');
-      if (latestVersion !== request.expectedPreviousInputVersion || request.snapshot.inputVersion !== latestVersion + 1) {
-        return 'CONFLICT';
-      }
+    const exact = await this.readWith(connection, request, request.snapshot.inputVersion);
+    if (exact !== null) return sameSnapshot(exact, request.snapshot) ? 'IDEMPOTENT' : 'CONFLICT';
 
-      const inserted = await connection.query(POSTGRES_INPUT_SNAPSHOT_SQL.insert, values(request));
-      if (inserted.rowCount === 1) return 'CREATED';
+    const latest = await connection.query<VersionRow>(POSTGRES_INPUT_SNAPSHOT_SQL.readLatestVersion, scopeValues);
+    const latestVersion = latest.rows[0] === undefined ? 0 : integer(latest.rows[0].input_version, 'input_version');
+    if (latestVersion !== request.expectedPreviousInputVersion || request.snapshot.inputVersion !== latestVersion + 1) {
+      return 'CONFLICT';
+    }
 
-      // A concurrent writer may have won the unique input-version fence after
-      // our read. Only an exact receipt replay is idempotent.
-      const winner = await this.readWith(connection, request, request.snapshot.inputVersion);
-      return winner !== null && sameSnapshot(winner, request.snapshot) ? 'IDEMPOTENT' : 'CONFLICT';
-    });
+    const inserted = await connection.query(POSTGRES_INPUT_SNAPSHOT_SQL.insert, values(request));
+    if (inserted.rowCount === 1) return 'CREATED';
+
+    // A concurrent writer may have won the unique input-version fence after
+    // our read. Only an exact receipt replay is idempotent.
+    const winner = await this.readWith(connection, request, request.snapshot.inputVersion);
+    return winner !== null && sameSnapshot(winner, request.snapshot) ? 'IDEMPOTENT' : 'CONFLICT';
   }
 
   async read(scope: InputSnapshotScope, inputVersion: number): Promise<SafetyFusionInputSnapshot | null> {
