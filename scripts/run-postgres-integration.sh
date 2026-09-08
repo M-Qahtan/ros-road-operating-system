@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+for required_command in pg_isready psql; do
+  if ! command -v "$required_command" >/dev/null 2>&1; then
+    echo "Required PostgreSQL client '$required_command' is unavailable; no integration test was executed" >&2
+    exit 127
+  fi
+done
+
 : "${DATABASE_URL:?DATABASE_URL must be set}"
 
 for attempt in $(seq 1 30); do
