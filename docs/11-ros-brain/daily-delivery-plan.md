@@ -70,11 +70,12 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 |---|---|
 | Resume point | Branch `codex/ros-brain-next-evidence-daily` at `6d1c94afe8e0d947b6fdd87d964a7c0c7a03a2dd`; `main` remained `8096312169dc7f769a45b419d5678b5bd5f461ad`. The worktree was clean before this increment. |
 | Delivered sub-slice | Versioned contract and fail-closed assessment for binding one recommendation fingerprint/input version to one snapshot digest and exact case, severity, contact, evidence, and indicator revision/digest tuple. |
+| Durable sub-slice | PostgreSQL migration and repository adapter now capture and read immutable snapshot receipts within an exact Tenant + Purpose + case scope. A caller supplies the expected previous input version; stale or competing writes return `CONFLICT`, and only a byte-equivalent winner is `IDEMPOTENT`. Runtime readiness now requires the snapshot relation and scope columns. |
 | Invalidation behavior | A revision change, content correction with the same revision but a different digest, contact creation/removal, scope drift, source mismatch, or invalid chronology prevents `VERIFIED`. Missing or malformed receipts remain `UNVERIFIED`. |
 | Ownership boundary | Source modules still own their revisions and canonical digests. The contract verifies receipts but does not mint them, read new data, mutate a case, or grant authority. |
-| Fresh local evidence | Relevant TypeScript builds and no-emit checks passed; 4/4 new snapshot tests, 13/13 snapshot/advisor focused tests, and 526/526 workspace tests passed. Repository/retention/negative gates passed, including 8/8 external-evidence logic tests. |
-| Result | **PARTIAL CYCLE 2 CONTRACT VERIFIED; DURABLE SNAPSHOT NOT IMPLEMENTED.** No production snapshot loader/writer, PostgreSQL concurrency proof, migration, CI/archive receipt, merge, deployment, or field readiness was established. |
-| Next handoff | Implement the smallest tenant+purpose-scoped durable snapshot capture/read seam with optimistic concurrency, using authoritative component revisions/digests rather than projected counts. |
+| Fresh local evidence | Relevant TypeScript builds and no-emit checks passed; 5/5 new persistence tests, 18/18 snapshot/advisor focused tests, and 531/531 workspace tests passed. Repository/retention/negative gates passed, including 8/8 external-evidence logic tests. |
+| Result | **PARTIAL CYCLE 2 DURABLE SEAM VERIFIED.** The schema and adapter are implemented with simulated SQL-port concurrency; the migration was not executed against a live PostgreSQL server. No production component-revision loaders, snapshot runtime composition, recommendation persistence, CI/archive receipt, merge, deployment, or field readiness was established. |
+| Next handoff | Connect the snapshot repository to authoritative case/contact/evidence/indicator revision providers in one transactional capture service; reject projected evidence counts and missing indicator revisions. |
 
 ## Hourly report and definition of done
 

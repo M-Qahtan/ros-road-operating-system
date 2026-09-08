@@ -137,6 +137,12 @@ Fresh local verification passed: 4/4 new snapshot tests, 13/13 focused snapshot/
 
 Result: **PARTIAL BRAIN-01 CONTRACT VERIFIED; DURABLE CAPTURE REMAINS OPEN.** This contract does not issue authoritative revisions or digests. No tenant/purpose-scoped durable snapshot writer/reader, PostgreSQL concurrency test, migration, recommendation persistence, CI run, external archive receipt, merge, deployment, or operational readiness was established. Those limits keep BRAIN-01 and BRAIN-02 open.
 
+The next Cycle 2 increment adds migration `0016_ros_eye_input_snapshots.sql` and a PostgreSQL repository adapter. Snapshot rows are immutable and keyed by Tenant + Purpose + case + fusion input version. Capture first proves the parent RoadEvent is inside the trusted scope, checks an expected previous version, and relies on the unique version fence to resolve concurrent writers. Exact replay is idempotent; a different winner, stale expected version, missing scoped case, or malformed receipt fails closed. Runtime readiness now requires the new relation and its scope columns.
+
+Fresh local evidence for this increment: 5/5 persistence tests and 18/18 combined snapshot/advisor tests passed; the complete workspace passed 531/531 tests (API 458, dashboard 30, mobile 36, domain 7). Relevant TypeScript build and no-emit checks plus repository/composition/retention/negative gates passed. The four-file code/test/migration manifest SHA-256 is `bbd53329818b8c25a49f6c7bca2cb6d3536cbd46fe5e4309bb5bb23744c089d5`.
+
+Result: **DURABLE STORAGE SEAM IMPLEMENTED, SOURCE INTEGRATION UNVERIFIED.** Concurrency is exercised through the PostgreSQL port simulation, not a running PostgreSQL engine; no live migration execution is claimed. The adapter stores receipts supplied by callers but does not yet obtain authoritative component revisions/digests or compose a production capture transaction. BRAIN-01 therefore remains open, and BRAIN-02 has not started.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries

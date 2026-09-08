@@ -20,6 +20,7 @@ const REQUIRED_RUNTIME_RELATIONS = Object.freeze([
   'ros_eye_contact_outbox',
   'ros_eye_contact_audit',
   'ros_eye_safety_fusion_recommendations',
+  'ros_eye_safety_fusion_input_snapshots',
   'field_companion_devices',
   'field_notification_deliveries'
 ]);
@@ -33,7 +34,10 @@ const REQUIRED_RUNTIME_COLUMNS = Object.freeze([
   { tableName: 'ros_eye_contact_sessions', columnName: 'tenant_id' },
   { tableName: 'ros_eye_contact_sessions', columnName: 'case_id' },
   { tableName: 'ros_eye_contact_sessions', columnName: 'owner_actor_id' },
-  { tableName: 'ros_eye_contact_sessions', columnName: 'next_action_at' }
+  { tableName: 'ros_eye_contact_sessions', columnName: 'next_action_at' },
+  { tableName: 'ros_eye_safety_fusion_input_snapshots', columnName: 'tenant_id' },
+  { tableName: 'ros_eye_safety_fusion_input_snapshots', columnName: 'purpose' },
+  { tableName: 'ros_eye_safety_fusion_input_snapshots', columnName: 'case_id' }
 ]);
 
 interface RuntimeSchemaProbeRow {
