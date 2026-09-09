@@ -31,6 +31,14 @@ test('local journey uses container-owned clients and restarts before the recover
   assert.match(runner, /wait_for_postgres "after restart"/);
 });
 
+test('restart checkpoint is mandatory and post-restart exact retry remains singular', () => {
+  assert.match(runner, /restart_performed=false/);
+  assert.match(runner, /restart checkpoint does not exist/);
+  assert.match(runner, /restart checkpoint was not reached/);
+  assert.match(reconnect, /ON CONFLICT \(tenant_id, purpose, case_id, input_version\) DO NOTHING/);
+  assert.match(reconnect, /post-restart exact retry duplicated the recommendation/);
+});
+
 test('ordered SQL journey covers current read, source invalidation, rollback and a new client connection', () => {
   assert.match(setup, /ISOLATION LEVEL REPEATABLE READ READ ONLY/);
   assert.doesNotMatch(setup, /FOR (?:SHARE|UPDATE)/);

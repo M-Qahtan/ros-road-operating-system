@@ -287,6 +287,14 @@ Docker is unavailable in the current executor, so neither the migrations nor the
 
 Result: **SELF-CONTAINED RESTART JOURNEY DEFINED; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** The next single handoff is to execute this exact Docker-only harness and correct any migration, trigger, transaction, or recovery discrepancy it exposes.
 
+The restart/retry hardening increment resumed from GitHub candidate `cdeaa3e31ad74c51ddbce56fd1512dee615330e3`. GitHub still resolved `main` to `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch nineteen commits ahead and zero behind, with no branch PR or workflow run on the resume commit.
+
+The integration runner now validates the named restart checkpoint and container identity before migrations, records the completed restart, and fails if that checkpoint is missing or was never reached. The recovery SQL then attempts the exact persisted journal insert again after restart with `ON CONFLICT` on the immutable Tenant + Purpose + case + input-version key and asserts that exactly one row remains. This proves the intended database-level duplicate suppression when the live journey runs; it does not claim that an application adapter retry was executed.
+
+Fresh local verification passed 4/4 harness-definition tests and 600/600 workspace tests (API 527, dashboard 30, mobile 36, domain 7). All five TypeScript builds/no-emit checks and repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests. Docker remains unavailable in this executor, and the explicit preflight returned exit 127; therefore no migration, restart, or post-restart retry was executed on a live PostgreSQL engine.
+
+Result: **RESTART CHECKPOINT AND EXACT-RETRY PROOF ARE FAIL-CLOSED BY DEFINITION; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** The next single handoff is to run the Docker-only journey on an available local host and correct any engine-level migration, trigger, transaction, restart, or retry discrepancy.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries

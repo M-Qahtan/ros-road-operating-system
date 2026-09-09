@@ -27,3 +27,38 @@ END;
 $$;
 
 COMMIT;
+
+BEGIN;
+
+INSERT INTO ros_eye_safety_fusion_recommendation_journal (
+  tenant_id, purpose, case_id, input_version, source_snapshot_digest,
+  snapshot_policy_version, bound_at, evaluated_at, deterministic_fingerprint,
+  authority, mode, activation_authorized, human_review_status,
+  rule_set_version, threshold_version, recommendation, binding
+)
+SELECT
+  tenant_id, purpose, case_id, input_version, source_snapshot_digest,
+  snapshot_policy_version, bound_at, evaluated_at, deterministic_fingerprint,
+  authority, mode, activation_authorized, human_review_status,
+  rule_set_version, threshold_version, recommendation, binding
+FROM ros_eye_safety_fusion_recommendation_journal
+WHERE tenant_id = 'riyadh-pilot'
+  AND purpose = 'road-safety-response'
+  AND case_id = '10000000-0000-4000-8000-000000000001'
+  AND input_version = 1
+ON CONFLICT (tenant_id, purpose, case_id, input_version) DO NOTHING;
+
+DO $$
+BEGIN
+  IF (SELECT count(*)
+      FROM ros_eye_safety_fusion_recommendation_journal
+      WHERE tenant_id = 'riyadh-pilot'
+        AND purpose = 'road-safety-response'
+        AND case_id = '10000000-0000-4000-8000-000000000001'
+        AND input_version = 1) <> 1 THEN
+    RAISE EXCEPTION 'post-restart exact retry duplicated the recommendation';
+  END IF;
+END;
+$$;
+
+COMMIT;
