@@ -39,6 +39,21 @@ test('restart checkpoint is mandatory and post-restart exact retry remains singu
   assert.match(reconnect, /post-restart exact retry duplicated the recommendation/);
 });
 
+test('live journey receipt is bound to a clean candidate and emitted only after success', () => {
+  assert.match(localHarness, /git status --porcelain --untracked-files=normal/);
+  assert.match(localHarness, /journey_manifest_sha256/);
+  assert.match(localHarness, /docker inspect --format '\{\{\.Image\}\}'/);
+  assert.match(localHarness, /SHOW server_version/);
+  assert.match(localHarness, /SELECT postgis_lib_version\(\)/);
+  assert.match(localHarness, /receipt provenance is incomplete/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v1/);
+  assert.match(localHarness, /externalArchiveReceipt: null/);
+  assert.ok(
+    localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
+      localHarness.indexOf('ROS_POSTGRES_BRAIN_JOURNEY_RECEIPT='),
+  );
+});
+
 test('ordered SQL journey covers current read, source invalidation, rollback and a new client connection', () => {
   assert.match(setup, /ISOLATION LEVEL REPEATABLE READ READ ONLY/);
   assert.doesNotMatch(setup, /FOR (?:SHARE|UPDATE)/);

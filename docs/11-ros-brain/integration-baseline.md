@@ -295,6 +295,14 @@ Fresh local verification passed 4/4 harness-definition tests and 600/600 workspa
 
 Result: **RESTART CHECKPOINT AND EXACT-RETRY PROOF ARE FAIL-CLOSED BY DEFINITION; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** The next single handoff is to run the Docker-only journey on an available local host and correct any engine-level migration, trigger, transaction, restart, or retry discrepancy.
 
+The local execution-receipt increment resumed from GitHub candidate `9ae836a04ba357e88647af13353b9664aa7768b7`. GitHub resolved unchanged `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch twenty commits ahead and zero behind, with no branch PR or workflow run on the resume commit.
+
+The Docker journey now requires a clean Git candidate before creating the disposable database. Only after migrations, setup, restart, reconnect, invalidation, rollback, and exact-retry checks pass does it emit `ros-brain.local-postgres-journey-receipt.v1`. The receipt binds the exact candidate, a SHA-256 over the runner/migration/seed/test inputs, the immutable container image ID, and the PostgreSQL and PostGIS versions reported by the running engine. Missing provenance turns an otherwise passing journey into failure. `externalArchiveReceipt` remains explicitly null, so this local output cannot represent REL-013 compliance.
+
+Fresh local verification passed 5/5 harness-definition tests and 601/601 workspace tests (API 528, dashboard 30, mobile 36, domain 7). All five TypeScript builds/no-emit checks and repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests. Docker, Podman, and local PostgreSQL binaries remain unavailable; the Docker preflight returned exit 127, so no live receipt was issued and no engine behavior was claimed.
+
+Result: **CANDIDATE-BOUND LOCAL JOURNEY RECEIPT IMPLEMENTED; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** The next single handoff is to run the clean candidate through the Docker journey and validate the emitted engine-bound receipt while correcting any database discrepancy.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries
