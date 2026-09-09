@@ -168,7 +168,9 @@ export function roadEventRevisionDigest(event: RoadEvent, scope: RoadEventAccess
           actorId: event.closureAuthorization.actorId,
           authorizedAt: event.closureAuthorization.authorizedAt.toISOString(),
           reason: event.closureAuthorization.reason,
-          sourceSnapshot: event.closureAuthorization.sourceSnapshot ?? null
+          ...(event.closureAuthorization.sourceSnapshot === undefined
+            ? {}
+            : { sourceSnapshot: event.closureAuthorization.sourceSnapshot })
         }
       }
     : {

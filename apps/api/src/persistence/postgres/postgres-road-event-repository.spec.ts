@@ -8,7 +8,7 @@ import {
   RoadEventStatus,
   SeverityLevel
 } from '@ros/domain';
-import { PostgresRoadEventRepository } from './postgres-road-event-repository.js';
+import { PostgresRoadEventRepository, roadEventRevisionDigest } from './postgres-road-event-repository.js';
 import { PostgresClient, PostgresPool, PostgresQueryResult } from './postgres-types.js';
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
@@ -108,6 +108,22 @@ test('create persists the governed source snapshot bound to closure authorizatio
 
   assert.match(client.queries[1]!.text, /closure_source_input_version, closure_source_snapshot_digest/);
   assert.deepEqual(client.queries[1]!.values.slice(16, 18), [37, 'd'.repeat(64)]);
+
+  const legacy = new RoadEvent({
+    id: EVENT_ID,
+    occurredAt: new Date('2026-07-25T02:55:00.000Z'),
+    latitude: 24.7136,
+    longitude: 46.6753,
+    status: RoadEventStatus.Recovery,
+    version: 2,
+    closureAuthorization: {
+      actorId: ACTOR_ID,
+      reason: 'verified source snapshot',
+      authorizedAt: new Date('2026-07-25T03:00:00.000Z')
+    }
+  });
+  assert.equal(roadEventRevisionDigest(legacy, SCOPE, 'CASE'), '0401457fb37181e19851379d2b2eacef7670b2e39754d3257e67c588ef35d9ee');
+  assert.notEqual(roadEventRevisionDigest(bound, SCOPE, 'CASE'), roadEventRevisionDigest(legacy, SCOPE, 'CASE'));
 });
 
 test('create writes scoped RoadEvent, independent revision receipts, audit and outbox in one transaction', async () => {
