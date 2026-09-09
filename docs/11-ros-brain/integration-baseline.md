@@ -319,6 +319,14 @@ Fresh local verification passed 7/7 harness-definition tests and 603/603 workspa
 
 Result: **PRE/POST RESTART MEASUREMENTS ARE RECEIPT-BOUND AND FAIL-CLOSED BY DEFINITION; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** The next single handoff is to execute the clean candidate through the Docker journey, inspect the engine-bound v3 receipt, and correct any database discrepancy.
 
+The five-source restart-recovery increment resumed from GitHub candidate `94805dda954602b737767993b7bceebc0059dbea`. Live GitHub comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch twenty-three commits ahead and zero behind, with no branch PR or workflow run on the resume commit.
+
+The first `REPEATABLE READ, READ ONLY` transaction after restart now verifies the complete authoritative state behind the persisted snapshot: exact RoadEvent CASE/SEVERITY receipts, Contact absence across both owned tables, the Evidence receipt, the two committed Human-Safety Indicator revisions, every version/digest stored in the snapshot, and the journal's exact snapshot digest. Missing or extra scoped receipts, a changed digest, an invented Contact state, or a broken journal link aborts the journey before the post-restart idempotent retry.
+
+Fresh local verification passed 8/8 harness-definition tests and 604/604 workspace tests (API 531, dashboard 30, mobile 36, domain 7). All five TypeScript builds/no-emit checks and repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests. Docker remains unavailable and the explicit preflight returned exit 127, so these SQL assertions and the v3 receipt were not executed on a live PostgreSQL engine.
+
+Result: **COMPLETE FIVE-SOURCE SNAPSHOT RECOVERY IS ASSERTED FAIL-CLOSED; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** The next single handoff is to execute the clean candidate through the Docker journey, inspect the engine-bound v3 receipt, and correct any database discrepancy.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries

@@ -39,6 +39,20 @@ test('restart checkpoint is mandatory and post-restart exact retry remains singu
   assert.match(reconnect, /post-restart exact retry duplicated the recommendation/);
 });
 
+test('post-restart read verifies all five authoritative source states and the exact snapshot', () => {
+  assert.match(reconnect, /RoadEvent case\/severity receipts were not durable after restart/);
+  assert.match(reconnect, /authoritative Contact absence was not durable after restart/);
+  assert.match(reconnect, /JOIN road_events event/);
+  assert.match(reconnect, /Evidence receipt was not durable after restart/);
+  assert.match(reconnect, /Human-Safety Indicator history was not durable after restart/);
+  assert.match(reconnect, /snapshot\.case_digest = repeat\('a', 64\)/);
+  assert.match(reconnect, /snapshot\.severity_digest = repeat\('b', 64\)/);
+  assert.match(reconnect, /snapshot\.contact_revision IS NULL/);
+  assert.match(reconnect, /snapshot\.evidence_digest = repeat\('d', 64\)/);
+  assert.match(reconnect, /snapshot\.indicator_digest = repeat\('e', 64\)/);
+  assert.match(reconnect, /journal\.source_snapshot_digest = snapshot\.snapshot_digest/);
+});
+
 test('restart proof preserves the cluster identity and replaces the postmaster', () => {
   assert.match(runner, /SELECT system_identifier::text \|\| '\|' \|\| pg_postmaster_start_time\(\)::text/);
   assert.match(runner, /before_system_identifier/);
