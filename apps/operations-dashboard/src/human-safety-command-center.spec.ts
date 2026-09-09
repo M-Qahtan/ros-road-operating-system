@@ -104,6 +104,31 @@ test('Arabic command-center rendering exposes urgency privacy explainability and
   assert.match(html, /توصية فقط/);
   assert.match(html, /سجل التدقيق غير القابل للتعديل/);
   assert.doesNotMatch(html, /24\.\d+,\s*46\.\d+/);
+  assert.match(html, /نسخ مصادر القرار/);
+  assert.match(html, /محجوبة: لا توجد لقطة مصادر حالية موثقة/);
+});
+
+test('Arabic command-center renders only verified governed source revisions as authoritative', async () => {
+  const now = new Date('2026-07-31T04:00:00.000Z');
+  const cases = seedCommandCenterCases(now).map((item, index) => index !== 0 ? item : ({
+    ...item,
+    sourceVersionState: {
+      status: 'VERIFIED' as const, reason: 'VERIFIED', inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64),
+      caseRevision: 11, severityRevision: 12, contactRevision: null, evidenceRevision: 14, indicatorRevision: 15
+    }
+  }));
+  const controller = new HumanSafetyCommandCenterController(
+    new SimulatedHumanSafetyCommandCenterGateway(cases),
+    { actorId: 'supervisor-1', roles: ['SUPERVISOR'] }, () => now
+  );
+  await controller.load();
+  await controller.select('case-ros-eye-001');
+  const html = renderHumanSafetyCommandCenter(controller.state, controller, now);
+  assert.match(html, /<dt>الحالة<\/dt><dd>11<\/dd>/);
+  assert.match(html, /<dt>الخطورة<\/dt><dd>12<\/dd>/);
+  assert.match(html, /<dt>التواصل<\/dt><dd>غير موجود<\/dd>/);
+  assert.match(html, /<dt>الأدلة<\/dt><dd>14<\/dd>/);
+  assert.match(html, /<dt>المؤشرات<\/dt><dd>15<\/dd>/);
 });
 
 test('ambiguous remote action failure marks Human Safety data stale and disables retry', async () => {

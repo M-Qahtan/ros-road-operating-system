@@ -199,7 +199,9 @@ test('current governed recommendation replaces legacy compatibility only for the
   const governed = new FakeGovernedRecommendations({
     status: 'AVAILABLE',
     snapshot: { status: 'VERIFIED', reason: 'VERIFIED', sourceSnapshotDigest: 'd'.repeat(64) },
-    recommendation, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false
+    recommendation, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false,
+    sourceVersions: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64), caseRevision: 11,
+      severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15 }
   });
   const { handler, store } = await fixture(OPERATOR, governed);
   store.recommendation = fusionRecommendation();
@@ -211,6 +213,13 @@ test('current governed recommendation replaces legacy compatibility only for the
     source: 'GOVERNED_JOURNAL', status: 'CURRENT', humanReviewStatus: 'PENDING',
     snapshotReason: 'VERIFIED', mode: 'SHADOW_ONLY', activationAuthorized: false
   });
+  assert.deepEqual(item.sourceVersionState, {
+    status: 'VERIFIED', reason: 'VERIFIED', inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64),
+    caseRevision: 11, severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15
+  });
+  assert.equal(item.safetyCase.severityAssessmentVersion, 12);
+  assert.equal(item.safetyCase.evidenceRevision, 14);
+  assert.equal(item.safetyCase.indicatorRevision, 15);
   assert.equal(item.nextEvidenceAdvice.status, 'SUGGESTED');
   assert.equal(item.nextEvidenceAdvice.sourceFingerprint, recommendation.deterministicFingerprint);
   assert.equal(governed.actor, OPERATOR);
@@ -221,7 +230,8 @@ test('withheld governed recommendation suppresses legacy fallback and preserves 
   const governed = new FakeGovernedRecommendations({
     status: 'WITHHELD',
     snapshot: { status: 'INVALIDATED', reason: 'CURRENT_INPUT_CHANGED', sourceSnapshotDigest: 'd'.repeat(64) },
-    recommendation: null, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false
+    recommendation: null, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false,
+    sourceVersions: null
   });
   const { handler, store } = await fixture(OPERATOR, governed);
   store.recommendation = fusionRecommendation();
@@ -236,13 +246,20 @@ test('withheld governed recommendation suppresses legacy fallback and preserves 
   assert.equal(item.nextEvidenceAdvice.status, 'ABSTAIN');
   assert.equal(item.nextEvidenceAdvice.reviewPriority, 'URGENT');
   assert.equal(item.safetyCase.severity, 'S4');
+  assert.deepEqual(item.sourceVersionState, {
+    status: 'WITHHELD', reason: 'CURRENT_INPUT_CHANGED', inputVersion: null, sourceSnapshotDigest: null,
+    caseRevision: null, severityRevision: null, contactRevision: null, evidenceRevision: null, indicatorRevision: null
+  });
+  assert.equal(item.safetyCase.severityAssessmentVersion, 0);
+  assert.equal(item.safetyCase.evidenceRevision, 0);
+  assert.equal(item.safetyCase.indicatorRevision, 0);
   assert.equal(store.mutations, 0);
 });
 
 test('missing governed journal retains legacy recommendation only as explicitly unverified compatibility', async () => {
   const governed = new FakeGovernedRecommendations({
     status: 'NOT_FOUND', snapshot: null, recommendation: null,
-    humanReviewStatus: null, mode: null, activationAuthorized: false
+    humanReviewStatus: null, mode: null, activationAuthorized: false, sourceVersions: null
   });
   const { handler, store } = await fixture(OPERATOR, governed);
   store.recommendation = fusionRecommendation();
@@ -254,6 +271,8 @@ test('missing governed journal retains legacy recommendation only as explicitly 
     source: 'LEGACY_COMPATIBILITY', status: 'UNVERIFIED', humanReviewStatus: null,
     snapshotReason: 'LEGACY_UNBOUND', mode: 'SHADOW_ONLY', activationAuthorized: false
   });
+  assert.equal(item.sourceVersionState.status, 'UNAVAILABLE');
+  assert.equal(item.sourceVersionState.severityRevision, null);
 });
 
 test('case reads expose observed degraded health instead of synthesizing healthy dependencies', async () => {

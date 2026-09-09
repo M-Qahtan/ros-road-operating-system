@@ -53,12 +53,25 @@ export interface HumanSafetyCaseView {
   readonly contactSession: HumanContactSessionContract | null;
   readonly recommendation: SafetyFusionRecommendation | null;
   readonly recommendationState: HumanSafetyRecommendationState;
+  readonly sourceVersionState: HumanSafetySourceVersionState;
   readonly nextEvidenceAdvice: NextEvidenceAdvice;
   readonly evidenceState: EvidenceState;
   readonly connectivity: 'HEALTHY' | 'DEGRADED' | 'LOST';
   readonly dependencyHealth: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE';
   readonly provenance: readonly HumanSafetyProvenanceEntry[];
   readonly audit: readonly HumanSafetyAuditEntry[];
+}
+
+export interface HumanSafetySourceVersionState {
+  readonly status: 'VERIFIED' | 'WITHHELD' | 'UNAVAILABLE';
+  readonly reason: string | null;
+  readonly inputVersion: number | null;
+  readonly sourceSnapshotDigest: string | null;
+  readonly caseRevision: number | null;
+  readonly severityRevision: number | null;
+  readonly contactRevision: number | null;
+  readonly evidenceRevision: number | null;
+  readonly indicatorRevision: number | null;
 }
 
 export interface HumanSafetyRecommendationState {
@@ -396,27 +409,31 @@ function view(
   const contact = backing.contact;
   const authorization = event.closureAuthorization;
   const selected = selectRecommendation(backing.recommendation, governed);
+  const sourceVersionState = authoritativeSourceVersions(governed);
+  const verifiedVersions = sourceVersionState.status === 'VERIFIED' ? sourceVersionState : null;
   const current: Omit<HumanSafetyCaseView, 'nextEvidenceAdvice'> = {
     tenantId: actor.tenantId,
     safetyCase: {
       id: event.id, roadEventId: event.id, state: stateOf(event, contact),
       severity: event.severity.level as HumanSafetyCaseContract['severity'], version: event.version,
-      severityAssessmentVersion: event.version, evidenceRevision: backing.provenance.length,
-      indicatorRevision: 0, openedAt: event.occurredAt,
+      severityAssessmentVersion: verifiedVersions?.severityRevision ?? 0,
+      evidenceRevision: verifiedVersions?.evidenceRevision ?? 0,
+      indicatorRevision: verifiedVersions?.indicatorRevision ?? 0, openedAt: event.occurredAt,
       nextDeadlineAt: contact?.responseDeadlineAt ?? null, activeChannel: contact?.activeChannel ?? null,
       assignedActorId: contact?.assignedOperatorId ?? null, indicators: [],
       highRiskResolutionAuthorization: authorization === null ? null : {
         caseId: event.id, decision: 'RESOLVE', actorId: authorization.actorId, role: 'SUPERVISOR',
         reason: authorization.reason, authorizedAt: authorization.authorizedAt,
         expiresAt: new Date(Date.parse(authorization.authorizedAt) + 5 * 60_000).toISOString(),
-        caseVersion: Math.max(1, event.version - 1), severityAssessmentVersion: Math.max(1, event.version - 1),
-        evidenceRevision: backing.provenance.length, indicatorRevision: 0,
+        caseVersion: Math.max(1, event.version - 1), severityAssessmentVersion: verifiedVersions?.severityRevision ?? 0,
+        evidenceRevision: verifiedVersions?.evidenceRevision ?? 0, indicatorRevision: verifiedVersions?.indicatorRevision ?? 0,
         connectivity: health.connectivity, dependenciesHealthy: health.dependencyHealth === 'HEALTHY'
       }
     },
     contactSession: contact === null ? null : contact,
     recommendation: selected.recommendation,
     recommendationState: selected.state,
+    sourceVersionState,
     evidenceState: backing.evidenceState,
     connectivity: health.connectivity, dependencyHealth: health.dependencyHealth,
     provenance: backing.provenance, audit: backing.audit
@@ -431,6 +448,18 @@ function view(
         ...backing.provenance.map((entry) => entry.receivedAt), ...backing.audit.map((entry) => entry.occurredAt)]
     }, generatedAt)
   };
+}
+
+function authoritativeSourceVersions(governed: GovernedRecommendationQueryResult | null): HumanSafetySourceVersionState {
+  const versions = governed?.status === 'AVAILABLE' && governed.snapshot?.status === 'VERIFIED'
+    ? governed.sourceVersions : null;
+  if (versions !== null) return Object.freeze({ status: 'VERIFIED', reason: 'VERIFIED', ...versions });
+  const status = governed !== null && governed.status !== 'NOT_FOUND' ? 'WITHHELD' : 'UNAVAILABLE';
+  return Object.freeze({
+    status, reason: governed?.snapshot?.reason ?? null,
+    inputVersion: null, sourceSnapshotDigest: null, caseRevision: null, severityRevision: null,
+    contactRevision: null, evidenceRevision: null, indicatorRevision: null
+  });
 }
 
 function selectRecommendation(

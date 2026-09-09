@@ -96,6 +96,10 @@ test('returns only a current exact-scope recommendation and preserves non-execut
   assert.equal(result.humanReviewStatus, 'PENDING');
   assert.equal(result.mode, 'SHADOW_ONLY');
   assert.equal(result.activationAuthorized, false);
+  assert.deepEqual(result.sourceVersions, {
+    inputVersion: 1, sourceSnapshotDigest: digest('1'), caseRevision: 7, severityRevision: 3,
+    contactRevision: 4, evidenceRevision: 9, indicatorRevision: 2
+  });
   assert.equal(GOVERNED_RECOMMENDATION_QUERY_TRANSACTION_SQL.includes('READ ONLY'), true);
   assert.equal(POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL.authorizeCase.includes('FOR SHARE'), false);
   assert.equal(POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL.latest.includes('FOR SHARE'), false);
@@ -109,6 +113,7 @@ test('a newer module revision withholds the historical recommendation but retain
   assert.deepEqual(result.snapshot, { status: 'INVALIDATED', reason: 'CURRENT_INPUT_CHANGED', sourceSnapshotDigest: digest('1') });
   assert.equal(result.recommendation, null);
   assert.equal(result.humanReviewStatus, 'PENDING');
+  assert.equal(result.sourceVersions, null);
 });
 
 test('role, actor and case identity validation deny before database access', async () => {
@@ -129,6 +134,7 @@ test('forged activation or review columns withhold the row without claiming pers
   assert.equal(result.status, 'WITHHELD');
   assert.equal(result.recommendation, null);
   assert.equal(result.humanReviewStatus, null);
+  assert.equal(result.sourceVersions, null);
   assert.equal(result.activationAuthorized, false);
 });
 

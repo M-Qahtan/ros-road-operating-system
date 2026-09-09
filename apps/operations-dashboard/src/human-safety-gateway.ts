@@ -39,6 +39,13 @@ export interface CommandCenterCaseView {
   readonly safetyCase: HumanSafetyCaseContract;
   readonly contactSession: HumanContactSessionContract | null;
   readonly recommendation: SafetyFusionRecommendation | null;
+  /** Present on governed API responses; absent on older compatibility responses. */
+  readonly sourceVersionState?: Readonly<{
+    status: 'VERIFIED' | 'WITHHELD' | 'UNAVAILABLE'; reason: string | null;
+    inputVersion: number | null; sourceSnapshotDigest: string | null;
+    caseRevision: number | null; severityRevision: number | null; contactRevision: number | null;
+    evidenceRevision: number | null; indicatorRevision: number | null;
+  }>;
   /** Optional while older API responses remain supported. Never synthesized by the live client. */
   readonly nextEvidenceAdvice?: NextEvidenceAdvice;
   readonly evidenceState: CommandCenterEvidenceState;

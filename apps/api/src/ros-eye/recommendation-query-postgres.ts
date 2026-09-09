@@ -46,6 +46,17 @@ export type GovernedRecommendationQueryResult = Readonly<{
   humanReviewStatus: 'PENDING' | null;
   mode: 'SHADOW_ONLY' | null;
   activationAuthorized: false;
+  sourceVersions: GovernedRecommendationSourceVersions | null;
+}>;
+
+export type GovernedRecommendationSourceVersions = Readonly<{
+  inputVersion: number;
+  sourceSnapshotDigest: string;
+  caseRevision: number;
+  severityRevision: number;
+  contactRevision: number | null;
+  evidenceRevision: number;
+  indicatorRevision: number;
 }>;
 
 /**
@@ -61,18 +72,18 @@ export class PostgresGovernedRecommendationQuery {
   ) { this.snapshots = new PostgresInputSnapshotRepository(pool); }
 
   async read(actor: AuthenticatedActor, caseId: string): Promise<GovernedRecommendationQueryResult> {
-    if (!authorizedActor(actor) || !validCaseId(caseId)) return result('FORBIDDEN', null, null, null, null);
+    if (!authorizedActor(actor) || !validCaseId(caseId)) return result('FORBIDDEN', null, null, null, null, null);
     const scope = { tenantId: actor.tenantId, purpose: actor.purpose, caseId };
     return this.pool.transaction(async (connection) => {
       await connection.query(GOVERNED_RECOMMENDATION_QUERY_TRANSACTION_SQL);
       const parent = await connection.query(POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL.authorizeCase,
         [scope.tenantId, scope.purpose, scope.caseId]);
       if (parent.rowCount !== 1 || parent.rows.length !== 1 || parent.rows[0]?.case_id !== caseId.toLowerCase()) {
-        return result('NOT_FOUND', null, null, null, null);
+        return result('NOT_FOUND', null, null, null, null, null);
       }
       const latest = await connection.query<RecommendationQueryRow>(POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL.latest,
         [scope.tenantId, scope.purpose, scope.caseId]);
-      if (latest.rowCount === 0 && latest.rows.length === 0) return result('NOT_FOUND', null, null, null, null);
+      if (latest.rowCount === 0 && latest.rows.length === 0) return result('NOT_FOUND', null, null, null, null, null);
       if (latest.rowCount !== 1 || latest.rows.length !== 1) return withheld('INVALID_BINDING');
       const row = latest.rows[0]!;
       if (!fixedSafetyColumns(row)) return withheld('INVALID_BINDING');
@@ -90,8 +101,8 @@ export class PostgresGovernedRecommendationQuery {
       const current = await currentRevisions(connection, scope, this.sources);
       const assessment = assessRecommendationSnapshotBinding(recommendation, snapshot, binding, current);
       return assessment.status === 'VERIFIED'
-        ? result('AVAILABLE', assessment, recommendation, 'PENDING', 'SHADOW_ONLY')
-        : result('WITHHELD', assessment, null, 'PENDING', 'SHADOW_ONLY');
+        ? result('AVAILABLE', assessment, recommendation, 'PENDING', 'SHADOW_ONLY', sourceVersions(snapshot!))
+        : result('WITHHELD', assessment, null, 'PENDING', 'SHADOW_ONLY', null);
     }).catch(() => withheld('MISSING_BINDING'));
   }
 }
@@ -157,11 +168,24 @@ function validScope(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-
 function validActorId(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 function validCaseId(value: string): boolean { return validActorId(value); }
 function withheld(reason: SnapshotBindingAssessment['reason'], review: 'PENDING' | null = null): GovernedRecommendationQueryResult {
-  return result('WITHHELD', Object.freeze({ status: 'UNVERIFIED', reason, sourceSnapshotDigest: null }), null, review, review === null ? null : 'SHADOW_ONLY');
+  return result('WITHHELD', Object.freeze({ status: 'UNVERIFIED', reason, sourceSnapshotDigest: null }), null, review, review === null ? null : 'SHADOW_ONLY', null);
 }
 function result(
   status: GovernedRecommendationQueryResult['status'], snapshot: SnapshotBindingAssessment | null,
-  recommendation: SafetyFusionRecommendation | null, humanReviewStatus: 'PENDING' | null, mode: 'SHADOW_ONLY' | null
+  recommendation: SafetyFusionRecommendation | null, humanReviewStatus: 'PENDING' | null, mode: 'SHADOW_ONLY' | null,
+  sourceVersions: GovernedRecommendationSourceVersions | null
 ): GovernedRecommendationQueryResult {
-  return Object.freeze({ status, snapshot, recommendation, humanReviewStatus, mode, activationAuthorized: false });
+  return Object.freeze({ status, snapshot, recommendation, humanReviewStatus, mode, activationAuthorized: false, sourceVersions });
+}
+
+function sourceVersions(snapshot: NonNullable<Awaited<ReturnType<PostgresInputSnapshotRepository['read']>>>): GovernedRecommendationSourceVersions {
+  return Object.freeze({
+    inputVersion: snapshot.inputVersion,
+    sourceSnapshotDigest: snapshot.snapshotDigest,
+    caseRevision: snapshot.case.revision,
+    severityRevision: snapshot.severity.revision,
+    contactRevision: snapshot.contact?.revision ?? null,
+    evidenceRevision: snapshot.evidence.revision,
+    indicatorRevision: snapshot.indicators.revision
+  });
 }

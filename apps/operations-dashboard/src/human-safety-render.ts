@@ -71,6 +71,7 @@ function renderCaseDetail(item: CommandCenterCaseView | null, controller: Pick<H
     <div class="detail-grid human-safety-grid">
       <article><h3>التواصل الإنساني</h3><dl class="fact-list"><div><dt>الحالة</dt><dd>${escape(contact === null ? 'غير مبدوء' : CONTACT_STATE_AR[contact.state])}</dd></div><div><dt>القناة</dt><dd>${escape(contact?.activeChannel ?? safety.activeChannel ?? 'لا توجد')}</dd></div><div><dt>المحاولات</dt><dd>${contact?.attemptCount ?? 0}</dd></div><div><dt>المشغل</dt><dd>${escape(contact?.assignedOperatorId ?? safety.assignedActorId ?? 'غير مسندة')}</dd></div></dl></article>
       <article class="${healthClass}"><h3>جاهزية النظام</h3><dl class="fact-list"><div><dt>الاتصال</dt><dd>${escape(item.connectivity)}</dd></div><div><dt>الاعتماديات</dt><dd>${escape(item.dependencyHealth)}</dd></div><div><dt>الأدلة</dt><dd>${escape(item.evidenceState)}</dd></div><div><dt>البيانات</dt><dd>مقنّعة وفق أقل قدر ضروري</dd></div></dl></article>
+      ${renderSourceVersions(item)}
       <article><h3>المؤشرات المنظمة</h3>${safety.indicators.length === 0 ? '<p class="muted">لا توجد مؤشرات منظمة.</p>' : `<ul class="compact-list">${safety.indicators.map((indicator) => `<li><strong>${escape(indicator.code)}</strong><span>${Math.round(indicator.confidence * 100)}٪ · ${escape(indicator.source)}</span></li>`).join('')}</ul>`}</article>
       <article><h3>مصادر الإشارة</h3>${item.provenance.length === 0 ? '<p class="muted">لا توجد بيانات مصدر معروضة.</p>' : `<ul class="compact-list">${item.provenance.map((entry) => `<li><strong>${escape(entry.sourceType)}</strong><span>${escape(entry.integrity)} · ${escape(entry.status)} · ${escape(new Date(entry.receivedAt).toLocaleTimeString('ar-SA'))}</span></li>`).join('')}</ul>`}</article>
     </div>
@@ -84,6 +85,14 @@ function renderCaseDetail(item: CommandCenterCaseView | null, controller: Pick<H
     </section>
     <section aria-labelledby="audit-title"><h3 id="audit-title">سجل التدقيق غير القابل للتعديل</h3>${renderAudit(item)}</section>
   </section>`;
+}
+
+function renderSourceVersions(item: CommandCenterCaseView): string {
+  const versions = item.sourceVersionState;
+  if (versions?.status !== 'VERIFIED') {
+    return '<article class="warning-card"><h3>نسخ مصادر القرار</h3><p>محجوبة: لا توجد لقطة مصادر حالية موثقة.</p></article>';
+  }
+  return `<article><h3>نسخ مصادر القرار</h3><dl class="fact-list"><div><dt>الحالة</dt><dd>${versions.caseRevision}</dd></div><div><dt>الخطورة</dt><dd>${versions.severityRevision}</dd></div><div><dt>التواصل</dt><dd>${versions.contactRevision ?? 'غير موجود'}</dd></div><div><dt>الأدلة</dt><dd>${versions.evidenceRevision}</dd></div><div><dt>المؤشرات</dt><dd>${versions.indicatorRevision}</dd></div></dl></article>`;
 }
 
 function renderRecommendation(item: CommandCenterCaseView): string {
