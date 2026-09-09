@@ -63,12 +63,18 @@ bash scripts/run-postgres-integration.sh
 readonly image_id="$(docker inspect --format '{{.Image}}' "$container_name")"
 readonly postgres_version="$(psql "$DATABASE_URL" -Atqc 'SHOW server_version')"
 readonly postgis_version="$(psql "$DATABASE_URL" -Atqc 'SELECT postgis_lib_version()')"
+readonly database_system_identifier="$(
+  psql "$DATABASE_URL" -Atqc 'SELECT system_identifier::text FROM pg_control_system()'
+)"
+readonly postmaster_started_at="$(psql "$DATABASE_URL" -Atqc 'SELECT pg_postmaster_start_time()::text')"
 
 if [[ ! "$candidate_sha" =~ ^[a-f0-9]{40}$ \
   || ! "$journey_manifest_sha256" =~ ^[a-f0-9]{64}$ \
   || ! "$image_id" =~ ^sha256:[a-f0-9]{64}$ \
   || -z "$postgres_version" \
-  || -z "$postgis_version" ]]; then
+  || -z "$postgis_version" \
+  || ! "$database_system_identifier" =~ ^[0-9]+$ \
+  || -z "$postmaster_started_at" ]]; then
   echo "PostgreSQL journey passed but its local receipt provenance is incomplete" >&2
   exit 2
 fi
@@ -78,14 +84,19 @@ ROS_RECEIPT_JOURNEY_MANIFEST_SHA256="$journey_manifest_sha256" \
 ROS_RECEIPT_IMAGE_ID="$image_id" \
 ROS_RECEIPT_POSTGRES_VERSION="$postgres_version" \
 ROS_RECEIPT_POSTGIS_VERSION="$postgis_version" \
+ROS_RECEIPT_DATABASE_SYSTEM_IDENTIFIER="$database_system_identifier" \
+ROS_RECEIPT_POSTMASTER_STARTED_AT="$postmaster_started_at" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v1",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v2",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerImageId: process.env.ROS_RECEIPT_IMAGE_ID,
     postgresVersion: process.env.ROS_RECEIPT_POSTGRES_VERSION,
     postgisVersion: process.env.ROS_RECEIPT_POSTGIS_VERSION,
+    databaseSystemIdentifier: process.env.ROS_RECEIPT_DATABASE_SYSTEM_IDENTIFIER,
+    postmasterStartedAt: process.env.ROS_RECEIPT_POSTMASTER_STARTED_AT,
+    restartVerified: true,
     result: "PASS",
     externalArchiveReceipt: null,
   };

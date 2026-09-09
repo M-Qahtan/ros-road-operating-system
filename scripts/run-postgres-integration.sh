@@ -54,9 +54,30 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/seeds/0001_local_road_events
 for test_file in database/tests/*.sql; do
   if [[ -n "${ROS_POSTGRES_RESTART_BEFORE_TEST:-}" \
     && "$(basename "$test_file")" == "$ROS_POSTGRES_RESTART_BEFORE_TEST" ]]; then
+    restart_identity_before="$(
+      psql "$DATABASE_URL" -Atqc \
+        "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+    )"
     echo "Restarting PostgreSQL before ${test_file}"
     docker restart -- "$ROS_POSTGRES_RESTART_CONTAINER" >/dev/null
     wait_for_postgres "after restart"
+    restart_identity_after="$(
+      psql "$DATABASE_URL" -Atqc \
+        "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+    )"
+    before_system_identifier="${restart_identity_before%%|*}"
+    after_system_identifier="${restart_identity_after%%|*}"
+    before_postmaster_started_at="${restart_identity_before#*|}"
+    after_postmaster_started_at="${restart_identity_after#*|}"
+    if [[ -z "$before_system_identifier" \
+      || -z "$after_system_identifier" \
+      || "$before_system_identifier" != "$after_system_identifier" \
+      || -z "$before_postmaster_started_at" \
+      || -z "$after_postmaster_started_at" \
+      || "$before_postmaster_started_at" == "$after_postmaster_started_at" ]]; then
+      echo "PostgreSQL restart did not preserve the cluster and replace the postmaster" >&2
+      exit 2
+    fi
     restart_performed=true
   fi
   echo "Running ${test_file}"

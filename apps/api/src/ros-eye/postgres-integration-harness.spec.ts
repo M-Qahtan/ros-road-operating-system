@@ -39,6 +39,14 @@ test('restart checkpoint is mandatory and post-restart exact retry remains singu
   assert.match(reconnect, /post-restart exact retry duplicated the recommendation/);
 });
 
+test('restart proof preserves the cluster identity and replaces the postmaster', () => {
+  assert.match(runner, /SELECT system_identifier::text \|\| '\|' \|\| pg_postmaster_start_time\(\)::text/);
+  assert.match(runner, /before_system_identifier/);
+  assert.match(runner, /before_postmaster_started_at/);
+  assert.match(runner, /did not preserve the cluster and replace the postmaster/);
+  assert.ok(runner.indexOf('restart_identity_after=') < runner.indexOf('restart_performed=true'));
+});
+
 test('live journey receipt is bound to a clean candidate and emitted only after success', () => {
   assert.match(localHarness, /git status --porcelain --untracked-files=normal/);
   assert.match(localHarness, /journey_manifest_sha256/);
@@ -46,7 +54,10 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /SHOW server_version/);
   assert.match(localHarness, /SELECT postgis_lib_version\(\)/);
   assert.match(localHarness, /receipt provenance is incomplete/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v1/);
+  assert.match(localHarness, /databaseSystemIdentifier/);
+  assert.match(localHarness, /postmasterStartedAt/);
+  assert.match(localHarness, /restartVerified: true/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v2/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
