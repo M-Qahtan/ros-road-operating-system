@@ -6,6 +6,7 @@ const runner = readFileSync('scripts/run-postgres-integration.sh', 'utf8');
 const localHarness = readFileSync('scripts/run-local-postgres-brain-journey.sh', 'utf8');
 const setup = readFileSync('database/tests/0010_ros_brain_journey_setup.sql', 'utf8');
 const reconnect = readFileSync('database/tests/0011_ros_brain_journey_reconnect.sql', 'utf8');
+const recoveryForward = readFileSync('database/tests/0012_ros_brain_journey_recovery_forward.sql', 'utf8');
 
 test('PostgreSQL integration runner fails explicitly before claiming an unexecuted test', () => {
   assert.match(runner, /command -v "\$required_command"/);
@@ -104,4 +105,18 @@ test('ordered SQL journey covers current read, source invalidation, rollback and
   assert.match(setup, /activation_authorized = false/);
   assert.match(reconnect, /durable across client reconnect/);
   assert.ok('0010_ros_brain_journey_setup.sql' < '0011_ros_brain_journey_reconnect.sql');
+});
+
+test('post-restart recovery advances to a new current recommendation without rewriting history', () => {
+  assert.match(recoveryForward, /input_version, policy_version/);
+  assert.match(recoveryForward, /2, 'ros-eye\.input-snapshot\.v1'/);
+  assert.match(recoveryForward, /indicator_revision = 1/);
+  assert.match(recoveryForward, /indicator_revision = 2/);
+  assert.match(recoveryForward, /historical recommendation current/);
+  assert.match(recoveryForward, /one current governed recommendation/);
+  assert.match(recoveryForward, /authority = 'RECOMMENDATION_ONLY'/);
+  assert.match(recoveryForward, /mode = 'SHADOW_ONLY'/);
+  assert.match(recoveryForward, /activation_authorized = false/);
+  assert.match(recoveryForward, /human_review_status = 'PENDING'/);
+  assert.ok('0011_ros_brain_journey_reconnect.sql' < '0012_ros_brain_journey_recovery_forward.sql');
 });

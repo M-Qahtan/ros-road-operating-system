@@ -327,6 +327,14 @@ Fresh local verification passed 8/8 harness-definition tests and 604/604 workspa
 
 Result: **COMPLETE FIVE-SOURCE SNAPSHOT RECOVERY IS ASSERTED FAIL-CLOSED; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** The next single handoff is to execute the clean candidate through the Docker journey, inspect the engine-bound v3 receipt, and correct any database discrepancy.
 
+The post-restart forward-recovery increment resumed from GitHub candidate `22412000ade53e22196749bd2d483e13d488c95`. Live GitHub comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch twenty-four commits ahead and zero behind, with no branch PR or workflow run on the resume commit.
+
+After restart, five-source durability, stale-binding detection, and exact-retry suppression succeed, a new ordered SQL client now appends input snapshot version 2 for the committed Indicator correction and writes a separately bound governed recommendation. The final repeatable-read/read-only assertion requires both snapshots and both recommendations to remain append-only, proves version 1 is still stale, and accepts version 2 only with the current source revision and `RECOMMENDATION_ONLY / SHADOW_ONLY / activationAuthorized=false / PENDING` constraints. It grants no review approval or operational action.
+
+Fresh local verification passed 9/9 harness-definition tests and 605/605 workspace tests (API 532, dashboard 30, mobile 36, domain 7). All five TypeScript builds/no-emit checks and repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests. Docker remains unavailable and the explicit preflight returned exit 127, so the new SQL recovery stage and v3 receipt were not executed on a live PostgreSQL engine.
+
+Result: **APPEND-ONLY FORWARD RECOVERY AFTER RESTART IS DEFINED FAIL-CLOSED; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** The next single handoff is to execute the clean candidate through the Docker journey, inspect the engine-bound v3 receipt, and correct any migration, trigger, or recovery discrepancy.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries
