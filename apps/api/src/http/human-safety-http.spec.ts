@@ -341,6 +341,10 @@ test('healthy observed dependencies permit supervisor authorization without clos
   assert.equal(response?.status, 200);
   const authorized = await current.application.getById(CASE_ID, SUPERVISOR);
   assert.notEqual(authorized.closureAuthorization, null);
+  assert.deepEqual(authorized.closureAuthorization?.sourceSnapshot, {
+    inputVersion: 37,
+    sourceSnapshotDigest: 'd'.repeat(64)
+  });
   assert.notEqual(authorized.status, 'CLOSED');
 });
 

@@ -427,7 +427,8 @@ function view(
         expiresAt: new Date(Date.parse(authorization.authorizedAt) + 5 * 60_000).toISOString(),
         caseVersion: Math.max(1, event.version - 1), severityAssessmentVersion: verifiedVersions?.severityRevision ?? 0,
         evidenceRevision: verifiedVersions?.evidenceRevision ?? 0, indicatorRevision: verifiedVersions?.indicatorRevision ?? 0,
-        connectivity: health.connectivity, dependenciesHealthy: health.dependencyHealth === 'HEALTHY'
+        connectivity: health.connectivity, dependenciesHealthy: health.dependencyHealth === 'HEALTHY',
+        ...(authorization.sourceSnapshot === undefined ? {} : { sourceSnapshot: authorization.sourceSnapshot })
       }
     },
     contactSession: contact === null ? null : contact,
@@ -638,7 +639,11 @@ export function createHumanSafetyHttpHandler(
           const governed = governedRecommendations === null ? null : await governedRecommendations.read(actor, caseId);
           requireCurrentSourceSnapshot(governed);
           await application.authorizeClosure({
-            roadEventId: caseId, expectedVersion: event.version, reason, authorizedAt: now().toISOString()
+            roadEventId: caseId, expectedVersion: event.version, reason, authorizedAt: now().toISOString(),
+            sourceSnapshot: {
+              inputVersion: governed!.sourceVersions!.inputVersion,
+              sourceSnapshotDigest: governed!.sourceVersions!.sourceSnapshotDigest
+            }
           }, { actor, traceId: request.traceId, idempotencyKey: key });
         } else {
           if (backing.contact === null || expectedContactVersion === null) throw new HumanSafetyHttpError(409, 'CONTACT_SESSION_REQUIRED', 'A current contact session version is required');

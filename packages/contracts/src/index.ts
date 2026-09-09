@@ -74,6 +74,10 @@ export interface RoadEventResponse {
     readonly actorId: string;
     readonly reason: string;
     readonly authorizedAt: string;
+    readonly sourceSnapshot?: {
+      readonly inputVersion: number;
+      readonly sourceSnapshotDigest: string;
+    };
   } | null;
 }
 

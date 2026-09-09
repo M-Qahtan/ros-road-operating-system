@@ -63,6 +63,10 @@ export interface AuthorizeClosureCommand {
   readonly expectedVersion: number;
   readonly reason: string;
   readonly authorizedAt: string;
+  readonly sourceSnapshot?: {
+    readonly inputVersion: number;
+    readonly sourceSnapshotDigest: string;
+  };
 }
 
 export interface AttachSignalCommand {
@@ -237,7 +241,8 @@ export class RoadEventApplicationService {
     return this.executeIdempotently(this.operationScope('road_event:authorize_closure', context.actor), context.idempotencyKey, command, async () => {
       const event = await this.requireEvent(command.roadEventId, scope);
       if (event.version !== command.expectedVersion) throw new RoadEventConcurrencyError('RoadEvent version is stale');
-      event.authorizeClosure({ actorId: context.actor.actorId, reason, authorizedAt });
+      event.authorizeClosure({ actorId: context.actor.actorId, reason, authorizedAt,
+        ...(command.sourceSnapshot === undefined ? {} : { sourceSnapshot: command.sourceSnapshot }) });
       await this.repository.update(event, command.expectedVersion, {
         ...scope,
         actorType: this.primaryRole(context.actor),

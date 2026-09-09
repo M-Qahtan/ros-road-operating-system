@@ -36,6 +36,8 @@ interface RoadEventRow {
   readonly closure_authorized_by: string | null;
   readonly closure_authorized_at: Date | string | null;
   readonly closure_authorization_reason: string | null;
+  readonly closure_source_input_version: number | string | null;
+  readonly closure_source_snapshot_digest: string | null;
   readonly total_count?: number | string;
 }
 
@@ -83,13 +85,30 @@ function asDate(value: Date | string, field: string): Date {
   return date;
 }
 
+function mapClosureSourceSnapshot(row: RoadEventRow): { readonly inputVersion: number; readonly sourceSnapshotDigest: string } | undefined {
+  const rawVersion = row.closure_source_input_version;
+  const digest = row.closure_source_snapshot_digest;
+  if (rawVersion === null && digest === null) return undefined;
+  const inputVersion = Number(rawVersion);
+  if (rawVersion === null || digest === null || !Number.isSafeInteger(inputVersion) || inputVersion < 1 || !/^[a-f0-9]{64}$/.test(digest)) {
+    throw new TypeError('closure authorization source snapshot is incomplete or invalid');
+  }
+  return Object.freeze({ inputVersion, sourceSnapshotDigest: digest });
+}
+
 function mapRoadEvent(row: RoadEventRow): RoadEvent {
-  const closureAuthorization = row.closure_authorized_by === null || row.closure_authorized_at === null || row.closure_authorization_reason === null
+  const sourceSnapshot = mapClosureSourceSnapshot(row);
+  const authorizationIncomplete = row.closure_authorized_by === null || row.closure_authorized_at === null || row.closure_authorization_reason === null;
+  if (sourceSnapshot !== undefined && authorizationIncomplete) {
+    throw new TypeError('closure authorization source snapshot requires a complete closure authorization');
+  }
+  const closureAuthorization = authorizationIncomplete
     ? undefined
     : {
         actorId: row.closure_authorized_by,
         authorizedAt: asDate(row.closure_authorized_at, 'closure_authorized_at'),
-        reason: row.closure_authorization_reason
+        reason: row.closure_authorization_reason,
+        ...(sourceSnapshot === undefined ? {} : { sourceSnapshot })
       };
 
   return new RoadEvent({
@@ -131,7 +150,8 @@ function snapshot(event: RoadEvent): Readonly<Record<string, unknown>> {
       : {
           actorId: authorization.actorId,
           reason: authorization.reason,
-          authorizedAt: authorization.authorizedAt.toISOString()
+          authorizedAt: authorization.authorizedAt.toISOString(),
+          ...(authorization.sourceSnapshot === undefined ? {} : { sourceSnapshot: authorization.sourceSnapshot })
         }
   });
 }
@@ -147,7 +167,8 @@ export function roadEventRevisionDigest(event: RoadEvent, scope: RoadEventAccess
         closureAuthorization: event.closureAuthorization === undefined ? null : {
           actorId: event.closureAuthorization.actorId,
           authorizedAt: event.closureAuthorization.authorizedAt.toISOString(),
-          reason: event.closureAuthorization.reason
+          reason: event.closureAuthorization.reason,
+          sourceSnapshot: event.closureAuthorization.sourceSnapshot ?? null
         }
       }
     : {
@@ -199,7 +220,9 @@ const ROAD_EVENT_SELECT = `
     version,
     closure_authorized_by,
     closure_authorized_at,
-    closure_authorization_reason
+    closure_authorization_reason,
+    closure_source_input_version,
+    closure_source_snapshot_digest
   FROM road_events`;
 
 export class PostgresRoadEventRepository implements RoadEventRepository {
@@ -225,11 +248,11 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
             id, tenant_id, purpose, status, severity, severity_score, confidence, reason_codes,
             severity_requires_human_review, location, occurred_at, version,
             closure_authorized_by, closure_authorized_at, closure_authorization_reason,
-            reporter_actor_id
+            closure_source_input_version, closure_source_snapshot_digest, reporter_actor_id
           ) VALUES (
             $1::uuid, $2, $3, $4::road_event_status, $5::severity_level, $6, $7, $8::text[],
             $9, ST_SetSRID(ST_MakePoint($10, $11), 4326)::geography, $12, $13,
-            $14::uuid, $15, $16, $17::uuid
+            $14::uuid, $15, $16, $17, $18, $19::uuid
           )`,
           [
             event.id,
@@ -248,6 +271,8 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
             authorization?.actorId ?? null,
             authorization?.authorizedAt ?? null,
             authorization?.reason ?? null,
+            authorization?.sourceSnapshot?.inputVersion ?? null,
+            authorization?.sourceSnapshot?.sourceSnapshotDigest ?? null,
             trustedReporterActorId
           ]
         );
@@ -295,7 +320,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
           version = $14,
           closure_authorized_by = $15::uuid,
           closure_authorized_at = $16,
-          closure_authorization_reason = $17
+          closure_authorization_reason = $17,
+          closure_source_input_version = $18,
+          closure_source_snapshot_digest = $19
         WHERE id = $1::uuid AND version = $2 AND tenant_id = $3 AND purpose = $4
         RETURNING version`,
         [
@@ -315,7 +342,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
           event.version,
           authorization?.actorId ?? null,
           authorization?.authorizedAt ?? null,
-          authorization?.reason ?? null
+          authorization?.reason ?? null,
+          authorization?.sourceSnapshot?.inputVersion ?? null,
+          authorization?.sourceSnapshot?.sourceSnapshotDigest ?? null
         ]
       );
       if (updated.rowCount !== 1) throw new RoadEventConcurrencyError(`RoadEvent ${event.id} changed during update`);

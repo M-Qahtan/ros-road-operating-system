@@ -12,6 +12,12 @@ export interface ClosureAuthorization {
   readonly actorId: string;
   readonly reason: string;
   readonly authorizedAt: Date;
+  readonly sourceSnapshot?: ClosureAuthorizationSourceSnapshot;
+}
+
+export interface ClosureAuthorizationSourceSnapshot {
+  readonly inputVersion: number;
+  readonly sourceSnapshotDigest: string;
 }
 
 export interface RoadEventProps {
@@ -53,7 +59,19 @@ function copyAuthorization(authorization: ClosureAuthorization): ClosureAuthoriz
   if (!Number.isFinite(authorizedAt) || authorizedAt > Date.now() + MAX_CLOCK_SKEW_MILLISECONDS) {
     throw new InvalidRoadEventError('Closure authorization time is invalid');
   }
-  return Object.freeze({ actorId, reason, authorizedAt: new Date(authorizedAt) });
+  const sourceSnapshot = authorization.sourceSnapshot === undefined
+    ? undefined
+    : copySourceSnapshot(authorization.sourceSnapshot);
+  return Object.freeze({ actorId, reason, authorizedAt: new Date(authorizedAt),
+    ...(sourceSnapshot === undefined ? {} : { sourceSnapshot }) });
+}
+
+function copySourceSnapshot(snapshot: ClosureAuthorizationSourceSnapshot): ClosureAuthorizationSourceSnapshot {
+  if (!Number.isSafeInteger(snapshot.inputVersion) || snapshot.inputVersion < 1 ||
+      !/^[a-f0-9]{64}$/.test(snapshot.sourceSnapshotDigest)) {
+    throw new InvalidRoadEventError('Closure authorization source snapshot is invalid');
+  }
+  return Object.freeze({ inputVersion: snapshot.inputVersion, sourceSnapshotDigest: snapshot.sourceSnapshotDigest });
 }
 
 export class RoadEvent {

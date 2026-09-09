@@ -197,9 +197,14 @@ test('S3 closure remains blocked until supervisor authorization is persisted', a
     roadEventId: EVENT_ID,
     expectedVersion: 1,
     reason: 'scene verified safe',
-    authorizedAt: '2026-07-25T03:10:00.000Z'
+    authorizedAt: '2026-07-25T03:10:00.000Z',
+    sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64) }
   }, context('authorize-0002', supervisor));
   assert.equal(authorized.version, 2);
+  assert.deepEqual(authorized.closureAuthorization?.sourceSnapshot, {
+    inputVersion: 37,
+    sourceSnapshotDigest: 'd'.repeat(64)
+  });
 
   const closed = await service.transition({
     roadEventId: EVENT_ID, expectedVersion: 2, nextStatus: RoadEventStatus.Closed, reason: 'all gates passed'

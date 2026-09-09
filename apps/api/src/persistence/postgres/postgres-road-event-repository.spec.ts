@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   RoadEvent,
@@ -80,9 +81,34 @@ function row(version = 1) {
     version,
     closure_authorized_by: null,
     closure_authorized_at: null,
-    closure_authorization_reason: null
+    closure_authorization_reason: null,
+    closure_source_input_version: null,
+    closure_source_snapshot_digest: null
   };
 }
+
+test('create persists the governed source snapshot bound to closure authorization', async () => {
+  const client = new FakeClient(() => ({ rows: [], rowCount: 1 }));
+  const bound = new RoadEvent({
+    id: EVENT_ID,
+    occurredAt: new Date('2026-07-25T02:55:00.000Z'),
+    latitude: 24.7136,
+    longitude: 46.6753,
+    status: RoadEventStatus.Recovery,
+    version: 2,
+    closureAuthorization: {
+      actorId: ACTOR_ID,
+      reason: 'verified source snapshot',
+      authorizedAt: new Date('2026-07-25T03:00:00.000Z'),
+      sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64) }
+    }
+  });
+
+  await new PostgresRoadEventRepository(new FakePool(client)).create(bound, context);
+
+  assert.match(client.queries[1]!.text, /closure_source_input_version, closure_source_snapshot_digest/);
+  assert.deepEqual(client.queries[1]!.values.slice(16, 18), [37, 'd'.repeat(64)]);
+});
 
 test('create writes scoped RoadEvent, independent revision receipts, audit and outbox in one transaction', async () => {
   const client = new FakeClient(() => ({ rows: [], rowCount: 1 }));
@@ -214,6 +240,38 @@ test('findById restores geography, severity and version only inside the requeste
   assert.equal(restored?.version, 3);
   assert.equal(hidden, undefined);
   assert.match(client.queries[0]!.text, /tenant_id = \$2 AND purpose = \$3/);
+});
+
+test('findById restores the governed source snapshot bound to closure authorization', async () => {
+  const client = new FakeClient(() => ({
+    rows: [{
+      ...row(2),
+      status: RoadEventStatus.Recovery,
+      closure_authorized_by: ACTOR_ID,
+      closure_authorized_at: '2026-07-25T03:00:00.000Z',
+      closure_authorization_reason: 'verified source snapshot',
+      closure_source_input_version: '37',
+      closure_source_snapshot_digest: 'd'.repeat(64)
+    }],
+    rowCount: 1
+  }));
+
+  const restored = await new PostgresRoadEventRepository(new FakePool(client)).findById(EVENT_ID, SCOPE);
+
+  assert.deepEqual(restored?.closureAuthorization?.sourceSnapshot, {
+    inputVersion: 37,
+    sourceSnapshotDigest: 'd'.repeat(64)
+  });
+});
+
+test('closure snapshot migration enforces complete scoped binding without rewriting legacy rows', () => {
+  const migration = readFileSync('database/migrations/0022_road_event_closure_snapshot_binding.sql', 'utf8');
+  assert.match(migration, /closure_source_input_version integer/);
+  assert.match(migration, /closure_source_snapshot_digest text/);
+  assert.match(migration, /FOREIGN KEY \(\s*tenant_id, purpose, id, closure_source_input_version, closure_source_snapshot_digest\s*\)/);
+  assert.match(migration, /REFERENCES ros_eye_safety_fusion_input_snapshots\(\s*tenant_id, purpose, case_id, input_version, snapshot_digest\s*\)/);
+  assert.match(migration, /closure_source_input_version IS NULL AND closure_source_snapshot_digest IS NULL/);
+  assert.match(migration, /closure_authorized_by IS NOT NULL\s+AND closure_source_input_version IS NOT NULL/);
 });
 
 test('list scopes in SQL before filters, pagination and total count', async () => {

@@ -91,6 +91,10 @@ export interface RoadEventReadModel {
     readonly actorId: string;
     readonly reason: string;
     readonly authorizedAt: string;
+    readonly sourceSnapshot?: {
+      readonly inputVersion: number;
+      readonly sourceSnapshotDigest: string;
+    };
   } | null;
 }
 
@@ -115,7 +119,8 @@ export function toRoadEventReadModel(event: RoadEvent): RoadEventReadModel {
       : {
           actorId: authorization.actorId,
           reason: authorization.reason,
-          authorizedAt: authorization.authorizedAt.toISOString()
+          authorizedAt: authorization.authorizedAt.toISOString(),
+          ...(authorization.sourceSnapshot === undefined ? {} : { sourceSnapshot: authorization.sourceSnapshot })
         }
   };
 }

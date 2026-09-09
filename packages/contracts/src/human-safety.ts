@@ -47,6 +47,10 @@ export interface HighRiskResolutionAuthorization {
   readonly indicatorRevision: number;
   readonly connectivity: 'HEALTHY' | 'DEGRADED' | 'LOST';
   readonly dependenciesHealthy: boolean;
+  readonly sourceSnapshot?: {
+    readonly inputVersion: number;
+    readonly sourceSnapshotDigest: string;
+  };
 }
 
 export interface HumanSafetyUncertaintyResolutionAuthorization {
