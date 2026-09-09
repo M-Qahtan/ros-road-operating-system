@@ -3,6 +3,7 @@ import {
   RoadEvent,
   RoadEventAccessScope,
   RoadEventAlreadyExistsError,
+  RoadEventClosureSourceSnapshotChangedError,
   RoadEventConcurrencyError,
   RoadEventListQuery,
   RoadEventNotFoundError,
@@ -43,6 +44,7 @@ interface RoadEventRow {
 
 interface VersionRow { readonly version: number; }
 interface RevisionLedgerRow { readonly revision: number | string; readonly digest: string; }
+interface ClosureSnapshotVerificationRow { readonly closure_snapshot_current: boolean; }
 interface PostgresErrorLike { readonly code?: string; }
 
 export class InvalidPersistenceIdentifierError extends Error {
@@ -227,6 +229,54 @@ const ROAD_EVENT_SELECT = `
     closure_source_snapshot_digest
   FROM road_events`;
 
+const CLOSURE_SNAPSHOT_CURRENT_SQL = `
+  SELECT (
+    EXISTS (
+      SELECT 1 FROM road_event_revision_ledger original_case
+      WHERE original_case.tenant_id = s.tenant_id AND original_case.purpose = s.purpose
+        AND original_case.case_id = s.case_id AND original_case.component = 'CASE'
+        AND original_case.revision = s.case_revision AND original_case.digest = s.case_digest
+    )
+    AND COALESCE((
+      SELECT current_case.revision = s.case_revision + 1 AND current_case.digest = $6
+      FROM road_event_revision_ledger current_case
+      WHERE current_case.tenant_id = s.tenant_id AND current_case.purpose = s.purpose
+        AND current_case.case_id = s.case_id AND current_case.component = 'CASE'
+      ORDER BY current_case.revision DESC LIMIT 1
+    ), false)
+    AND COALESCE((
+      SELECT current_severity.revision = s.severity_revision AND current_severity.digest = s.severity_digest
+      FROM road_event_revision_ledger current_severity
+      WHERE current_severity.tenant_id = s.tenant_id AND current_severity.purpose = s.purpose
+        AND current_severity.case_id = s.case_id AND current_severity.component = 'SEVERITY'
+      ORDER BY current_severity.revision DESC LIMIT 1
+    ), false)
+    AND (
+      (s.contact_revision IS NULL
+        AND NOT EXISTS (SELECT 1 FROM ros_eye_contact_revision_ledger c WHERE c.tenant_id=s.tenant_id AND c.purpose=s.purpose AND c.case_id=s.case_id)
+        AND NOT EXISTS (SELECT 1 FROM ros_eye_contact_sessions cs WHERE cs.tenant_id=s.tenant_id AND cs.case_id=s.case_id))
+      OR
+      (s.contact_revision IS NOT NULL
+        AND COALESCE((SELECT c.revision=s.contact_revision AND c.digest=s.contact_digest
+          FROM ros_eye_contact_revision_ledger c
+          WHERE c.tenant_id=s.tenant_id AND c.purpose=s.purpose AND c.case_id=s.case_id
+          ORDER BY c.revision DESC LIMIT 1), false)
+        AND (SELECT count(*) FROM ros_eye_contact_sessions cs WHERE cs.tenant_id=s.tenant_id AND cs.case_id=s.case_id) = 1)
+    )
+    AND COALESCE((SELECT e.revision=s.evidence_revision AND e.digest=s.evidence_digest
+      FROM evidence_revision_ledger e
+      WHERE e.tenant_id=s.tenant_id AND e.purpose=s.purpose AND e.case_id=s.case_id
+      ORDER BY e.revision DESC LIMIT 1), false)
+    AND COALESCE((SELECT i.revision=s.indicator_revision AND i.digest=s.indicator_digest
+      FROM human_safety_indicator_revision_ledger i
+      WHERE i.tenant_id=s.tenant_id AND i.purpose=s.purpose AND i.case_id=s.case_id
+      ORDER BY i.revision DESC LIMIT 1), false)
+  ) AS closure_snapshot_current
+  FROM ros_eye_safety_fusion_input_snapshots s
+  WHERE s.tenant_id=$1 AND s.purpose=$2 AND s.case_id=$3::uuid
+    AND s.input_version=$4 AND s.snapshot_digest=$5
+  FOR SHARE OF s`;
+
 export class PostgresRoadEventRepository implements RoadEventRepository {
   constructor(private readonly pool: PostgresPool) {}
 
@@ -294,8 +344,18 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new RangeError('expectedVersion must be a positive safe integer');
     if (event.version <= expectedVersion) throw new RangeError('RoadEvent version must advance beyond expectedVersion');
     const { occurredAt, scope } = validateContext(context);
+    const closureSnapshot = event.status === RoadEventStatus.Closed &&
+      (event.severity.level === SeverityLevel.High || event.severity.level === SeverityLevel.Critical)
+      ? event.closureAuthorization?.sourceSnapshot
+      : undefined;
+    if (event.status === RoadEventStatus.Closed &&
+        (event.severity.level === SeverityLevel.High || event.severity.level === SeverityLevel.Critical) &&
+        closureSnapshot === undefined) {
+      throw new RoadEventClosureSourceSnapshotChangedError('High-risk closure requires a persisted governed source snapshot');
+    }
 
     await this.withTransaction(async (client) => {
+      if (closureSnapshot !== undefined) await client.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
       const current = await client.query<RoadEventRow>(
         `${ROAD_EVENT_SELECT} WHERE id = $1::uuid AND tenant_id = $2 AND purpose = $3 FOR UPDATE`,
         [event.id, scope.tenantId, scope.purpose]
@@ -306,7 +366,22 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         throw new RoadEventConcurrencyError(`RoadEvent ${event.id} expected version ${expectedVersion}, found ${row.version}`);
       }
 
-      const beforeState = snapshot(mapRoadEvent(row));
+      const before = mapRoadEvent(row);
+      if (closureSnapshot !== undefined) {
+        const persisted = before.closureAuthorization?.sourceSnapshot;
+        if (persisted === undefined || persisted.inputVersion !== closureSnapshot.inputVersion ||
+            persisted.sourceSnapshotDigest !== closureSnapshot.sourceSnapshotDigest) {
+          throw new RoadEventClosureSourceSnapshotChangedError('Persisted closure authorization snapshot binding changed');
+        }
+        const verification = await client.query<ClosureSnapshotVerificationRow>(CLOSURE_SNAPSHOT_CURRENT_SQL, [
+          scope.tenantId, scope.purpose, event.id, closureSnapshot.inputVersion,
+          closureSnapshot.sourceSnapshotDigest, roadEventRevisionDigest(before, scope, 'CASE')
+        ]);
+        if (verification.rowCount !== 1 || verification.rows[0]?.closure_snapshot_current !== true) {
+          throw new RoadEventClosureSourceSnapshotChangedError('Closure source snapshot is no longer current');
+        }
+      }
+      const beforeState = snapshot(before);
       const afterState = snapshot(event);
       const authorization = event.closureAuthorization;
       const updated = await client.query<VersionRow>(
@@ -350,7 +425,7 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         ]
       );
       if (updated.rowCount !== 1) throw new RoadEventConcurrencyError(`RoadEvent ${event.id} changed during update`);
-      await this.appendChangedRevisionReceipts(client, mapRoadEvent(row), event, scope, occurredAt);
+      await this.appendChangedRevisionReceipts(client, before, event, scope, occurredAt);
       await this.appendAuditAndOutbox(client, event, beforeState, afterState, context, occurredAt);
     });
   }

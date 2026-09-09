@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   RoadEvent,
+  RoadEventClosureSourceSnapshotChangedError,
   RoadEventConcurrencyError,
   RoadEventNotFoundError,
   RoadEventStatus,
@@ -16,6 +17,7 @@ const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
 const TRACE_ID = '33333333-3333-4333-8333-333333333333';
 const CORRELATION_ID = '44444444-4444-4444-8444-444444444444';
 const SCOPE = { tenantId: 'riyadh-pilot', purpose: 'road-safety-response' } as const;
+const SNAPSHOT_DIGEST = 'd'.repeat(64);
 
 interface CapturedQuery { readonly text: string; readonly values: readonly unknown[]; }
 type QueryHandler = (text: string, values: readonly unknown[]) => PostgresQueryResult<unknown>;
@@ -84,6 +86,43 @@ function row(version = 1) {
     closure_authorization_reason: null,
     closure_source_input_version: null,
     closure_source_snapshot_digest: null
+  };
+}
+
+function authorizedRecovery(): RoadEvent {
+  return new RoadEvent({
+    id: EVENT_ID,
+    occurredAt: new Date('2026-07-25T02:55:00.000Z'),
+    latitude: 24.7136,
+    longitude: 46.6753,
+    status: RoadEventStatus.Recovery,
+    version: 2,
+    severity: {
+      level: SeverityLevel.High, score: 82, confidence: 0.91,
+      reasonCodes: ['verified_impact'], requiresHumanReview: true
+    },
+    closureAuthorization: {
+      actorId: ACTOR_ID,
+      reason: 'verified current source snapshot',
+      authorizedAt: new Date('2026-07-25T03:00:00.000Z'),
+      sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: SNAPSHOT_DIGEST }
+    }
+  });
+}
+
+function authorizedRow() {
+  return {
+    ...row(2),
+    status: RoadEventStatus.Recovery,
+    severity: SeverityLevel.High,
+    severity_score: 82,
+    confidence: '0.910',
+    reason_codes: ['verified_impact'],
+    closure_authorized_by: ACTOR_ID,
+    closure_authorized_at: '2026-07-25T03:00:00.000Z',
+    closure_authorization_reason: 'verified current source snapshot',
+    closure_source_input_version: 37,
+    closure_source_snapshot_digest: SNAPSHOT_DIGEST
   };
 }
 
@@ -220,6 +259,54 @@ test('update rejects a stale expected version before writing audit or outbox', a
   await assert.rejects(() => repository.update(updated, 1, context), RoadEventConcurrencyError);
   assert.equal(client.queries.some((query) => query.text.includes('UPDATE road_events')), false);
   assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO audit_logs')), false);
+  assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
+});
+
+test('high-risk closure validates the persisted snapshot inside a serializable update transaction', async () => {
+  const before = authorizedRecovery();
+  const caseDigest = roadEventRevisionDigest(before, SCOPE, 'CASE');
+  const severityDigest = roadEventRevisionDigest(before, SCOPE, 'SEVERITY');
+  const client = new FakeClient((text, values) => {
+    if (text.includes('FROM road_events') && text.includes('FOR UPDATE')) return { rows: [authorizedRow()], rowCount: 1 };
+    if (text.includes('closure_snapshot_current')) return { rows: [{ closure_snapshot_current: true }], rowCount: 1 };
+    if (text.includes('UPDATE road_events')) return { rows: [{ version: 3 }], rowCount: 1 };
+    if (text.includes('SELECT revision, digest FROM road_event_revision_ledger')) {
+      return values[3] === 'CASE'
+        ? { rows: [{ revision: 2, digest: caseDigest }], rowCount: 1 }
+        : { rows: [{ revision: 1, digest: severityDigest }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  });
+  const closed = authorizedRecovery();
+  closed.transitionTo(RoadEventStatus.Closed);
+
+  await new PostgresRoadEventRepository(new FakePool(client)).update(closed, 2, {
+    ...context, action: 'road_event.closed', eventType: 'RoadEventClosed'
+  });
+
+  assert.equal(client.queries[1]?.text, 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+  const verificationIndex = client.queries.findIndex((query) => query.text.includes('closure_snapshot_current'));
+  const updateIndex = client.queries.findIndex((query) => query.text.includes('UPDATE road_events'));
+  assert.ok(verificationIndex > 0 && updateIndex > verificationIndex);
+  assert.equal(client.queries.at(-1)?.text, 'COMMIT');
+});
+
+test('source drift rejects high-risk closure before event audit or outbox writes', async () => {
+  const client = new FakeClient((text) => {
+    if (text.includes('FROM road_events') && text.includes('FOR UPDATE')) return { rows: [authorizedRow()], rowCount: 1 };
+    if (text.includes('closure_snapshot_current')) return { rows: [{ closure_snapshot_current: false }], rowCount: 1 };
+    return { rows: [], rowCount: 1 };
+  });
+  const closed = authorizedRecovery();
+  closed.transitionTo(RoadEventStatus.Closed);
+
+  await assert.rejects(
+    () => new PostgresRoadEventRepository(new FakePool(client)).update(closed, 2, context),
+    RoadEventClosureSourceSnapshotChangedError
+  );
+  assert.equal(client.queries.some((query) => query.text.includes('UPDATE road_events')), false);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO audit_logs')), false);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO outbox_events')), false);
   assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
 });
 

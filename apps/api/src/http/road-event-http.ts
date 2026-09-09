@@ -2,6 +2,7 @@ import {
   InvalidRoadEventError,
   InvalidRoadEventTransitionError,
   RoadEventAlreadyExistsError,
+  RoadEventClosureSourceSnapshotChangedError,
   RoadEventClosureRequiresHumanAuthorizationError,
   RoadEventNotFoundError,
   RoadEventStatus,
@@ -121,6 +122,9 @@ function mapError(error: unknown, traceId: string): HttpResponse {
   }
   if (error instanceof RoadEventClosureRequiresHumanAuthorizationError) {
     return { status: 409, body: envelope(false, null, { code: 'HUMAN_AUTHORIZATION_REQUIRED', message: error.message }, traceId) };
+  }
+  if (error instanceof RoadEventClosureSourceSnapshotChangedError) {
+    return { status: 409, body: envelope(false, null, { code: 'SOURCE_SNAPSHOT_CHANGED', message: error.message }, traceId) };
   }
   if (error instanceof HttpInputError || error instanceof ApplicationValidationError || error instanceof InvalidRoadEventError || error instanceof InvalidRoadEventTransitionError || error instanceof TypeError || error instanceof RangeError) {
     return { status: 400, body: envelope(false, null, { code: 'VALIDATION_ERROR', message: error.message }, traceId) };

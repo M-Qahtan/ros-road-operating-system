@@ -47,3 +47,6 @@ export interface RoadEventRepository {
 export class RoadEventAlreadyExistsError extends Error { override readonly name = 'RoadEventAlreadyExistsError'; }
 export class RoadEventNotFoundError extends Error { override readonly name = 'RoadEventNotFoundError'; }
 export class RoadEventConcurrencyError extends Error { override readonly name = 'RoadEventConcurrencyError'; }
+export class RoadEventClosureSourceSnapshotChangedError extends Error {
+  override readonly name = 'RoadEventClosureSourceSnapshotChangedError';
+}

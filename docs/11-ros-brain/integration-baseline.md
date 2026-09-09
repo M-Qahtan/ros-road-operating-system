@@ -351,6 +351,14 @@ Fresh local verification passed 41/41 focused domain/application/Human-Safety/Po
 
 Result: **VERIFIED SOURCE-SNAPSHOT IDENTITY IS PERSISTED WITH HIGH-RISK CLOSURE AUTHORIZATION; CLOSURE-EXECUTION REVALIDATION REMAINS OPEN.** Authorization remains a human record only: it does not close the RoadEvent or grant recommendation execution, dispatch, collection, risk downgrade, or actuation. The next single handoff is an atomic closure transition that reloads the persisted binding and current owner receipts and rejects source drift without deleting authorization history.
 
+The atomic high-risk closure increment resumed from GitHub candidate `633b3aa6d5a31ecb170709f162dd22cd44381968`. Live GitHub comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch thirty commits ahead and zero behind, with no branch PR or workflow run on the resume commit.
+
+For a persistent S3/S4 transition to `CLOSED`, the RoadEvent repository now starts a `SERIALIZABLE` transaction before reading state. It requires the exact snapshot identity stored with the human authorization, verifies the snapshot's original CASE receipt and the single following CASE receipt created by that authorization, and compares the latest Severity, Contact, Evidence, and Human-Safety Indicator receipts with the snapshot. Contact absence still requires both the Contact ledger and session table to be empty. Any missing, malformed, cross-scope, later, or mismatched receipt raises `SOURCE_SNAPSHOT_CHANGED` before the RoadEvent update, audit insert, or outbox insert; rollback retains the authorization and all append-only evidence.
+
+Fresh local verification passed 25/25 focused PostgreSQL/application/HTTP tests and 616/616 workspace tests (API 541, dashboard 31, mobile 36, domain 8). All five TypeScript builds/no-emit checks and repository/composition/retention/negative gates passed, including 8/8 external-evidence logic tests. The serializable predicate behavior and migration `0022` remain unexecuted on a live PostgreSQL engine here, and no external REL-013 archive receipt was produced.
+
+Result: **PERSISTENT HIGH-RISK CLOSURE IS LOCALLY FAIL-CLOSED AGAINST POST-AUTHORIZATION SOURCE DRIFT; LIVE ENGINE RACE EVIDENCE REMAINS OPEN.** The next single handoff is to add the closure/source-update race to the disposable PostgreSQL journey and prove exactly one safe winner with an engine-bound receipt.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries
