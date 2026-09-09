@@ -6,7 +6,7 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 127
 fi
 
-for required_command in git node sha256sum; do
+for required_command in git mktemp node sha256sum; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "Required local receipt tool '$required_command' is unavailable; no PostgreSQL journey was executed" >&2
     exit 127
@@ -31,9 +31,11 @@ readonly journey_manifest_sha256="$(
 
 readonly container_name="ros-brain-postgres-${$}"
 readonly postgres_password="ros-local-integration-only"
+readonly restart_proof_file="$(mktemp)"
 
 cleanup() {
   docker rm -f "$container_name" >/dev/null 2>&1 || true
+  rm -f "$restart_proof_file"
 }
 trap cleanup EXIT
 
@@ -58,7 +60,18 @@ export container_name
 export DATABASE_URL="postgresql://ros:${postgres_password}@127.0.0.1:5432/ros"
 export ROS_POSTGRES_RESTART_CONTAINER="$container_name"
 export ROS_POSTGRES_RESTART_BEFORE_TEST="0011_ros_brain_journey_reconnect.sql"
+export ROS_POSTGRES_RESTART_PROOF_FILE="$restart_proof_file"
 bash scripts/run-postgres-integration.sh
+
+mapfile -t restart_proof < "$restart_proof_file"
+if [[ "${#restart_proof[@]}" -ne 4 ]]; then
+  echo "PostgreSQL journey passed without a complete restart identity proof" >&2
+  exit 2
+fi
+readonly system_identifier_before_restart="${restart_proof[0]}"
+readonly postmaster_started_at_before_restart="${restart_proof[1]}"
+readonly system_identifier_after_restart="${restart_proof[2]}"
+readonly postmaster_started_at_after_restart="${restart_proof[3]}"
 
 readonly image_id="$(docker inspect --format '{{.Image}}' "$container_name")"
 readonly postgres_version="$(psql "$DATABASE_URL" -Atqc 'SHOW server_version')"
@@ -74,7 +87,14 @@ if [[ ! "$candidate_sha" =~ ^[a-f0-9]{40}$ \
   || -z "$postgres_version" \
   || -z "$postgis_version" \
   || ! "$database_system_identifier" =~ ^[0-9]+$ \
-  || -z "$postmaster_started_at" ]]; then
+  || -z "$postmaster_started_at" \
+  || ! "$system_identifier_before_restart" =~ ^[0-9]+$ \
+  || "$system_identifier_before_restart" != "$system_identifier_after_restart" \
+  || "$system_identifier_after_restart" != "$database_system_identifier" \
+  || -z "$postmaster_started_at_before_restart" \
+  || -z "$postmaster_started_at_after_restart" \
+  || "$postmaster_started_at_before_restart" == "$postmaster_started_at_after_restart" \
+  || "$postmaster_started_at_after_restart" != "$postmaster_started_at" ]]; then
   echo "PostgreSQL journey passed but its local receipt provenance is incomplete" >&2
   exit 2
 fi
@@ -85,17 +105,21 @@ ROS_RECEIPT_IMAGE_ID="$image_id" \
 ROS_RECEIPT_POSTGRES_VERSION="$postgres_version" \
 ROS_RECEIPT_POSTGIS_VERSION="$postgis_version" \
 ROS_RECEIPT_DATABASE_SYSTEM_IDENTIFIER="$database_system_identifier" \
-ROS_RECEIPT_POSTMASTER_STARTED_AT="$postmaster_started_at" \
+ROS_RECEIPT_POSTMASTER_STARTED_AT_BEFORE_RESTART="$postmaster_started_at_before_restart" \
+ROS_RECEIPT_POSTMASTER_STARTED_AT_AFTER_RESTART="$postmaster_started_at_after_restart" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v2",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v3",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerImageId: process.env.ROS_RECEIPT_IMAGE_ID,
     postgresVersion: process.env.ROS_RECEIPT_POSTGRES_VERSION,
     postgisVersion: process.env.ROS_RECEIPT_POSTGIS_VERSION,
     databaseSystemIdentifier: process.env.ROS_RECEIPT_DATABASE_SYSTEM_IDENTIFIER,
-    postmasterStartedAt: process.env.ROS_RECEIPT_POSTMASTER_STARTED_AT,
+    postmasterStartedAtBeforeRestart:
+      process.env.ROS_RECEIPT_POSTMASTER_STARTED_AT_BEFORE_RESTART,
+    postmasterStartedAtAfterRestart:
+      process.env.ROS_RECEIPT_POSTMASTER_STARTED_AT_AFTER_RESTART,
     restartVerified: true,
     result: "PASS",
     externalArchiveReceipt: null,

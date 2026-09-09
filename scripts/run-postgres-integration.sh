@@ -13,6 +13,7 @@ done
 restart_performed=false
 if [[ -n "${ROS_POSTGRES_RESTART_BEFORE_TEST:-}" ]]; then
   : "${ROS_POSTGRES_RESTART_CONTAINER:?restart container must be set}"
+  : "${ROS_POSTGRES_RESTART_PROOF_FILE:?restart proof file must be set}"
   if [[ ! "$ROS_POSTGRES_RESTART_CONTAINER" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
     echo "PostgreSQL restart container name is invalid" >&2
     exit 2
@@ -25,6 +26,12 @@ if [[ -n "${ROS_POSTGRES_RESTART_BEFORE_TEST:-}" ]]; then
   if ! command -v docker >/dev/null 2>&1; then
     echo "Docker is required for the requested PostgreSQL restart proof" >&2
     exit 127
+  fi
+  if [[ ! -f "$ROS_POSTGRES_RESTART_PROOF_FILE" \
+    || -L "$ROS_POSTGRES_RESTART_PROOF_FILE" \
+    || -s "$ROS_POSTGRES_RESTART_PROOF_FILE" ]]; then
+    echo "PostgreSQL restart proof target must be a new empty regular file" >&2
+    exit 2
   fi
 fi
 
@@ -87,6 +94,15 @@ done
 if [[ -n "${ROS_POSTGRES_RESTART_BEFORE_TEST:-}" && "$restart_performed" != true ]]; then
   echo "Requested PostgreSQL restart checkpoint was not reached: ${ROS_POSTGRES_RESTART_BEFORE_TEST}" >&2
   exit 2
+fi
+
+if [[ "$restart_performed" == true ]]; then
+  printf '%s\n' \
+    "$before_system_identifier" \
+    "$before_postmaster_started_at" \
+    "$after_system_identifier" \
+    "$after_postmaster_started_at" \
+    > "$ROS_POSTGRES_RESTART_PROOF_FILE"
 fi
 
 echo "PostgreSQL/PostGIS integration checks passed"

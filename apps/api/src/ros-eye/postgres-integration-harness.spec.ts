@@ -45,6 +45,8 @@ test('restart proof preserves the cluster identity and replaces the postmaster',
   assert.match(runner, /before_postmaster_started_at/);
   assert.match(runner, /did not preserve the cluster and replace the postmaster/);
   assert.ok(runner.indexOf('restart_identity_after=') < runner.indexOf('restart_performed=true'));
+  assert.match(runner, /restart proof target must be a new empty regular file/);
+  assert.ok(runner.indexOf('restart checkpoint was not reached') < runner.indexOf("printf '%s\\n'"));
 });
 
 test('live journey receipt is bound to a clean candidate and emitted only after success', () => {
@@ -55,14 +57,27 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /SELECT postgis_lib_version\(\)/);
   assert.match(localHarness, /receipt provenance is incomplete/);
   assert.match(localHarness, /databaseSystemIdentifier/);
-  assert.match(localHarness, /postmasterStartedAt/);
+  assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
+  assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v2/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v3/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
       localHarness.indexOf('ROS_POSTGRES_BRAIN_JOURNEY_RECEIPT='),
   );
+});
+
+test('live receipt consumes the exact validated before-and-after restart proof', () => {
+  assert.match(localHarness, /restart_proof_file="\$\(mktemp\)"/);
+  assert.match(localHarness, /ROS_POSTGRES_RESTART_PROOF_FILE="\$restart_proof_file"/);
+  assert.match(localHarness, /mapfile -t restart_proof/);
+  assert.match(localHarness, /system_identifier_before_restart/);
+  assert.match(localHarness, /system_identifier_after_restart/);
+  assert.match(localHarness, /postmaster_started_at_before_restart/);
+  assert.match(localHarness, /postmaster_started_at_after_restart/);
+  assert.match(localHarness, /system_identifier_after_restart" != "\$database_system_identifier/);
+  assert.match(localHarness, /postmaster_started_at_after_restart" != "\$postmaster_started_at/);
 });
 
 test('ordered SQL journey covers current read, source invalidation, rollback and a new client connection', () => {
