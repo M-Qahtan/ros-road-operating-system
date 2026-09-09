@@ -13,12 +13,14 @@ import {
   GovernedRecommendationReader,
   HumanSafetyBacking,
   HumanSafetyCaseView,
+  HumanSafetyOperationalHealthReader,
   HumanSafetyStore,
   createHumanSafetyHttpHandler
 } from './human-safety-http.js';
 import type { GovernedRecommendationQueryResult } from '../ros-eye/recommendation-query-postgres.js';
 import { HttpRequest } from './road-event-http.js';
 import { ContactSessionRecord } from '../ros-eye/contact-orchestration.js';
+import { RoadEventStatus } from '@ros/domain';
 
 const CASE_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
@@ -109,7 +111,15 @@ class TrackingIdempotency implements IdempotencyPort {
   }
 }
 
-async function fixture(actor: AuthenticatedActor = OPERATOR, governed: GovernedRecommendationReader | null = null) {
+const HEALTHY_RUNTIME: HumanSafetyOperationalHealthReader = {
+  read: async () => ({ connectivity: 'HEALTHY', dependencyHealth: 'HEALTHY' })
+};
+
+async function fixture(
+  actor: AuthenticatedActor = OPERATOR,
+  governed: GovernedRecommendationReader | null = null,
+  health: HumanSafetyOperationalHealthReader | null = HEALTHY_RUNTIME
+) {
   const repository = new MemoryRoadEventRepository();
   const appIdempotency = new MemoryIdempotencyAdapter();
   const application = new RoadEventApplicationService(
@@ -124,8 +134,8 @@ async function fixture(actor: AuthenticatedActor = OPERATOR, governed: GovernedR
   const idempotency = new TrackingIdempotency();
   const resolver: ActorResolver = { resolve: async () => actor };
   return {
-    store, idempotency,
-    handler: createHumanSafetyHttpHandler(application, store, idempotency, resolver, () => new Date(NOW), governed)
+    application, store, idempotency,
+    handler: createHumanSafetyHttpHandler(application, store, idempotency, resolver, () => new Date(NOW), governed, health)
   };
 }
 
@@ -244,6 +254,64 @@ test('missing governed journal retains legacy recommendation only as explicitly 
     source: 'LEGACY_COMPATIBILITY', status: 'UNVERIFIED', humanReviewStatus: null,
     snapshotReason: 'LEGACY_UNBOUND', mode: 'SHADOW_ONLY', activationAuthorized: false
   });
+});
+
+test('case reads expose observed degraded health instead of synthesizing healthy dependencies', async () => {
+  const health: HumanSafetyOperationalHealthReader = {
+    read: async () => ({ connectivity: 'DEGRADED', dependencyHealth: 'UNAVAILABLE' })
+  };
+  const { handler } = await fixture(OPERATOR, null, health);
+  const response = await handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+  const item = (response!.body as { data: HumanSafetyCaseView }).data;
+  assert.equal(response?.status, 200);
+  assert.equal(item.connectivity, 'DEGRADED');
+  assert.equal(item.dependencyHealth, 'UNAVAILABLE');
+  assert.equal(item.safetyCase.highRiskResolutionAuthorization, null);
+});
+
+test('missing or failing health observation fails closed and blocks resolution authorization', async () => {
+  for (const health of [
+    null,
+    { read: async () => { throw new Error('probe unavailable'); } } satisfies HumanSafetyOperationalHealthReader
+  ]) {
+    const current = await fixture(SUPERVISOR, null, health);
+    const response = await current.handler(request(
+      'POST', `/api/v1/human-safety/cases/${CASE_ID}/resolution-authorization`,
+      { expectedCaseVersion: 1, expectedContactVersion: null, reason: 'verify safe closure', idempotencyKey: 'resolution-health-gate-001' },
+      { 'idempotency-key': 'resolution-health-gate-001' }
+    ));
+    assert.equal(response?.status, 503);
+    assert.equal((response!.body as { error: { code: string } }).error.code, 'OPERATIONAL_HEALTH_UNVERIFIED');
+    assert.equal((await current.application.getById(CASE_ID, SUPERVISOR)).closureAuthorization, null);
+  }
+});
+
+test('healthy observed dependencies permit supervisor authorization without closing the road event', async () => {
+  const current = await fixture(SUPERVISOR);
+  let event = await current.application.getById(CASE_ID, SUPERVISOR);
+  for (const nextStatus of [
+    RoadEventStatus.Validating,
+    RoadEventStatus.Confirmed,
+    RoadEventStatus.SafetyAssessment,
+    RoadEventStatus.ResponseCoordination,
+    RoadEventStatus.RoadClearance,
+    RoadEventStatus.Recovery
+  ]) {
+    event = await current.application.transition({
+      roadEventId: CASE_ID, expectedVersion: event.version, nextStatus, reason: `advance to ${nextStatus}`
+    }, {
+      actor: SUPERVISOR, traceId: TRACE_ID, idempotencyKey: `resolution-health-transition-${nextStatus}`
+    });
+  }
+  const response = await current.handler(request(
+    'POST', `/api/v1/human-safety/cases/${CASE_ID}/resolution-authorization`,
+    { expectedCaseVersion: event.version, expectedContactVersion: null, reason: 'verified evidence and runtime health', idempotencyKey: 'resolution-health-gate-healthy-001' },
+    { 'idempotency-key': 'resolution-health-gate-healthy-001' }
+  ));
+  assert.equal(response?.status, 200);
+  const authorized = await current.application.getById(CASE_ID, SUPERVISOR);
+  assert.notEqual(authorized.closureAuthorization, null);
+  assert.notEqual(authorized.status, 'CLOSED');
 });
 
 test('read advice remains behind role, tenant and purpose authorization', async () => {

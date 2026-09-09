@@ -101,6 +101,15 @@ export interface GovernedRecommendationReader {
   read(actor: AuthenticatedActor, caseId: string): Promise<GovernedRecommendationQueryResult>;
 }
 
+export interface HumanSafetyOperationalHealth {
+  readonly connectivity: 'HEALTHY' | 'DEGRADED' | 'LOST';
+  readonly dependencyHealth: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE';
+}
+
+export interface HumanSafetyOperationalHealthReader {
+  read(): Promise<HumanSafetyOperationalHealth>;
+}
+
 export class HumanSafetyHttpError extends Error {
   override readonly name = 'HumanSafetyHttpError';
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -381,6 +390,7 @@ function view(
   actor: AuthenticatedActor,
   backing: HumanSafetyBacking,
   governed: GovernedRecommendationQueryResult | null,
+  health: HumanSafetyOperationalHealth,
   generatedAt: string
 ): HumanSafetyCaseView {
   const contact = backing.contact;
@@ -401,14 +411,14 @@ function view(
         expiresAt: new Date(Date.parse(authorization.authorizedAt) + 5 * 60_000).toISOString(),
         caseVersion: Math.max(1, event.version - 1), severityAssessmentVersion: Math.max(1, event.version - 1),
         evidenceRevision: backing.provenance.length, indicatorRevision: 0,
-        connectivity: 'HEALTHY', dependenciesHealthy: true
+        connectivity: health.connectivity, dependenciesHealthy: health.dependencyHealth === 'HEALTHY'
       }
     },
     contactSession: contact === null ? null : contact,
     recommendation: selected.recommendation,
     recommendationState: selected.state,
     evidenceState: backing.evidenceState,
-    connectivity: 'HEALTHY', dependencyHealth: 'HEALTHY',
+    connectivity: health.connectivity, dependencyHealth: health.dependencyHealth,
     provenance: backing.provenance, audit: backing.audit
   };
   return {
@@ -465,6 +475,17 @@ function operationScope(action: string, actor: AuthenticatedActor): string {
   return `human-safety:${action}:${fingerprint([actor.tenantId, actor.purpose, actor.actorId]).slice(0, 32)}`;
 }
 
+async function observeOperationalHealth(
+  reader: HumanSafetyOperationalHealthReader | null
+): Promise<HumanSafetyOperationalHealth> {
+  if (reader === null) return { connectivity: 'DEGRADED', dependencyHealth: 'UNAVAILABLE' };
+  try {
+    return await reader.read();
+  } catch {
+    return { connectivity: 'LOST', dependencyHealth: 'UNAVAILABLE' };
+  }
+}
+
 async function idempotent<T>(
   idempotency: IdempotencyPort,
   scope: string,
@@ -505,7 +526,8 @@ export function createHumanSafetyHttpHandler(
   idempotency: IdempotencyPort,
   actorResolver: ActorResolver,
   now: () => Date = () => new Date(),
-  governedRecommendations: GovernedRecommendationReader | null = null
+  governedRecommendations: GovernedRecommendationReader | null = null,
+  operationalHealth: HumanSafetyOperationalHealthReader | null = null
 ): (request: HttpRequest) => Promise<HttpResponse | undefined> {
   return async (request) => {
     if (!request.path.startsWith('/api/v1/human-safety/')) return undefined;
@@ -519,13 +541,16 @@ export function createHumanSafetyHttpHandler(
         requireRole(actor, ['OPERATOR', 'SUPERVISOR', 'AUDITOR']);
         const limit = Math.min(numberQuery(request.query.limit, 20), 100);
         const offset = numberQuery(request.query.offset, 0);
-        const page = await application.list({ limit, offset }, actor);
+        const [page, health] = await Promise.all([
+          application.list({ limit, offset }, actor),
+          observeOperationalHealth(operationalHealth)
+        ]);
         const items = await Promise.all(page.items.map(async (event) => {
           const [backing, governed] = await Promise.all([
             store.read(actor, event.id),
             governedRecommendations?.read(actor, event.id) ?? Promise.resolve(null)
           ]);
-          return view(event, actor, backing, governed, now().toISOString());
+          return view(event, actor, backing, governed, health, now().toISOString());
         }));
         return { status: 200, body: envelope(true, { items, generatedAt: now().toISOString(), simulation: false }, null, request.traceId) };
       }
@@ -533,11 +558,12 @@ export function createHumanSafetyHttpHandler(
         if (request.method !== 'GET') throw new HumanSafetyHttpError(405, 'METHOD_NOT_ALLOWED', 'Only GET is supported');
         requireRole(actor, ['OPERATOR', 'SUPERVISOR', 'AUDITOR']);
         const event = await application.getById(caseMatch[1]!, actor);
-        const [backing, governed] = await Promise.all([
+        const [backing, governed, health] = await Promise.all([
           store.read(actor, event.id),
-          governedRecommendations?.read(actor, event.id) ?? Promise.resolve(null)
+          governedRecommendations?.read(actor, event.id) ?? Promise.resolve(null),
+          observeOperationalHealth(operationalHealth)
         ]);
-        return { status: 200, body: envelope(true, view(event, actor, backing, governed, now().toISOString()), null, request.traceId) };
+        return { status: 200, body: envelope(true, view(event, actor, backing, governed, health, now().toISOString()), null, request.traceId) };
       }
       if (actionMatch === null) throw new HumanSafetyHttpError(404, 'NOT_FOUND', 'Route not found');
       if (request.method !== 'POST') throw new HumanSafetyHttpError(405, 'METHOD_NOT_ALLOWED', 'Only POST is supported');
@@ -563,6 +589,10 @@ export function createHumanSafetyHttpHandler(
         const backing = await store.read(actor, caseId);
         if (action === 'resolution-authorization') {
           if (backing.evidenceState !== 'TRUSTED') throw new HumanSafetyHttpError(409, 'EVIDENCE_NOT_TRUSTED', 'Trusted preserved evidence is required');
+          const health = await observeOperationalHealth(operationalHealth);
+          if (health.connectivity !== 'HEALTHY' || health.dependencyHealth !== 'HEALTHY') {
+            throw new HumanSafetyHttpError(503, 'OPERATIONAL_HEALTH_UNVERIFIED', 'Healthy observed runtime dependencies are required');
+          }
           await application.authorizeClosure({
             roadEventId: caseId, expectedVersion: event.version, reason, authorizedAt: now().toISOString()
           }, { actor, traceId: request.traceId, idempotencyKey: key });
@@ -577,11 +607,12 @@ export function createHumanSafetyHttpHandler(
           });
         }
         const updatedEvent = await application.getById(caseId, actor);
-        const [updatedBacking, updatedGoverned] = await Promise.all([
+        const [updatedBacking, updatedGoverned, updatedHealth] = await Promise.all([
           store.read(actor, caseId),
-          governedRecommendations?.read(actor, caseId) ?? Promise.resolve(null)
+          governedRecommendations?.read(actor, caseId) ?? Promise.resolve(null),
+          observeOperationalHealth(operationalHealth)
         ]);
-        return view(updatedEvent, actor, updatedBacking, updatedGoverned, now().toISOString());
+        return view(updatedEvent, actor, updatedBacking, updatedGoverned, updatedHealth, now().toISOString());
       });
       return { status: 200, body: envelope(true, result, null, request.traceId) };
     } catch (error) {

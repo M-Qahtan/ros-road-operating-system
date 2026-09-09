@@ -44,6 +44,24 @@ const contactRuntime = contactRepository === null ? null : createContactMvpRunti
 const roadEventOutboxRuntime = runtime.postgres === null || runtime.redis === null
   ? null
   : createOutboxWorkerRuntime(runtime.postgres, runtime.redis, workerEnvironment);
+const evidenceObjectStorage = runtime.postgres === null ? null : createEvidenceObjectStorageForRuntime(process.env);
+const workerSupervisor = new BackgroundWorkerSupervisor();
+const humanSafetyOperationalHealth = {
+  async read() {
+    const readiness = await runtime.readiness(evidenceObjectStorage === null ? {} : {
+      objectStorage: () => evidenceObjectStorage.checkReadiness(AbortSignal.timeout(900))
+    });
+    const coreChecks = [readiness.checks.database, readiness.checks.redis];
+    const coreUnavailable = coreChecks.includes('unreachable');
+    const coreObserved = coreChecks.every((check) => check === 'reachable');
+    const anyUnavailable = Object.values(readiness.checks).includes('unreachable') || workerSupervisor.failed;
+    const anyUnverified = Object.values(readiness.checks).includes('external_gate');
+    return {
+      connectivity: coreUnavailable ? 'LOST' as const : coreObserved ? 'HEALTHY' as const : 'DEGRADED' as const,
+      dependencyHealth: anyUnavailable ? 'UNAVAILABLE' as const : anyUnverified ? 'DEGRADED' as const : 'HEALTHY' as const
+    };
+  }
+};
 const handleHumanSafety = createHumanSafetyHttpHandler(
   runtime.application,
   persistentSql === null || contactRepository === null
@@ -52,7 +70,8 @@ const handleHumanSafety = createHumanSafetyHttpHandler(
   runtime.idempotency,
   actorResolver,
   undefined,
-  persistentSql === null ? null : createPostgresGovernedRecommendationQuery(persistentSql)
+  persistentSql === null ? null : createPostgresGovernedRecommendationQuery(persistentSql),
+  humanSafetyOperationalHealth
 );
 const handleMobileMvp = createMobileMvpHttpHandler(
   runtime.roadEvents,
@@ -62,7 +81,6 @@ const handleMobileMvp = createMobileMvpHttpHandler(
   actorResolver,
   { contactOrchestration: contactRuntime?.service ?? null, devices: deviceRegistry }
 );
-const evidenceObjectStorage = runtime.postgres === null ? null : createEvidenceObjectStorageForRuntime(process.env);
 const evidenceService = runtime.postgres === null || evidenceObjectStorage === null
   ? null
   : createEvidenceServiceForRuntime(process.env, {
@@ -94,8 +112,6 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   if (chunks.length === 0) return null;
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 }
-
-const workerSupervisor = new BackgroundWorkerSupervisor();
 
 const server = createServer({ maxHeaderSize: 16 * 1024 }, async (request, response) => {
   const traceId = resolveTraceId(request.headers['x-trace-id']);
