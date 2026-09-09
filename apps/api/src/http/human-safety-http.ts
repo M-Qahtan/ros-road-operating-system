@@ -515,6 +515,19 @@ async function observeOperationalHealth(
   }
 }
 
+function requireCurrentSourceSnapshot(governed: GovernedRecommendationQueryResult | null): void {
+  if (governed?.status !== 'AVAILABLE' || governed.snapshot?.status !== 'VERIFIED' ||
+      governed.sourceVersions === null || governed.recommendation === null ||
+      governed.sourceVersions.inputVersion !== governed.recommendation.inputVersion ||
+      governed.sourceVersions.sourceSnapshotDigest !== governed.snapshot.sourceSnapshotDigest) {
+    throw new HumanSafetyHttpError(
+      409,
+      'SOURCE_SNAPSHOT_UNVERIFIED',
+      'A current governed source snapshot is required for high-risk resolution authorization'
+    );
+  }
+}
+
 async function idempotent<T>(
   idempotency: IdempotencyPort,
   scope: string,
@@ -622,6 +635,8 @@ export function createHumanSafetyHttpHandler(
           if (health.connectivity !== 'HEALTHY' || health.dependencyHealth !== 'HEALTHY') {
             throw new HumanSafetyHttpError(503, 'OPERATIONAL_HEALTH_UNVERIFIED', 'Healthy observed runtime dependencies are required');
           }
+          const governed = governedRecommendations === null ? null : await governedRecommendations.read(actor, caseId);
+          requireCurrentSourceSnapshot(governed);
           await application.authorizeClosure({
             roadEventId: caseId, expectedVersion: event.version, reason, authorizedAt: now().toISOString()
           }, { actor, traceId: request.traceId, idempotencyKey: key });

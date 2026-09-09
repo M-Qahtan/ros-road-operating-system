@@ -115,6 +115,17 @@ const HEALTHY_RUNTIME: HumanSafetyOperationalHealthReader = {
   read: async () => ({ connectivity: 'HEALTHY', dependencyHealth: 'HEALTHY' })
 };
 
+function currentGovernedReader(): GovernedRecommendationReader {
+  const recommendation = { ...fusionRecommendation(), deterministicFingerprint: `sha256:${'c'.repeat(64)}` };
+  return new FakeGovernedRecommendations({
+    status: 'AVAILABLE',
+    snapshot: { status: 'VERIFIED', reason: 'VERIFIED', sourceSnapshotDigest: 'd'.repeat(64) },
+    recommendation, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false,
+    sourceVersions: { inputVersion: recommendation.inputVersion, sourceSnapshotDigest: 'd'.repeat(64),
+      caseRevision: 11, severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15 }
+  });
+}
+
 async function fixture(
   actor: AuthenticatedActor = OPERATOR,
   governed: GovernedRecommendationReader | null = null,
@@ -306,7 +317,7 @@ test('missing or failing health observation fails closed and blocks resolution a
 });
 
 test('healthy observed dependencies permit supervisor authorization without closing the road event', async () => {
-  const current = await fixture(SUPERVISOR);
+  const current = await fixture(SUPERVISOR, currentGovernedReader());
   let event = await current.application.getById(CASE_ID, SUPERVISOR);
   for (const nextStatus of [
     RoadEventStatus.Validating,
@@ -331,6 +342,28 @@ test('healthy observed dependencies permit supervisor authorization without clos
   const authorized = await current.application.getById(CASE_ID, SUPERVISOR);
   assert.notEqual(authorized.closureAuthorization, null);
   assert.notEqual(authorized.status, 'CLOSED');
+});
+
+test('high-risk authorization requires a current governed snapshot without blocking human takeover', async () => {
+  const current = await fixture(SUPERVISOR);
+  const response = await current.handler(request(
+    'POST', `/api/v1/human-safety/cases/${CASE_ID}/resolution-authorization`,
+    { expectedCaseVersion: 1, expectedContactVersion: null, reason: 'verify source snapshot', idempotencyKey: 'resolution-snapshot-gate-001' },
+    { 'idempotency-key': 'resolution-snapshot-gate-001' }
+  ));
+  assert.equal(response?.status, 409);
+  assert.equal((response!.body as { error: { code: string } }).error.code, 'SOURCE_SNAPSHOT_UNVERIFIED');
+  assert.equal((await current.application.getById(CASE_ID, SUPERVISOR)).closureAuthorization, null);
+  assert.equal(current.store.mutations, 0);
+
+  const takeover = await current.handler(request(
+    'POST', `/api/v1/human-safety/cases/${CASE_ID}/takeover`,
+    { expectedCaseVersion: 1, expectedContactVersion: 3, reason: 'retain human control', idempotencyKey: 'snapshot-gate-takeover-001' },
+    { 'idempotency-key': 'snapshot-gate-takeover-001' }
+  ));
+  assert.equal(takeover?.status, 200);
+  assert.equal(current.store.mutations, 1);
+  assert.equal(current.store.current.state, 'OPERATOR_TAKEOVER');
 });
 
 test('read advice remains behind role, tenant and purpose authorization', async () => {
