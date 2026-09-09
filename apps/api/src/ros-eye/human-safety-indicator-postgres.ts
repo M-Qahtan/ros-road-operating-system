@@ -48,10 +48,13 @@ export class PostgresHumanSafetyIndicatorLedger {
     try {
       await client.query('BEGIN');
       await client.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ WRITE');
-      const parent = await client.query(`SELECT id::text AS case_id FROM road_events
+      const parent = await client.query<{ case_id: string; status: string }>(`SELECT id::text AS case_id, status::text FROM road_events
         WHERE tenant_id=$1 AND purpose=$2 AND id=$3::uuid FOR UPDATE`,
       [input.tenantId, input.purpose, input.caseId]);
       if (parent.rowCount !== 1 || parent.rows.length !== 1) throw new Error('Indicator parent scope is unavailable or ambiguous');
+      if (parent.rows[0]?.status === 'CLOSED') {
+        throw new Error('Structured indicators cannot be appended after incident closure');
+      }
 
       const latest = await client.query<IndicatorLedgerRow>(`SELECT revision, indicator_set, digest
         FROM human_safety_indicator_revision_ledger

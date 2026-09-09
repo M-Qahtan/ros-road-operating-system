@@ -7,6 +7,7 @@ const localHarness = readFileSync('scripts/run-local-postgres-brain-journey.sh',
 const setup = readFileSync('database/tests/0010_ros_brain_journey_setup.sql', 'utf8');
 const reconnect = readFileSync('database/tests/0011_ros_brain_journey_reconnect.sql', 'utf8');
 const recoveryForward = readFileSync('database/tests/0012_ros_brain_journey_recovery_forward.sql', 'utf8');
+const closureRace = readFileSync('scripts/run-postgres-closure-race.sh', 'utf8');
 
 test('PostgreSQL integration runner fails explicitly before claiming an unexecuted test', () => {
   assert.match(runner, /command -v "\$required_command"/);
@@ -67,6 +68,7 @@ test('restart proof preserves the cluster identity and replaces the postmaster',
 test('live journey receipt is bound to a clean candidate and emitted only after success', () => {
   assert.match(localHarness, /git status --porcelain --untracked-files=normal/);
   assert.match(localHarness, /journey_manifest_sha256/);
+  assert.match(localHarness, /scripts\/run-postgres-closure-race\.sh/);
   assert.match(localHarness, /docker inspect --format '\{\{\.Image\}\}'/);
   assert.match(localHarness, /SHOW server_version/);
   assert.match(localHarness, /SELECT postgis_lib_version\(\)/);
@@ -75,12 +77,36 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v3/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v4/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
       localHarness.indexOf('ROS_POSTGRES_BRAIN_JOURNEY_RECEIPT='),
   );
+});
+
+test('closure race overlaps row-lock participants and accepts exactly one safe winner', () => {
+  assert.match(closureRace, /BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE/);
+  assert.match(closureRace, /FOR UPDATE/);
+  assert.match(closureRace, /pg_advisory_lock\(20260909, 1\)/);
+  assert.match(closureRace, /pg_sleep\(10\)/);
+  assert.match(closureRace, /pg_stat_activity/);
+  assert.match(closureRace, /wait_event_type='Lock'/);
+  assert.match(closureRace, /was not observed waiting on the source row lock/);
+  assert.match(closureRace, /SOURCE_SNAPSHOT_CHANGED/);
+  assert.match(closureRace, /RECOVERY\|2\|3/);
+  assert.match(closureRace, /exactly one safe winner/);
+  assert.match(runner, /bash scripts\/run-postgres-closure-race\.sh/);
+});
+
+test('v4 receipt consumes the exact durable closure-race disposition', () => {
+  assert.match(localHarness, /closure_race_proof_file="\$\(mktemp\)"/);
+  assert.match(localHarness, /ROS_POSTGRES_CLOSURE_RACE_PROOF_FILE="\$closure_race_proof_file"/);
+  assert.match(localHarness, /closure_race_proof\[0\].*SOURCE_UPDATE/);
+  assert.match(localHarness, /closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
+  assert.match(localHarness, /closureRaceVerified: true/);
+  assert.match(localHarness, /closureRaceWinner/);
+  assert.match(localHarness, /closureRaceLoserResult/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {

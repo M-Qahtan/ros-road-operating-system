@@ -60,7 +60,7 @@ function input(overrides: Partial<RecordSafetyIndicatorInput> = {}): RecordSafet
 
 test('authorized human records first structured indicator under exact scope and SERIALIZABLE transaction', async () => {
   const client = new FakeClient((text) => {
-    if (text.includes('FROM road_events')) return { rows: [{ case_id: CASE_ID }], rowCount: 1 };
+    if (text.includes('FROM road_events')) return { rows: [{ case_id: CASE_ID, status: 'RECOVERY' }], rowCount: 1 };
     if (text.includes('FROM human_safety_indicator_revision_ledger')) return { rows: [], rowCount: 0 };
     return { rows: [], rowCount: 1 };
   });
@@ -79,7 +79,7 @@ test('correction preserves history, verifies prior digest, and appends the next 
   const before = [indicator()];
   const priorDigest = indicatorRevisionDigest(SCOPE, before);
   const client = new FakeClient((text) => {
-    if (text.includes('FROM road_events')) return { rows: [{ case_id: CASE_ID }], rowCount: 1 };
+    if (text.includes('FROM road_events')) return { rows: [{ case_id: CASE_ID, status: 'RECOVERY' }], rowCount: 1 };
     if (text.includes('FROM human_safety_indicator_revision_ledger')) return {
       rows: [{ revision: 1, indicator_set: before, digest: priorDigest }], rowCount: 1
     };
@@ -103,7 +103,7 @@ test('correction preserves history, verifies prior digest, and appends the next 
 test('stale expected revision returns conflict without appending', async () => {
   const before = [indicator()];
   const client = new FakeClient((text) => {
-    if (text.includes('FROM road_events')) return { rows: [{ case_id: CASE_ID }], rowCount: 1 };
+    if (text.includes('FROM road_events')) return { rows: [{ case_id: CASE_ID, status: 'RECOVERY' }], rowCount: 1 };
     if (text.includes('FROM human_safety_indicator_revision_ledger')) return {
       rows: [{ revision: 1, indicator_set: before, digest: indicatorRevisionDigest(SCOPE, before) }], rowCount: 1
     };
@@ -132,6 +132,19 @@ test('non-human authority and invalid correction chronology fail before persiste
   assert.equal(invalid.queries.length, 0);
 });
 
+test('closed incident rejects a later structured indicator while retaining the row lock boundary', async () => {
+  const client = new FakeClient((text) => text.includes('FROM road_events')
+    ? { rows: [{ case_id: CASE_ID, status: 'CLOSED' }], rowCount: 1 }
+    : { rows: [], rowCount: 1 });
+  await assert.rejects(
+    () => new PostgresHumanSafetyIndicatorLedger(new FakePool(client)).record(input()),
+    /cannot be appended after incident closure/
+  );
+  assert.match(client.queries.find((query) => query.text.includes('FROM road_events'))!.text, /FOR UPDATE/);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO human_safety_indicator_revision_ledger')), false);
+  assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
+});
+
 test('stored indicator parser rejects correction cycles and duplicate supersession', () => {
   const first = indicator({ supersedesIndicatorId: CORRECTION_ID });
   const second = indicator({ indicatorId: CORRECTION_ID, supersedesIndicatorId: INDICATOR_ID });
@@ -144,7 +157,7 @@ test('read-only source returns receipt only when exact scope, state, and digest 
   const state = [indicator()];
   const digest = indicatorRevisionDigest(SCOPE, state);
   const client = new FakeClient((text) => {
-    if (text.includes('FROM road_events')) return { rows: [{ case_id: CASE_ID }], rowCount: 1 };
+    if (text.includes('FROM road_events')) return { rows: [{ case_id: CASE_ID, status: 'RECOVERY' }], rowCount: 1 };
     return { rows: [{ revision: 1, indicator_set: state, digest }], rowCount: 1 };
   });
   assert.deepEqual(await new PostgresHumanSafetyIndicatorSource().load(client as ContactSqlConnectionPort, SCOPE), {
@@ -154,13 +167,13 @@ test('read-only source returns receipt only when exact scope, state, and digest 
 
 test('missing, drifted, and cross-purpose Indicator state fail closed', async () => {
   const missing = new FakeClient((text) => text.includes('FROM road_events')
-    ? { rows: [{ case_id: CASE_ID }], rowCount: 1 }
+    ? { rows: [{ case_id: CASE_ID, status: 'RECOVERY' }], rowCount: 1 }
     : { rows: [], rowCount: 0 });
   assert.equal(await new PostgresHumanSafetyIndicatorSource().load(missing as ContactSqlConnectionPort, SCOPE), null);
 
   const state = [indicator()];
   const drift = new FakeClient((text) => text.includes('FROM road_events')
-    ? { rows: [{ case_id: CASE_ID }], rowCount: 1 }
+    ? { rows: [{ case_id: CASE_ID, status: 'RECOVERY' }], rowCount: 1 }
     : { rows: [{ revision: 1, indicator_set: state, digest: 'f'.repeat(64) }], rowCount: 1 });
   await assert.rejects(() => new PostgresHumanSafetyIndicatorSource().load(drift as ContactSqlConnectionPort, SCOPE), /does not match/);
 

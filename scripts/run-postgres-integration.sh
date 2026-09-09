@@ -105,4 +105,8 @@ if [[ "$restart_performed" == true ]]; then
     > "$ROS_POSTGRES_RESTART_PROOF_FILE"
 fi
 
+if [[ -n "${ROS_POSTGRES_CLOSURE_RACE_PROOF_FILE:-}" ]]; then
+  bash scripts/run-postgres-closure-race.sh
+fi
+
 echo "PostgreSQL/PostGIS integration checks passed"

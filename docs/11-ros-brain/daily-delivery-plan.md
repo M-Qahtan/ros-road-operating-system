@@ -125,6 +125,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **HIGH-RISK CLOSURE EXECUTION NOW REVALIDATES THE PERSISTED SNAPSHOT FAIL-CLOSED IN THE POSTGRESQL TRANSACTION; LIVE ENGINE CONCURRENCY EVIDENCE REMAINS OPEN.** Rejection leaves the persisted authorization and append-only history intact. No recommendation gains closure or other operational authority. |
 | Next handoff | Extend the disposable PostgreSQL journey through migration `0022` with a real concurrent source-update/closure race and require exactly one safe winner plus an engine-bound receipt. |
 
+## Cycle 4 continuation — closure/source concurrency
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `21612fb4e1667aefd45827609effb1ffbdb443cf`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch thirty-one commits ahead and zero behind, with no branch PR or workflow run. |
+| Concurrent safety behavior | Human-Safety Indicator writes retain their existing `SERIALIZABLE` RoadEvent row lock and now reject a case observed as `CLOSED`. The disposable journey starts a source correction and a closure attempt as overlapping PostgreSQL clients. The source client deliberately reaches the shared row boundary first; the closure client must then observe the new Indicator revision and lose with `SOURCE_SNAPSHOT_CHANGED`. |
+| Durable acceptance | The race proof requires exactly `SOURCE_UPDATE=COMMITTED` and `CLOSURE=SOURCE_SNAPSHOT_CHANGED`, followed by durable state `RECOVERY / version 2 / Indicator revision 3`. Missing synchronization, two successes, the wrong loser, or an ambiguous final state aborts the journey. Receipt schema v4 carries this exact disposition only after restart, recovery, and all ordered stages pass. |
+| Safety limits | The synchronization advisory lock is test-only. No recommendation gains closure authority; the source write remains an already-authorized structured human observation. No camera, dispatch, severity downgrade, evidence mutation, cloud resource, or field action is added. |
+| Result | **THE CONCURRENT ENGINE RACE AND ITS CANDIDATE-BOUND RECEIPT ARE DEFINED FAIL-CLOSED; LIVE POSTGRESQL EXECUTION IS STILL REQUIRED.** |
+| Next handoff | Run the clean candidate on a Docker-capable local host, inspect the v4 race receipt, and fix any actual PostgreSQL lock, trigger, or isolation discrepancy. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

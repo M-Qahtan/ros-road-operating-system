@@ -23,6 +23,7 @@ readonly journey_manifest_sha256="$(
   sha256sum \
     scripts/run-local-postgres-brain-journey.sh \
     scripts/run-postgres-integration.sh \
+    scripts/run-postgres-closure-race.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -32,10 +33,12 @@ readonly journey_manifest_sha256="$(
 readonly container_name="ros-brain-postgres-${$}"
 readonly postgres_password="ros-local-integration-only"
 readonly restart_proof_file="$(mktemp)"
+readonly closure_race_proof_file="$(mktemp)"
 
 cleanup() {
   docker rm -f "$container_name" >/dev/null 2>&1 || true
   rm -f "$restart_proof_file"
+  rm -f "$closure_race_proof_file"
 }
 trap cleanup EXIT
 
@@ -61,6 +64,7 @@ export DATABASE_URL="postgresql://ros:${postgres_password}@127.0.0.1:5432/ros"
 export ROS_POSTGRES_RESTART_CONTAINER="$container_name"
 export ROS_POSTGRES_RESTART_BEFORE_TEST="0011_ros_brain_journey_reconnect.sql"
 export ROS_POSTGRES_RESTART_PROOF_FILE="$restart_proof_file"
+export ROS_POSTGRES_CLOSURE_RACE_PROOF_FILE="$closure_race_proof_file"
 bash scripts/run-postgres-integration.sh
 
 mapfile -t restart_proof < "$restart_proof_file"
@@ -72,6 +76,15 @@ readonly system_identifier_before_restart="${restart_proof[0]}"
 readonly postmaster_started_at_before_restart="${restart_proof[1]}"
 readonly system_identifier_after_restart="${restart_proof[2]}"
 readonly postmaster_started_at_after_restart="${restart_proof[3]}"
+mapfile -t closure_race_proof < "$closure_race_proof_file"
+if [[ "${#closure_race_proof[@]}" -ne 4 \
+  || "${closure_race_proof[0]}" != "SOURCE_UPDATE" \
+  || "${closure_race_proof[1]}" != "COMMITTED" \
+  || "${closure_race_proof[2]}" != "CLOSURE" \
+  || "${closure_race_proof[3]}" != "SOURCE_SNAPSHOT_CHANGED" ]]; then
+  echo "PostgreSQL journey passed without one exact safe closure-race winner" >&2
+  exit 2
+fi
 
 readonly image_id="$(docker inspect --format '{{.Image}}' "$container_name")"
 readonly postgres_version="$(psql "$DATABASE_URL" -Atqc 'SHOW server_version')"
@@ -107,9 +120,11 @@ ROS_RECEIPT_POSTGIS_VERSION="$postgis_version" \
 ROS_RECEIPT_DATABASE_SYSTEM_IDENTIFIER="$database_system_identifier" \
 ROS_RECEIPT_POSTMASTER_STARTED_AT_BEFORE_RESTART="$postmaster_started_at_before_restart" \
 ROS_RECEIPT_POSTMASTER_STARTED_AT_AFTER_RESTART="$postmaster_started_at_after_restart" \
+ROS_RECEIPT_CLOSURE_RACE_WINNER="${closure_race_proof[0]}" \
+ROS_RECEIPT_CLOSURE_RACE_LOSER_RESULT="${closure_race_proof[3]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v3",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v4",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerImageId: process.env.ROS_RECEIPT_IMAGE_ID,
@@ -121,6 +136,9 @@ node -e '
     postmasterStartedAtAfterRestart:
       process.env.ROS_RECEIPT_POSTMASTER_STARTED_AT_AFTER_RESTART,
     restartVerified: true,
+    closureRaceVerified: true,
+    closureRaceWinner: process.env.ROS_RECEIPT_CLOSURE_RACE_WINNER,
+    closureRaceLoserResult: process.env.ROS_RECEIPT_CLOSURE_RACE_LOSER_RESULT,
     result: "PASS",
     externalArchiveReceipt: null,
   };
