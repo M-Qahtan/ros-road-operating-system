@@ -177,7 +177,7 @@ test('mobility or delay benefit cannot compensate for higher human-safety risk',
   assert.equal(result.decision, 'RECOMMEND');
 });
 
-test('forged direct vehicle-control candidate is rejected and cannot become a recommendation', () => {
+test('forged direct vehicle-control candidate fails the whole evaluation closed', () => {
   const crs = state([entity('A', 0, 10), entity('B', 100, -10)]);
   const noAction = candidate('no-action', 'NO_ACTION', outcomes());
   const forged = {
@@ -192,12 +192,34 @@ test('forged direct vehicle-control candidate is rejected and cannot become a re
     maxRecommendationUncertainty: 0.3,
   });
 
-  assert.equal(result.decision, 'REQUEST_MORE_EVIDENCE');
+  assert.equal(result.decision, 'ABSTAIN');
   assert.equal(result.selectedCandidateId, null);
   assert(result.reasonCodes.includes('DIRECT_VEHICLE_CONTROL_FORBIDDEN'));
+  assert(result.reasonCodes.includes('COUNTERFACTUAL_POLICY_VIOLATION'));
 });
 
-test('high-uncertainty intervention cannot be promoted into a recommendation', () => {
+test('one malicious authority-import candidate poisons the cycle even beside a valid safe advisory', () => {
+  const crs = state([entity('A', 0, 10), entity('B', 100, -10)]);
+  const safeWarning = candidate('safe-warning', 'WARN_ROAD_USER', outcomes({ humanSafetyRisk: 2 }));
+  const forgedAuthority = {
+    ...candidate('forged-authority', 'ROUTE_RECOMMENDATION', outcomes({ humanSafetyRisk: 1 })),
+    authority: 'COMMAND' as unknown as 'ADVISORY_ONLY',
+  } as CounterfactualCandidate;
+
+  const result = evaluateCounterfactualCandidates({
+    state: crs,
+    evaluatedAt: '2026-09-11T07:10:01+03:00',
+    candidates: [candidate('no-action', 'NO_ACTION', outcomes()), safeWarning, forgedAuthority],
+    maxRecommendationUncertainty: 0.3,
+  });
+
+  assert.equal(result.decision, 'ABSTAIN');
+  assert.equal(result.selectedCandidateId, null);
+  assert(result.reasonCodes.includes('NON_ADVISORY_AUTHORITY_FORBIDDEN'));
+  assert(result.reasonCodes.includes('COUNTERFACTUAL_POLICY_VIOLATION'));
+});
+
+test('high-uncertainty intervention is softly excluded and requests more evidence', () => {
   const crs = state([entity('A', 0, 10), entity('B', 100, -10)]);
   const result = evaluateCounterfactualCandidates({
     state: crs,
@@ -210,5 +232,6 @@ test('high-uncertainty intervention cannot be promoted into a recommendation', (
   });
 
   assert.equal(result.decision, 'REQUEST_MORE_EVIDENCE');
+  assert.equal(result.selectedCandidateId, null);
   assert(result.reasonCodes.includes('CANDIDATE_UNCERTAINTY_TOO_HIGH'));
 });
