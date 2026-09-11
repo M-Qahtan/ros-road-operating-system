@@ -67,10 +67,11 @@ export interface PerceptionBenchmarkComparison {
   readonly improvements: readonly string[];
 }
 
-const RATE_METRICS: readonly (keyof PerceptionBenchmarkMetrics)[] = [
+const UNIT_INTERVAL_METRICS: readonly (keyof PerceptionBenchmarkMetrics)[] = [
   'detectionPrecision',
   'detectionRecall',
   'trackContinuity',
+  'falseTrackRate',
   'confidenceCalibrationError',
   'falseHazardAcceptanceRate',
   'missedHazardRate',
@@ -87,9 +88,9 @@ export function validatePerceptionBenchmarkCase(value: PerceptionBenchmarkCase):
   if (!value.groundTruth.evidenceManifestId.trim()) errors.push('MISSING_GROUND_TRUTH_EVIDENCE');
   if (!value.evidenceManifestId.trim()) errors.push('MISSING_RESULT_EVIDENCE');
 
-  for (const key of RATE_METRICS) {
+  for (const key of UNIT_INTERVAL_METRICS) {
     const metric = value.metrics[key];
-    if (!Number.isFinite(metric)) errors.push(`NON_FINITE_METRIC:${key}`);
+    if (!Number.isFinite(metric) || metric < 0 || metric > 1) errors.push(`INVALID_UNIT_INTERVAL_METRIC:${key}`);
   }
 
   if (!Number.isFinite(value.metrics.positionRmseM) || value.metrics.positionRmseM < 0) {
@@ -110,7 +111,7 @@ export function validatePerceptionBenchmarkCase(value: PerceptionBenchmarkCase):
 
 /**
  * Protected metrics cannot be averaged away by gains in throughput/latency.
- * Any authority violation or explicit protected invariant violation is a hard regression.
+ * Any candidate authority violation or explicit protected invariant violation is a hard regression.
  */
 export function comparePerceptionBenchmarks(
   baseline: PerceptionBenchmarkCase,
@@ -137,8 +138,10 @@ export function comparePerceptionBenchmarks(
     improvements.push('UNSAFE_CONFIDENCE');
   }
 
-  if (candidate.metrics.authorityViolationCount > baseline.metrics.authorityViolationCount) {
+  if (candidate.metrics.authorityViolationCount > 0) {
     regressions.push('AUTHORITY_VIOLATION');
+  } else if (baseline.metrics.authorityViolationCount > 0) {
+    improvements.push('AUTHORITY_VIOLATION_ELIMINATED');
   }
 
   if (candidate.protectedInvariantViolations.length > 0) {
