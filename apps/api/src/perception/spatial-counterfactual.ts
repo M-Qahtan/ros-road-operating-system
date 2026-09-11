@@ -1,8 +1,10 @@
 import {
+  COGNITIVE_ROAD_STATE_SCHEMA,
   cognitiveStateRequiresAbstention,
   compareProtectedOutcomesLexicographically,
   type CognitiveEntity,
   type CognitiveRoadState,
+  type CounterfactualAction,
   type CounterfactualCandidate,
   type CounterfactualEvaluation,
   type ProtectedOutcomeVector,
@@ -30,16 +32,45 @@ export interface CognitiveConflictEvaluation {
   readonly authority: 'NONE';
 }
 
+const ALLOWED_COUNTERFACTUAL_ACTIONS = new Set<CounterfactualAction>([
+  'NO_ACTION',
+  'WARN_ROAD_USER',
+  'WARN_OPERATOR',
+  'REQUEST_MORE_EVIDENCE',
+  'ROUTE_RECOMMENDATION',
+  'SIGNAL_PLAN_RECOMMENDATION',
+  'EMERGENCY_CORRIDOR_RECOMMENDATION',
+  'REDUCE_CONFIDENCE',
+  'ABSTAIN',
+  'REQUEST_HUMAN_REVIEW',
+]);
+
+const PROTECTED_OUTCOME_KEYS: readonly (keyof ProtectedOutcomeVector)[] = [
+  'humanSafetyRisk',
+  'emergencyAccessRisk',
+  'secondaryIncidentRisk',
+  'evidenceIntegrityRisk',
+  'authorityPrivacyRisk',
+  'criticalNetworkResilienceRisk',
+  'mobilityCost',
+  'delayCost',
+  'efficiencyCost',
+] as const;
+
 const HARD_CANDIDATE_ERRORS = new Set([
   'DUPLICATE_CANDIDATE_ID',
+  'INVALID_CANDIDATE_SHAPE',
   'MISSING_CANDIDATE_ID',
+  'UNSUPPORTED_COUNTERFACTUAL_ACTION',
   'CANDIDATE_STATE_DIGEST_MISMATCH',
   'INVALID_CANDIDATE_VALID_UNTIL',
+  'CANDIDATE_OUTLIVES_COGNITIVE_STATE',
   'NON_ADVISORY_AUTHORITY_FORBIDDEN',
   'DIRECT_VEHICLE_CONTROL_FORBIDDEN',
   'VEHICLE_LOCAL_VETO_REQUIRED',
   'INVALID_CANDIDATE_UNCERTAINTY',
   'COUNTERFACTUAL_ASSUMPTIONS_REQUIRED',
+  'INVALID_COUNTERFACTUAL_ASSUMPTION',
   'INVALID_PROTECTED_OUTCOME_VECTOR',
 ]);
 
@@ -52,10 +83,12 @@ export function evaluateCognitivePairwiseConflict(input: {
   readonly combinedSafetyRadiusM: number;
   readonly uncertaintyMarginM: number;
 }): CognitiveConflictEvaluation {
+  const stateBoundaryError = validateCognitiveStateBoundary(input.state);
+  if (stateBoundaryError !== null) return blockedConflict('ABSTAIN', stateBoundaryError);
+
   const evaluatedAt = Date.parse(input.evaluatedAt);
   const stateValidUntil = Date.parse(input.state.validUntil);
   if (!Number.isFinite(evaluatedAt)) return blockedConflict('REQUEST_MORE_EVIDENCE', 'INVALID_EVALUATION_TIME');
-  if (!Number.isFinite(stateValidUntil)) return blockedConflict('REQUEST_MORE_EVIDENCE', 'INVALID_COGNITIVE_STATE_WINDOW');
   if (stateValidUntil <= evaluatedAt) return blockedConflict('REQUEST_MORE_EVIDENCE', 'COGNITIVE_STATE_EXPIRED');
   if (cognitiveStateRequiresAbstention(input.state)) return blockedConflict('ABSTAIN', 'COGNITIVE_STATE_CONTRADICTED');
 
@@ -76,15 +109,22 @@ export function evaluateCognitivePairwiseConflict(input: {
     return blockedConflict('REQUEST_MORE_EVIDENCE', 'PAIRWISE_ENTITY_STATE_EXPIRED');
   }
 
-  return {
-    decision: 'EVALUATED',
-    primitive: computeConstantVelocityConflict(
+  let primitive: ConstantVelocityConflictPrimitive;
+  try {
+    primitive = computeConstantVelocityConflict(
       entityA,
       entityB,
       input.horizonSeconds,
       input.combinedSafetyRadiusM,
       input.uncertaintyMarginM,
-    ),
+    );
+  } catch {
+    return blockedConflict('REQUEST_MORE_EVIDENCE', 'INVALID_PAIRWISE_KINEMATICS');
+  }
+
+  return {
+    decision: 'EVALUATED',
+    primitive,
     reasonCodes: ['CONSTANT_VELOCITY_PRIMITIVE_ONLY'],
     authority: 'NONE',
   };
@@ -101,20 +141,26 @@ export function computeConstantVelocityConflict(
   if (!Number.isFinite(combinedSafetyRadiusM) || combinedSafetyRadiusM < 0) throw new Error('INVALID_SAFETY_RADIUS');
   if (!Number.isFinite(uncertaintyMarginM) || uncertaintyMarginM < 0) throw new Error('INVALID_UNCERTAINTY_MARGIN');
 
+  const safetyEnvelope = combinedSafetyRadiusM + uncertaintyMarginM;
+  if (!Number.isFinite(safetyEnvelope)) throw new Error('INVALID_SAFETY_ENVELOPE');
+
   const relativePosition = subtract(entityB.state.positionM, entityA.state.positionM);
   const relativeVelocity = subtract(entityB.state.estimatedVelocityMps, entityA.state.estimatedVelocityMps);
   assertFiniteVector(relativePosition, 'RELATIVE_POSITION');
   assertFiniteVector(relativeVelocity, 'RELATIVE_VELOCITY');
 
   const velocitySquared = dot(relativeVelocity, relativeVelocity);
+  if (!Number.isFinite(velocitySquared)) throw new Error('INVALID_RELATIVE_SPEED');
   const relativeSpeedMps = Math.sqrt(velocitySquared);
-  const safetyEnvelope = combinedSafetyRadiusM + uncertaintyMarginM;
 
   const closestTime = velocitySquared <= Number.EPSILON
     ? 0
     : clamp(-dot(relativePosition, relativeVelocity) / velocitySquared, 0, horizonSeconds);
+  if (!Number.isFinite(closestTime)) throw new Error('INVALID_CLOSEST_APPROACH_TIME');
+
   const closestPosition = add(relativePosition, scale(relativeVelocity, closestTime));
   const minimumSeparationM = norm(closestPosition);
+  if (!Number.isFinite(minimumSeparationM)) throw new Error('INVALID_MINIMUM_SEPARATION');
 
   const ttc = firstSphereIntersectionSeconds(relativePosition, relativeVelocity, safetyEnvelope, horizonSeconds);
 
@@ -140,15 +186,17 @@ export function evaluateCounterfactualCandidates(input: {
   readonly candidates: readonly CounterfactualCandidate[];
   readonly maxRecommendationUncertainty: number;
 }): CounterfactualEvaluation {
+  const stateBoundaryError = validateCognitiveStateBoundary(input.state);
+  if (stateBoundaryError !== null) {
+    return counterfactualBlocked(input, 'ABSTAIN', [stateBoundaryError]);
+  }
+
   const evaluatedAtEpoch = Date.parse(input.evaluatedAt);
   const stateValidUntil = Date.parse(input.state.validUntil);
   const reasons = new Set<string>();
 
   if (!Number.isFinite(evaluatedAtEpoch)) {
     return counterfactualBlocked(input, 'ABSTAIN', ['INVALID_EVALUATION_TIME']);
-  }
-  if (!Number.isFinite(stateValidUntil)) {
-    return counterfactualBlocked(input, 'ABSTAIN', ['INVALID_COGNITIVE_STATE_WINDOW']);
   }
   if (stateValidUntil <= evaluatedAtEpoch) {
     return counterfactualBlocked(input, 'REQUEST_MORE_EVIDENCE', ['COGNITIVE_STATE_EXPIRED']);
@@ -161,17 +209,21 @@ export function evaluateCounterfactualCandidates(input: {
     || input.maxRecommendationUncertainty > 1) {
     return counterfactualBlocked(input, 'ABSTAIN', ['INVALID_UNCERTAINTY_POLICY']);
   }
+  if (!Array.isArray(input.candidates)) {
+    return counterfactualBlocked(input, 'ABSTAIN', ['INVALID_CANDIDATE_SET']);
+  }
 
   const ids = new Set<string>();
   const eligible: CounterfactualCandidate[] = [];
   for (const candidate of input.candidates) {
-    if (ids.has(candidate.candidateId)) {
+    const candidateId = runtimeCandidateId(candidate);
+    if (candidateId !== null && ids.has(candidateId)) {
       reasons.add('DUPLICATE_CANDIDATE_ID');
       continue;
     }
-    ids.add(candidate.candidateId);
+    if (candidateId !== null) ids.add(candidateId);
 
-    const error = validateCandidate(candidate, input.state, evaluatedAtEpoch, input.maxRecommendationUncertainty);
+    const error = validateCandidate(candidate, input.state, evaluatedAtEpoch, stateValidUntil, input.maxRecommendationUncertainty);
     if (error !== null) {
       reasons.add(error);
       continue;
@@ -219,29 +271,65 @@ export function evaluateCounterfactualCandidates(input: {
   };
 }
 
+function validateCognitiveStateBoundary(state: CognitiveRoadState): string | null {
+  if (!state || typeof state !== 'object') return 'INVALID_COGNITIVE_STATE';
+  if (state.schema !== COGNITIVE_ROAD_STATE_SCHEMA) return 'INVALID_COGNITIVE_STATE_SCHEMA';
+  if (typeof state.crsId !== 'string' || !state.crsId.trim()) return 'INVALID_COGNITIVE_STATE_ID';
+  if (typeof state.stateDigest !== 'string' || !/^[a-f0-9]{64}$/.test(state.stateDigest)) return 'INVALID_COGNITIVE_STATE_DIGEST';
+  if (typeof state.validUntil !== 'string' || !Number.isFinite(Date.parse(state.validUntil))) return 'INVALID_COGNITIVE_STATE_WINDOW';
+  if (!Array.isArray(state.entities) || !Array.isArray(state.contradictions)) return 'INVALID_COGNITIVE_STATE_COLLECTIONS';
+  return null;
+}
+
 function validateCandidate(
   candidate: CounterfactualCandidate,
   state: CognitiveRoadState,
   evaluatedAtEpoch: number,
+  stateValidUntilEpoch: number,
   maxUncertainty: number,
 ): string | null {
-  if (!candidate.candidateId.trim()) return 'MISSING_CANDIDATE_ID';
-  if (candidate.stateDigest !== state.stateDigest) return 'CANDIDATE_STATE_DIGEST_MISMATCH';
+  if (!candidate || typeof candidate !== 'object') return 'INVALID_CANDIDATE_SHAPE';
+  if (typeof candidate.candidateId !== 'string' || !candidate.candidateId.trim()) return 'MISSING_CANDIDATE_ID';
+  if (typeof candidate.action !== 'string' || !ALLOWED_COUNTERFACTUAL_ACTIONS.has(candidate.action as CounterfactualAction)) {
+    return 'UNSUPPORTED_COUNTERFACTUAL_ACTION';
+  }
+  if (typeof candidate.stateDigest !== 'string' || candidate.stateDigest !== state.stateDigest) return 'CANDIDATE_STATE_DIGEST_MISMATCH';
+  if (typeof candidate.validUntil !== 'string') return 'INVALID_CANDIDATE_VALID_UNTIL';
   const candidateValidUntil = Date.parse(candidate.validUntil);
   if (!Number.isFinite(candidateValidUntil)) return 'INVALID_CANDIDATE_VALID_UNTIL';
+  if (candidateValidUntil > stateValidUntilEpoch) return 'CANDIDATE_OUTLIVES_COGNITIVE_STATE';
   if (candidateValidUntil <= evaluatedAtEpoch) return 'CANDIDATE_EXPIRED';
   if (candidate.authority !== 'ADVISORY_ONLY') return 'NON_ADVISORY_AUTHORITY_FORBIDDEN';
   if (candidate.directVehicleControl !== false) return 'DIRECT_VEHICLE_CONTROL_FORBIDDEN';
   if (candidate.requiresVehicleLocalVeto !== true) return 'VEHICLE_LOCAL_VETO_REQUIRED';
-  if (!Number.isFinite(candidate.uncertainty) || candidate.uncertainty < 0 || candidate.uncertainty > 1) return 'INVALID_CANDIDATE_UNCERTAINTY';
+  if (typeof candidate.uncertainty !== 'number' || !Number.isFinite(candidate.uncertainty) || candidate.uncertainty < 0 || candidate.uncertainty > 1) {
+    return 'INVALID_CANDIDATE_UNCERTAINTY';
+  }
   if (candidate.uncertainty > maxUncertainty) return 'CANDIDATE_UNCERTAINTY_TOO_HIGH';
+  if (!Array.isArray(candidate.assumptions)) return 'INVALID_COUNTERFACTUAL_ASSUMPTION';
   if (candidate.action !== 'NO_ACTION' && candidate.assumptions.length === 0) return 'COUNTERFACTUAL_ASSUMPTIONS_REQUIRED';
+  if (candidate.assumptions.some((item) => typeof item !== 'string' || !item.trim())) return 'INVALID_COUNTERFACTUAL_ASSUMPTION';
   if (!validProtectedOutcomeVector(candidate.predictedOutcomes)) return 'INVALID_PROTECTED_OUTCOME_VECTOR';
   return null;
 }
 
+function runtimeCandidateId(candidate: CounterfactualCandidate): string | null {
+  return candidate && typeof candidate === 'object' && typeof candidate.candidateId === 'string'
+    ? candidate.candidateId
+    : null;
+}
+
 function validProtectedOutcomeVector(value: ProtectedOutcomeVector): boolean {
-  return Object.values(value).every((item) => typeof item === 'number' && Number.isFinite(item) && item >= 0);
+  if (!value || typeof value !== 'object') return false;
+  const record = value as unknown as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== PROTECTED_OUTCOME_KEYS.length || !keys.every((key) => PROTECTED_OUTCOME_KEYS.includes(key as keyof ProtectedOutcomeVector))) {
+    return false;
+  }
+  return PROTECTED_OUTCOME_KEYS.every((key) => {
+    const item = record[key];
+    return typeof item === 'number' && Number.isFinite(item) && item >= 0;
+  });
 }
 
 function counterfactualBlocked(
@@ -250,10 +338,10 @@ function counterfactualBlocked(
   reasonCodes: readonly string[],
 ): CounterfactualEvaluation {
   return {
-    crsId: input.state.crsId,
-    stateDigest: input.state.stateDigest,
+    crsId: input.state?.crsId ?? 'INVALID_CRS',
+    stateDigest: input.state?.stateDigest ?? '',
     evaluatedAt: input.evaluatedAt,
-    candidates: input.candidates,
+    candidates: Array.isArray(input.candidates) ? input.candidates : [],
     selectedCandidateId: null,
     decision,
     reasonCodes: [...new Set(reasonCodes)].sort(),
@@ -275,18 +363,20 @@ function firstSphereIntersectionSeconds(
 ): number | null {
   const a = dot(relativeVelocity, relativeVelocity);
   const c = dot(relativePosition, relativePosition) - radiusM * radiusM;
+  if (!Number.isFinite(a) || !Number.isFinite(c)) throw new Error('INVALID_COLLISION_EQUATION');
   if (c <= 0) return 0;
   if (a <= Number.EPSILON) return null;
 
   const b = 2 * dot(relativePosition, relativeVelocity);
   const discriminant = b * b - 4 * a * c;
+  if (!Number.isFinite(b) || !Number.isFinite(discriminant)) throw new Error('INVALID_COLLISION_EQUATION');
   if (discriminant < 0) return null;
 
   const root = Math.sqrt(discriminant);
   const first = (-b - root) / (2 * a);
   const second = (-b + root) / (2 * a);
   for (const candidate of [first, second]) {
-    if (candidate >= 0 && candidate <= horizonSeconds) return candidate;
+    if (Number.isFinite(candidate) && candidate >= 0 && candidate <= horizonSeconds) return candidate;
   }
   return null;
 }
@@ -322,5 +412,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function assertFiniteVector(value: readonly [number, number, number], label: string): void {
-  if (value.some((item) => !Number.isFinite(item))) throw new Error(`NON_FINITE_${label}`);
+  if (!Array.isArray(value) || value.length !== 3 || value.some((item) => typeof item !== 'number' || !Number.isFinite(item))) {
+    throw new Error(`NON_FINITE_${label}`);
+  }
 }
