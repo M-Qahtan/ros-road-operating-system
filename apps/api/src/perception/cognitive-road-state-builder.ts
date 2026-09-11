@@ -56,11 +56,11 @@ export function buildCognitiveRoadState(input: CognitiveRoadStateBuildInput): Co
 
   for (const trackId of [...tracksById.keys()].sort()) {
     const candidates = tracksById.get(trackId)!;
-    const newest = [...candidates].sort((a, b) => Date.parse(b.envelope.capturedAt) - Date.parse(a.envelope.capturedAt))[0]!;
-    const distinctTrackStates = new Set(candidates.map((candidate) => digestTrackState(candidate.track)));
+    const newest = [...candidates].sort(compareTrackCandidatesNewestFirst)[0]!;
+    const internalContradictionIds = sameSourceSameCaptureContradictions(candidates);
     const assurance = assuranceByObject.get(trackId);
 
-    const materialTrackContradiction = distinctTrackStates.size > 1;
+    const materialTrackContradiction = internalContradictionIds.length > 0;
     const assuranceContradiction = assurance?.decision === 'CONTRADICTED';
     const epistemicState = materialTrackContradiction || assuranceContradiction
       ? 'CONTRADICTED'
@@ -77,9 +77,9 @@ export function buildCognitiveRoadState(input: CognitiveRoadStateBuildInput): Co
     if (materialTrackContradiction || assuranceContradiction) {
       contradictions.push({
         contradictionId: `contradiction:${trackId}`,
-        observationIds: envelopeIds,
+        observationIds: assuranceContradiction ? envelopeIds : internalContradictionIds,
         material: true,
-        reason: materialTrackContradiction ? 'DIVERGENT_TRACK_STATE' : 'CPAL_MATERIAL_CONTRADICTION',
+        reason: materialTrackContradiction ? 'DIVERGENT_SAME_SOURCE_TRACK_STATE' : 'CPAL_MATERIAL_CONTRADICTION',
       });
     }
 
@@ -98,7 +98,9 @@ export function buildCognitiveRoadState(input: CognitiveRoadStateBuildInput): Co
       ...(newest.track.laneId === undefined ? {} : { laneId: newest.track.laneId }),
       ...(newest.track.roadSegmentId === undefined ? {} : { roadSegmentId: newest.track.roadSegmentId }),
       supportingObservationIds,
-      contradictingObservationIds: materialTrackContradiction || assuranceContradiction ? envelopeIds : [],
+      contradictingObservationIds: materialTrackContradiction || assuranceContradiction
+        ? (materialTrackContradiction ? internalContradictionIds : envelopeIds)
+        : [],
       confidence: boundedConfidence(epistemicState === 'CONTRADICTED' ? Math.min(newest.track.confidence, 0.5) : newest.track.confidence),
       epistemicState,
       validUntil: entityValidUntil(candidates, input.validUntil),
@@ -204,6 +206,34 @@ function collectTrackCandidates(observations: readonly SensorObservationEnvelope
   return byTrack;
 }
 
+function sameSourceSameCaptureContradictions(candidates: readonly TrackCandidate[]): string[] {
+  const cohorts = new Map<string, Map<string, string[]>>();
+  for (const candidate of candidates) {
+    const cohortKey = `${candidate.envelope.sourceId}\u0000${candidate.envelope.capturedAt}`;
+    const states = cohorts.get(cohortKey) ?? new Map<string, string[]>();
+    const stateDigest = digestTrackState(candidate.track);
+    const ids = states.get(stateDigest) ?? [];
+    ids.push(candidate.envelope.observationId);
+    states.set(stateDigest, ids);
+    cohorts.set(cohortKey, states);
+  }
+
+  const contradictoryIds: string[] = [];
+  for (const states of cohorts.values()) {
+    if (states.size <= 1) continue;
+    for (const ids of states.values()) contradictoryIds.push(...ids);
+  }
+  return uniqueSorted(contradictoryIds);
+}
+
+function compareTrackCandidatesNewestFirst(a: TrackCandidate, b: TrackCandidate): number {
+  const time = Date.parse(b.envelope.capturedAt) - Date.parse(a.envelope.capturedAt);
+  if (time !== 0) return time;
+  const source = a.envelope.sourceId.localeCompare(b.envelope.sourceId);
+  if (source !== 0) return source;
+  return a.envelope.observationId.localeCompare(b.envelope.observationId);
+}
+
 function mapEntityClass(value: string): CognitiveEntityClass {
   const normalized = value.trim().toUpperCase();
   const supported: readonly CognitiveEntityClass[] = [
@@ -253,7 +283,7 @@ function sha256(value: string): string {
 }
 
 function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
   const record = value as Record<string, unknown>;
   return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
