@@ -30,6 +30,19 @@ export interface CognitiveConflictEvaluation {
   readonly authority: 'NONE';
 }
 
+const HARD_CANDIDATE_ERRORS = new Set([
+  'DUPLICATE_CANDIDATE_ID',
+  'MISSING_CANDIDATE_ID',
+  'CANDIDATE_STATE_DIGEST_MISMATCH',
+  'INVALID_CANDIDATE_VALID_UNTIL',
+  'NON_ADVISORY_AUTHORITY_FORBIDDEN',
+  'DIRECT_VEHICLE_CONTROL_FORBIDDEN',
+  'VEHICLE_LOCAL_VETO_REQUIRED',
+  'INVALID_CANDIDATE_UNCERTAINTY',
+  'COUNTERFACTUAL_ASSUMPTIONS_REQUIRED',
+  'INVALID_PROTECTED_OUTCOME_VECTOR',
+]);
+
 export function evaluateCognitivePairwiseConflict(input: {
   readonly state: CognitiveRoadState;
   readonly entityAId: string;
@@ -40,8 +53,10 @@ export function evaluateCognitivePairwiseConflict(input: {
   readonly uncertaintyMarginM: number;
 }): CognitiveConflictEvaluation {
   const evaluatedAt = Date.parse(input.evaluatedAt);
+  const stateValidUntil = Date.parse(input.state.validUntil);
   if (!Number.isFinite(evaluatedAt)) return blockedConflict('REQUEST_MORE_EVIDENCE', 'INVALID_EVALUATION_TIME');
-  if (Date.parse(input.state.validUntil) <= evaluatedAt) return blockedConflict('REQUEST_MORE_EVIDENCE', 'COGNITIVE_STATE_EXPIRED');
+  if (!Number.isFinite(stateValidUntil)) return blockedConflict('REQUEST_MORE_EVIDENCE', 'INVALID_COGNITIVE_STATE_WINDOW');
+  if (stateValidUntil <= evaluatedAt) return blockedConflict('REQUEST_MORE_EVIDENCE', 'COGNITIVE_STATE_EXPIRED');
   if (cognitiveStateRequiresAbstention(input.state)) return blockedConflict('ABSTAIN', 'COGNITIVE_STATE_CONTRADICTED');
 
   const entityA = input.state.entities.find((entity) => entity.entityId === input.entityAId);
@@ -52,7 +67,12 @@ export function evaluateCognitivePairwiseConflict(input: {
   if (entityA.epistemicState !== 'CORROBORATED' || entityB.epistemicState !== 'CORROBORATED') {
     return blockedConflict('REQUEST_MORE_EVIDENCE', 'PAIRWISE_ENTITY_STATE_NOT_CORROBORATED');
   }
-  if (Date.parse(entityA.validUntil) <= evaluatedAt || Date.parse(entityB.validUntil) <= evaluatedAt) {
+  const entityAValidUntil = Date.parse(entityA.validUntil);
+  const entityBValidUntil = Date.parse(entityB.validUntil);
+  if (!Number.isFinite(entityAValidUntil) || !Number.isFinite(entityBValidUntil)) {
+    return blockedConflict('REQUEST_MORE_EVIDENCE', 'INVALID_PAIRWISE_ENTITY_WINDOW');
+  }
+  if (entityAValidUntil <= evaluatedAt || entityBValidUntil <= evaluatedAt) {
     return blockedConflict('REQUEST_MORE_EVIDENCE', 'PAIRWISE_ENTITY_STATE_EXPIRED');
   }
 
@@ -121,12 +141,16 @@ export function evaluateCounterfactualCandidates(input: {
   readonly maxRecommendationUncertainty: number;
 }): CounterfactualEvaluation {
   const evaluatedAtEpoch = Date.parse(input.evaluatedAt);
+  const stateValidUntil = Date.parse(input.state.validUntil);
   const reasons = new Set<string>();
 
   if (!Number.isFinite(evaluatedAtEpoch)) {
     return counterfactualBlocked(input, 'ABSTAIN', ['INVALID_EVALUATION_TIME']);
   }
-  if (Date.parse(input.state.validUntil) <= evaluatedAtEpoch) {
+  if (!Number.isFinite(stateValidUntil)) {
+    return counterfactualBlocked(input, 'ABSTAIN', ['INVALID_COGNITIVE_STATE_WINDOW']);
+  }
+  if (stateValidUntil <= evaluatedAtEpoch) {
     return counterfactualBlocked(input, 'REQUEST_MORE_EVIDENCE', ['COGNITIVE_STATE_EXPIRED']);
   }
   if (cognitiveStateRequiresAbstention(input.state)) {
@@ -155,8 +179,8 @@ export function evaluateCounterfactualCandidates(input: {
     eligible.push(candidate);
   }
 
-  if (reasons.has('DUPLICATE_CANDIDATE_ID')) {
-    return counterfactualBlocked(input, 'ABSTAIN', [...reasons]);
+  if ([...reasons].some((reason) => HARD_CANDIDATE_ERRORS.has(reason))) {
+    return counterfactualBlocked(input, 'ABSTAIN', [...reasons, 'COUNTERFACTUAL_POLICY_VIOLATION']);
   }
 
   const noAction = eligible.filter((candidate) => candidate.action === 'NO_ACTION');
@@ -203,7 +227,9 @@ function validateCandidate(
 ): string | null {
   if (!candidate.candidateId.trim()) return 'MISSING_CANDIDATE_ID';
   if (candidate.stateDigest !== state.stateDigest) return 'CANDIDATE_STATE_DIGEST_MISMATCH';
-  if (Date.parse(candidate.validUntil) <= evaluatedAtEpoch) return 'CANDIDATE_EXPIRED';
+  const candidateValidUntil = Date.parse(candidate.validUntil);
+  if (!Number.isFinite(candidateValidUntil)) return 'INVALID_CANDIDATE_VALID_UNTIL';
+  if (candidateValidUntil <= evaluatedAtEpoch) return 'CANDIDATE_EXPIRED';
   if (candidate.authority !== 'ADVISORY_ONLY') return 'NON_ADVISORY_AUTHORITY_FORBIDDEN';
   if (candidate.directVehicleControl !== false) return 'DIRECT_VEHICLE_CONTROL_FORBIDDEN';
   if (candidate.requiresVehicleLocalVeto !== true) return 'VEHICLE_LOCAL_VETO_REQUIRED';
