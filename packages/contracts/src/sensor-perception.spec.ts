@@ -3,6 +3,23 @@ import {
   assessSensorObservationAdmission,
   type SensorObservationEnvelope,
 } from './sensor-perception.js';
+import {
+  compareProtectedOutcomesLexicographically,
+  cognitiveStateRequiresAbstention,
+  COGNITIVE_ROAD_STATE_SCHEMA,
+  type CognitiveRoadState,
+  type ProtectedOutcomeVector,
+} from './cognitive-road-state.js';
+import {
+  SAUDI_ROAD_SAFETY_PROFILE,
+  validateSaudiExportRecord,
+  type SaudiCrashExportRecord,
+} from './saudi-road-safety.js';
+import {
+  EXTREME_ENVIRONMENT_BENCHMARK_SCHEMA,
+  comparePerceptionBenchmarks,
+  type PerceptionBenchmarkCase,
+} from './perception-benchmark.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -140,10 +157,129 @@ const unavailable = assessSensorObservationAdmission(
 );
 assert(unavailable.disposition === 'QUARANTINE', 'unavailable sensor must be quarantined from current cognition');
 
+const safe: ProtectedOutcomeVector = {
+  humanSafetyRisk: 1,
+  emergencyAccessRisk: 1,
+  secondaryIncidentRisk: 1,
+  evidenceIntegrityRisk: 0,
+  authorityPrivacyRisk: 0,
+  criticalNetworkResilienceRisk: 1,
+  mobilityCost: 9,
+  delayCost: 10,
+  efficiencyCost: 10,
+};
+const fastButLessSafe: ProtectedOutcomeVector = {
+  ...safe,
+  humanSafetyRisk: 2,
+  mobilityCost: 1,
+  delayCost: 1,
+  efficiencyCost: 1,
+};
+assert(
+  compareProtectedOutcomesLexicographically(safe, fastButLessSafe) === -1,
+  'mobility gains must not compensate for worse human safety',
+);
+
+const contradictoryState: CognitiveRoadState = {
+  schema: COGNITIVE_ROAD_STATE_SCHEMA,
+  crsId: 'crs-001',
+  zoneId: 'RUH-Z41',
+  stateTime: '2026-09-11T06:30:00+03:00',
+  validUntil: '2026-09-11T06:30:02+03:00',
+  stateDigest: digest,
+  sensorHealthDigest: digest,
+  entities: [],
+  hazards: [],
+  trafficState: {},
+  environment: {},
+  signalState: {},
+  infrastructureState: {},
+  evidenceObservationIds: ['obs-001', 'obs-002'],
+  contradictions: [{
+    contradictionId: 'con-001',
+    observationIds: ['obs-001', 'obs-002'],
+    material: true,
+    reason: 'RADAR_LIDAR_DISAGREEMENT',
+  }],
+  epistemicSummary: { known: [], uncertain: ['hazard-presence'], unknown: [] },
+};
+assert(cognitiveStateRequiresAbstention(contradictoryState), 'material CRS contradiction must require abstention');
+
+const saCrash: SaudiCrashExportRecord = {
+  profile: SAUDI_ROAD_SAFETY_PROFILE,
+  recordType: 'CRASH_EVENT',
+  eventId: 'INC-RUH-001',
+  occurredAt: '2026-09-11T06:29:00+03:00',
+  location: { latitude: 24.7136, longitude: 46.6753, laneContext: ['L2'] },
+  classification: {
+    rosType: 'COLLISION',
+    localAuthorityCode: null,
+    severity: 'S3',
+    confidence: 0.9,
+    legalViolationConfirmed: false,
+  },
+  environment: {},
+  participants: { vehicles: 2, pedestrians: 0, vulnerableRoadUsers: 0 },
+  evidenceSummary: { independentSources: 3, contradictions: 0, manifestId: 'EVM-001' },
+  lifecycle: { detectedAt: '2026-09-11T06:29:01+03:00' },
+  privacy: {
+    purpose: 'road-safety-analysis',
+    legalBasis: 'APPROVED_BASIS_REFERENCE',
+    dataClassification: 'RESTRICTED',
+    retentionPolicy: 'SAFETY_EVENT_POLICY',
+    jurisdiction: 'SA',
+    controller: 'ROS-TEST-CONTROLLER',
+    allowedRecipients: [],
+    crossBorderStatus: 'LOCAL_ONLY',
+  },
+};
+assert(validateSaudiExportRecord(saCrash).length === 0, 'valid Saudi canonical export must pass');
+
+const benchmarkBase: PerceptionBenchmarkCase = {
+  schema: EXTREME_ENVIRONMENT_BENCHMARK_SCHEMA,
+  scenarioId: 'EEPB-E04-RGB',
+  stack: 'RGB_ONLY',
+  environment: { stressConditions: ['SANDSTORM'], odd: {} },
+  groundTruth: { source: 'independent-test-rig', independentOfSystemUnderTest: true, evidenceManifestId: 'GT-001' },
+  metrics: {
+    detectionPrecision: 0.8,
+    detectionRecall: 0.7,
+    positionRmseM: 1.2,
+    velocityRmseMps: 1.0,
+    trackContinuity: 0.7,
+    falseTrackRate: 0.1,
+    latencyP95Ms: 80,
+    confidenceCalibrationError: 0.1,
+    falseHazardAcceptanceRate: 0.02,
+    missedHazardRate: 0.1,
+    unsafeConfidenceRate: 0.01,
+    authorityViolationCount: 0,
+    evidenceCompleteness: 0.8,
+  },
+  protectedInvariantViolations: [],
+  evidenceManifestId: 'R-001',
+};
+const fasterButUnsafe: PerceptionBenchmarkCase = {
+  ...benchmarkBase,
+  scenarioId: 'EEPB-E04-FUSION',
+  stack: 'MULTIMODAL_FUSION',
+  metrics: {
+    ...benchmarkBase.metrics,
+    latencyP95Ms: 20,
+    falseHazardAcceptanceRate: 0.03,
+  },
+};
+const comparison = comparePerceptionBenchmarks(benchmarkBase, fasterButUnsafe);
+assert(comparison.protectedRegression, 'faster fusion must fail if protected safety metric regresses');
+
 console.log(JSON.stringify({
   status: 'PASS',
-  cases: 7,
+  cases: 11,
   authorityInvariant: accepted.authority === 'NONE',
   staleExcluded: stale.usableForCurrentState === false,
   degradedRequiresCorroboration: degraded.requiresCorroboration,
+  nonCompensableSafetyVerified: true,
+  contradictionAbstentionVerified: true,
+  saProfileValidated: true,
+  protectedBenchmarkGateVerified: comparison.protectedRegression,
 }));
