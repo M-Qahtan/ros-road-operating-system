@@ -126,6 +126,13 @@ test('diverging trajectories do not create a false collision prediction', () => 
   assert.equal(primitive.timeToClosestApproachSeconds, 0);
 });
 
+test('overflowing safety envelope is rejected rather than becoming an infinite collision region', () => {
+  assert.throws(
+    () => computeConstantVelocityConflict(entity('A', 0, 10), entity('B', 100, -10), 10, Number.MAX_VALUE, Number.MAX_VALUE),
+    /INVALID_SAFETY_ENVELOPE/,
+  );
+});
+
 test('contradicted cognitive state blocks pairwise predictive use', () => {
   const crs = state(
     [entity('A', 0, 10), entity('B', 100, -10)],
@@ -217,6 +224,60 @@ test('one malicious authority-import candidate poisons the cycle even beside a v
   assert.equal(result.selectedCandidateId, null);
   assert(result.reasonCodes.includes('NON_ADVISORY_AUTHORITY_FORBIDDEN'));
   assert(result.reasonCodes.includes('COUNTERFACTUAL_POLICY_VIOLATION'));
+});
+
+test('unsupported runtime action cannot slip through TypeScript casting', () => {
+  const crs = state([entity('A', 0, 10), entity('B', 100, -10)]);
+  const forged = {
+    ...candidate('unknown-action', 'WARN_OPERATOR', outcomes({ humanSafetyRisk: 1 })),
+    action: 'TAKE_CONTROL_NOW',
+  } as unknown as CounterfactualCandidate;
+
+  const result = evaluateCounterfactualCandidates({
+    state: crs,
+    evaluatedAt: '2026-09-11T07:10:01+03:00',
+    candidates: [candidate('no-action', 'NO_ACTION', outcomes()), forged],
+    maxRecommendationUncertainty: 0.3,
+  });
+
+  assert.equal(result.decision, 'ABSTAIN');
+  assert(result.reasonCodes.includes('UNSUPPORTED_COUNTERFACTUAL_ACTION'));
+});
+
+test('candidate cannot claim validity beyond the cognitive state it depends on', () => {
+  const crs = state([entity('A', 0, 10), entity('B', 100, -10)]);
+  const outliving = {
+    ...candidate('outliving', 'WARN_ROAD_USER', outcomes({ humanSafetyRisk: 1 })),
+    validUntil: '2026-09-11T07:10:08+03:00',
+  };
+
+  const result = evaluateCounterfactualCandidates({
+    state: crs,
+    evaluatedAt: '2026-09-11T07:10:01+03:00',
+    candidates: [candidate('no-action', 'NO_ACTION', outcomes()), outliving],
+    maxRecommendationUncertainty: 0.3,
+  });
+
+  assert.equal(result.decision, 'ABSTAIN');
+  assert(result.reasonCodes.includes('CANDIDATE_OUTLIVES_COGNITIVE_STATE'));
+});
+
+test('blank counterfactual assumption fails closed', () => {
+  const crs = state([entity('A', 0, 10), entity('B', 100, -10)]);
+  const blankAssumption = {
+    ...candidate('blank-assumption', 'WARN_ROAD_USER', outcomes({ humanSafetyRisk: 1 })),
+    assumptions: ['   '],
+  };
+
+  const result = evaluateCounterfactualCandidates({
+    state: crs,
+    evaluatedAt: '2026-09-11T07:10:01+03:00',
+    candidates: [candidate('no-action', 'NO_ACTION', outcomes()), blankAssumption],
+    maxRecommendationUncertainty: 0.3,
+  });
+
+  assert.equal(result.decision, 'ABSTAIN');
+  assert(result.reasonCodes.includes('INVALID_COUNTERFACTUAL_ASSUMPTION'));
 });
 
 test('high-uncertainty intervention is softly excluded and requests more evidence', () => {
