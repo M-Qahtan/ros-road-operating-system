@@ -367,6 +367,14 @@ The runner transfers the exact winner/loser disposition through a unique empty r
 
 Result: **CLOSURE/SOURCE INTERLEAVING IS DEFINED WITH EXACTLY ONE SAFE WINNER AND FAIL-CLOSED RECEIPT BINDING; LIVE ENGINE EXECUTION REMAINS OPEN.** The next single handoff is to run the clean candidate on a Docker-capable local host and correct any PostgreSQL lock, isolation, migration, or trigger discrepancy exposed by the v4 journey.
 
+The reverse concurrency increment resumed from GitHub candidate `3169a3922912acea081f9e30c8d0705faafe4a7b`. Live GitHub comparison kept `main` unchanged, the branch thirty-two commits ahead and zero behind, with no branch PR or workflow run on the resume commit.
+
+A second isolated incident now exercises the closure-first ordering. The closure transaction validates its exact snapshot and holds the RoadEvent row lock while the structured Indicator transaction is observed waiting on that lock. Once closure commits, the source transaction must fail either after reloading `CLOSED` or through PostgreSQL's `40001` serialization rejection, and leave the Indicator ledger at revision 1. The durable final state must be `CLOSED / version 3 / Indicator revision 1`. This complements the source-first ordering, where closure loses through snapshot drift or serialization rejection. The repository maps a `40001` high-risk closure loser to `SOURCE_SNAPSHOT_CHANGED`, preserving a stable fail-closed API conflict rather than exposing an engine error.
+
+Receipt schema v5 accepts only the two safe winner/loser pairs and records whether each loser was rejected by the domain check or PostgreSQL serialization. Both waits must be observed through PostgreSQL lock telemetry before either result can count. The test-only advisory locks only synchronize the harness; production exclusion remains the shared RoadEvent `FOR UPDATE` boundary inside `SERIALIZABLE` transactions. No recommendation receives execution authority, and the external REL-013 archive receipt remains null.
+
+Result: **BOTH CLOSURE/SOURCE ORDERINGS ARE DEFINED WITH ONE SAFE WINNER AND A CANDIDATE-BOUND V5 RECEIPT; LIVE ENGINE EXECUTION REMAINS OPEN.** The next single handoff is to execute the clean journey on a Docker-capable local host and fix any PostgreSQL-level discrepancy it reveals.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries

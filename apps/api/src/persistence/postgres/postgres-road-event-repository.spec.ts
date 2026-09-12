@@ -310,6 +310,26 @@ test('source drift rejects high-risk closure before event audit or outbox writes
   assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
 });
 
+test('serializable race loser maps to source-snapshot conflict and rolls back', async () => {
+  const client = new FakeClient((text) => {
+    if (text.includes('FROM road_events') && text.includes('FOR UPDATE')) return { rows: [authorizedRow()], rowCount: 1 };
+    if (text.includes('closure_snapshot_current')) return { rows: [{ closure_snapshot_current: true }], rowCount: 1 };
+    if (text.includes('UPDATE road_events')) throw Object.assign(new Error('could not serialize access'), { code: '40001' });
+    return { rows: [], rowCount: 1 };
+  });
+  const closed = authorizedRecovery();
+  closed.transitionTo(RoadEventStatus.Closed);
+
+  await assert.rejects(
+    () => new PostgresRoadEventRepository(new FakePool(client)).update(closed, 2, context),
+    (error: unknown) => error instanceof RoadEventClosureSourceSnapshotChangedError &&
+      /Concurrent source change/.test(error.message)
+  );
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO audit_logs')), false);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO outbox_events')), false);
+  assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
+});
+
 test('update treats wrong tenant or purpose as not-found', async () => {
   const client = new FakeClient((text) => {
     if (text.includes('FOR UPDATE')) return { rows: [], rowCount: 0 };

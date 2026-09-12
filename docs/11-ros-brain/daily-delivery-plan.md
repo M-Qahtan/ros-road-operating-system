@@ -136,6 +136,16 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE CONCURRENT ENGINE RACE AND ITS CANDIDATE-BOUND RECEIPT ARE DEFINED FAIL-CLOSED; LIVE POSTGRESQL EXECUTION IS STILL REQUIRED.** |
 | Next handoff | Run the clean candidate on a Docker-capable local host, inspect the v4 race receipt, and fix any actual PostgreSQL lock, trigger, or isolation discrepancy. |
 
+### Reverse concurrency ordering
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `3169a3922912acea081f9e30c8d0705faafe4a7b`; live comparison kept `main` unchanged, the branch thirty-two commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | The same disposable race now also forces closure to hold the exact RoadEvent lock while a structured Indicator update waits. After closure commits, the waiting source command must fail closed—either after reloading `CLOSED` or through PostgreSQL serialization rejection—and append no revision. A serialization loser on the high-risk closure path is mapped to the public `SOURCE_SNAPSHOT_CHANGED` conflict. |
+| Durable acceptance | The second ordering requires `CLOSURE=COMMITTED`, a source loser of `INCIDENT_CLOSED` or `SERIALIZATION_FAILURE`, and final state `CLOSED / version 3 / Indicator revision 1`. Receipt schema v5 records the actual engine disposition for both orderings; two winners, an unobserved lock wait, or an unexpected durable revision blocks emission. |
+| Result | **BOTH CLOSURE/SOURCE LOCK ORDERINGS ARE DEFINED FAIL-CLOSED; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** |
+| Next handoff | Execute the clean v5 journey on a Docker-capable local host and correct any engine-level lock, isolation, migration, or trigger discrepancy. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

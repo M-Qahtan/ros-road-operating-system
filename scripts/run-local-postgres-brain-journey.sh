@@ -77,12 +77,16 @@ readonly postmaster_started_at_before_restart="${restart_proof[1]}"
 readonly system_identifier_after_restart="${restart_proof[2]}"
 readonly postmaster_started_at_after_restart="${restart_proof[3]}"
 mapfile -t closure_race_proof < "$closure_race_proof_file"
-if [[ "${#closure_race_proof[@]}" -ne 4 \
+if [[ "${#closure_race_proof[@]}" -ne 8 \
   || "${closure_race_proof[0]}" != "SOURCE_UPDATE" \
   || "${closure_race_proof[1]}" != "COMMITTED" \
   || "${closure_race_proof[2]}" != "CLOSURE" \
-  || "${closure_race_proof[3]}" != "SOURCE_SNAPSHOT_CHANGED" ]]; then
-  echo "PostgreSQL journey passed without one exact safe closure-race winner" >&2
+  || ! "${closure_race_proof[3]}" =~ ^(SOURCE_SNAPSHOT_CHANGED|SERIALIZATION_FAILURE)$ \
+  || "${closure_race_proof[4]}" != "CLOSURE" \
+  || "${closure_race_proof[5]}" != "COMMITTED" \
+  || "${closure_race_proof[6]}" != "SOURCE_UPDATE" \
+  || ! "${closure_race_proof[7]}" =~ ^(INCIDENT_CLOSED|SERIALIZATION_FAILURE)$ ]]; then
+  echo "PostgreSQL journey passed without one exact safe winner in both closure-race orderings" >&2
   exit 2
 fi
 
@@ -122,9 +126,11 @@ ROS_RECEIPT_POSTMASTER_STARTED_AT_BEFORE_RESTART="$postmaster_started_at_before_
 ROS_RECEIPT_POSTMASTER_STARTED_AT_AFTER_RESTART="$postmaster_started_at_after_restart" \
 ROS_RECEIPT_CLOSURE_RACE_WINNER="${closure_race_proof[0]}" \
 ROS_RECEIPT_CLOSURE_RACE_LOSER_RESULT="${closure_race_proof[3]}" \
+ROS_RECEIPT_REVERSE_RACE_WINNER="${closure_race_proof[4]}" \
+ROS_RECEIPT_REVERSE_RACE_LOSER_RESULT="${closure_race_proof[7]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v4",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v5",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerImageId: process.env.ROS_RECEIPT_IMAGE_ID,
@@ -139,6 +145,8 @@ node -e '
     closureRaceVerified: true,
     closureRaceWinner: process.env.ROS_RECEIPT_CLOSURE_RACE_WINNER,
     closureRaceLoserResult: process.env.ROS_RECEIPT_CLOSURE_RACE_LOSER_RESULT,
+    reverseRaceWinner: process.env.ROS_RECEIPT_REVERSE_RACE_WINNER,
+    reverseRaceLoserResult: process.env.ROS_RECEIPT_REVERSE_RACE_LOSER_RESULT,
     result: "PASS",
     externalArchiveReceipt: null,
   };

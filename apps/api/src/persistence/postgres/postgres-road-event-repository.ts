@@ -354,9 +354,10 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
       throw new RoadEventClosureSourceSnapshotChangedError('High-risk closure requires a persisted governed source snapshot');
     }
 
-    await this.withTransaction(async (client) => {
-      if (closureSnapshot !== undefined) await client.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
-      const current = await client.query<RoadEventRow>(
+    try {
+      await this.withTransaction(async (client) => {
+        if (closureSnapshot !== undefined) await client.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+        const current = await client.query<RoadEventRow>(
         `${ROAD_EVENT_SELECT} WHERE id = $1::uuid AND tenant_id = $2 AND purpose = $3 FOR UPDATE`,
         [event.id, scope.tenantId, scope.purpose]
       );
@@ -425,9 +426,15 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         ]
       );
       if (updated.rowCount !== 1) throw new RoadEventConcurrencyError(`RoadEvent ${event.id} changed during update`);
-      await this.appendChangedRevisionReceipts(client, before, event, scope, occurredAt);
-      await this.appendAuditAndOutbox(client, event, beforeState, afterState, context, occurredAt);
-    });
+        await this.appendChangedRevisionReceipts(client, before, event, scope, occurredAt);
+        await this.appendAuditAndOutbox(client, event, beforeState, afterState, context, occurredAt);
+      });
+    } catch (error) {
+      if (closureSnapshot !== undefined && isPostgresError(error) && error.code === '40001') {
+        throw new RoadEventClosureSourceSnapshotChangedError('Concurrent source change invalidated high-risk closure');
+      }
+      throw error;
+    }
   }
 
   async findById(id: string, rawScope: RoadEventAccessScope): Promise<RoadEvent | undefined> {

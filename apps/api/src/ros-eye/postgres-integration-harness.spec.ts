@@ -77,7 +77,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v4/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v5/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -94,19 +94,34 @@ test('closure race overlaps row-lock participants and accepts exactly one safe w
   assert.match(closureRace, /wait_event_type='Lock'/);
   assert.match(closureRace, /was not observed waiting on the source row lock/);
   assert.match(closureRace, /SOURCE_SNAPSHOT_CHANGED/);
+  assert.match(closureRace, /SERIALIZATION_FAILURE/);
   assert.match(closureRace, /RECOVERY\|2\|3/);
   assert.match(closureRace, /exactly one safe winner/);
   assert.match(runner, /bash scripts\/run-postgres-closure-race\.sh/);
 });
 
-test('v4 receipt consumes the exact durable closure-race disposition', () => {
+test('reverse race lets closure win and rejects the waiting source append', () => {
+  assert.match(closureRace, /pg_advisory_lock\(20260909, 2\)/);
+  assert.match(closureRace, /ros_brain_source_race_participant/);
+  assert.match(closureRace, /Source participant was not observed waiting on the closure row lock/);
+  assert.match(closureRace, /INCIDENT_CLOSED/);
+  assert.match(closureRace, /Structured indicators cannot be appended after incident closure/);
+  assert.match(closureRace, /CLOSED\|3\|1/);
+  assert.match(closureRace, /one safe winner in each ordering/);
+});
+
+test('v5 receipt consumes both exact durable closure-race dispositions', () => {
   assert.match(localHarness, /closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /ROS_POSTGRES_CLOSURE_RACE_PROOF_FILE="\$closure_race_proof_file"/);
   assert.match(localHarness, /closure_race_proof\[0\].*SOURCE_UPDATE/);
   assert.match(localHarness, /closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
+  assert.match(localHarness, /closure_race_proof\[4\].*CLOSURE/);
+  assert.match(localHarness, /closure_race_proof\[7\].*INCIDENT_CLOSED/);
   assert.match(localHarness, /closureRaceVerified: true/);
   assert.match(localHarness, /closureRaceWinner/);
   assert.match(localHarness, /closureRaceLoserResult/);
+  assert.match(localHarness, /reverseRaceWinner/);
+  assert.match(localHarness, /reverseRaceLoserResult/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {
