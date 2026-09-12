@@ -21,15 +21,16 @@ test('PostgreSQL integration runner fails explicitly before claiming an unexecut
   assert.match(localHarness, /bash scripts\/run-postgres-integration\.sh/);
 });
 
-test('local journey uses container-owned clients and restarts before the recovery assertion', () => {
-  assert.match(localHarness, /command -v docker/);
+test('local journey uses Docker or Podman container-owned clients and restarts before the recovery assertion', () => {
+  assert.match(localHarness, /for candidate_engine in docker podman/);
   assert.match(localHarness, /--volume "\$\(pwd\):\/workspace:ro"/);
-  assert.match(localHarness, /docker exec "\$container_name" pg_isready/);
-  assert.match(localHarness, /docker exec --interactive --workdir \/workspace "\$container_name" psql/);
+  assert.match(localHarness, /"\$container_engine" exec "\$container_name" pg_isready/);
+  assert.match(localHarness, /"\$container_engine" exec --interactive --workdir \/workspace "\$container_name" psql/);
   assert.match(localHarness, /export -f pg_isready psql/);
+  assert.match(localHarness, /ROS_POSTGRES_CONTAINER_ENGINE="\$container_engine"/);
   assert.match(localHarness, /ROS_POSTGRES_RESTART_BEFORE_TEST="0011_ros_brain_journey_reconnect\.sql"/);
-  assert.match(runner, /docker restart -- "\$ROS_POSTGRES_RESTART_CONTAINER"/);
-  assert.ok(runner.indexOf('docker restart --') < runner.indexOf('echo "Running ${test_file}"'));
+  assert.match(runner, /"\$ROS_POSTGRES_CONTAINER_ENGINE" restart -- "\$ROS_POSTGRES_RESTART_CONTAINER"/);
+  assert.ok(runner.indexOf('restart -- "$ROS_POSTGRES_RESTART_CONTAINER"') < runner.indexOf('echo "Running ${test_file}"'));
   assert.match(runner, /wait_for_postgres "after restart"/);
 });
 
@@ -69,7 +70,8 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /git status --porcelain --untracked-files=normal/);
   assert.match(localHarness, /journey_manifest_sha256/);
   assert.match(localHarness, /scripts\/run-postgres-closure-race\.sh/);
-  assert.match(localHarness, /docker inspect --format '\{\{\.Image\}\}'/);
+  assert.match(localHarness, /"\$container_engine" inspect --format '\{\{\.Image\}\}'/);
+  assert.match(localHarness, /containerEngine: process\.env\.ROS_RECEIPT_CONTAINER_ENGINE/);
   assert.match(localHarness, /SHOW server_version/);
   assert.match(localHarness, /SELECT postgis_lib_version\(\)/);
   assert.match(localHarness, /receipt provenance is incomplete/);
@@ -77,7 +79,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v5/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v6/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -110,7 +112,7 @@ test('reverse race lets closure win and rejects the waiting source append', () =
   assert.match(closureRace, /one safe winner in each ordering/);
 });
 
-test('v5 receipt consumes both exact durable closure-race dispositions', () => {
+test('v6 receipt consumes both exact durable closure-race dispositions', () => {
   assert.match(localHarness, /closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /ROS_POSTGRES_CLOSURE_RACE_PROOF_FILE="\$closure_race_proof_file"/);
   assert.match(localHarness, /closure_race_proof\[0\].*SOURCE_UPDATE/);

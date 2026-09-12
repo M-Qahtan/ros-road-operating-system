@@ -146,6 +146,16 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **BOTH CLOSURE/SOURCE LOCK ORDERINGS ARE DEFINED FAIL-CLOSED; LIVE POSTGRESQL EXECUTION REMAINS OPEN.** |
 | Next handoff | Execute the clean v5 journey on a Docker-capable local host and correct any engine-level lock, isolation, migration, or trigger discrepancy. |
 
+### Local container-engine portability
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `2c1f37c059d2afc0117c3193e5a17d96442a6292`; live comparison kept `main` unchanged, the branch thirty-three commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | The disposable PostgreSQL/PostGIS journey now selects Docker first or Podman second, retains container-owned database clients and no host port, and records the selected engine in its receipt. A missing engine or malformed Docker/Podman image identity still exits before any success claim. |
+| Durable acceptance | Static harness checks require both engines, engine-routed run/exec/inspect/cleanup, normalized `sha256:` image identity, and receipt schema v6 with `containerEngine`. Existing restart and two-ordering race proofs remain mandatory. |
+| Result | **THE LOCAL LIVE JOURNEY IS PORTABLE ACROSS DOCKER AND PODMAN WITHOUT WEAKENING ITS RECEIPT; ENGINE EXECUTION REMAINS OPEN.** |
+| Next handoff | Execute the clean v6 journey on a local host with Docker or Podman and correct any PostgreSQL-level discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

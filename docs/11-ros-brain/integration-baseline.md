@@ -375,6 +375,12 @@ Receipt schema v5 accepts only the two safe winner/loser pairs and records wheth
 
 Result: **BOTH CLOSURE/SOURCE ORDERINGS ARE DEFINED WITH ONE SAFE WINNER AND A CANDIDATE-BOUND V5 RECEIPT; LIVE ENGINE EXECUTION REMAINS OPEN.** The next single handoff is to execute the clean journey on a Docker-capable local host and fix any PostgreSQL-level discrepancy it reveals.
 
+The local engine portability increment resumed from GitHub candidate `2c1f37c059d2afc0117c3193e5a17d96442a6292`. GitHub still showed `main` unchanged, the review branch thirty-three commits ahead and zero behind, and no PR or workflow run for the candidate.
+
+The disposable journey now accepts either Docker or Podman, preferring Docker when both are installed. Every lifecycle operation—run, exec, inspect, restart, and cleanup—uses the selected local engine. Database clients remain inside the isolated PostGIS container, no host database port is published, and a bare Podman image digest is normalized to the same required `sha256:` identity form. Receipt schema v6 records `containerEngine`; missing engines or incomplete image provenance fail before a receipt can be emitted. All existing restart, cluster-identity, recovery, and two-ordering concurrency checks remain required.
+
+Result: **THE NO-CLOUD LIVE JOURNEY CAN RUN THROUGH DOCKER OR PODMAN WITH ENGINE-BOUND V6 PROVENANCE; ACTUAL ENGINE EXECUTION REMAINS OPEN.** The next single handoff is to run the clean candidate on a host with either engine and fix any database-level discrepancy.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries

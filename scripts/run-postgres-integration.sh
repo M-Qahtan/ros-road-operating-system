@@ -13,6 +13,7 @@ done
 restart_performed=false
 if [[ -n "${ROS_POSTGRES_RESTART_BEFORE_TEST:-}" ]]; then
   : "${ROS_POSTGRES_RESTART_CONTAINER:?restart container must be set}"
+  : "${ROS_POSTGRES_CONTAINER_ENGINE:?restart container engine must be set}"
   : "${ROS_POSTGRES_RESTART_PROOF_FILE:?restart proof file must be set}"
   if [[ ! "$ROS_POSTGRES_RESTART_CONTAINER" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
     echo "PostgreSQL restart container name is invalid" >&2
@@ -23,8 +24,12 @@ if [[ -n "${ROS_POSTGRES_RESTART_BEFORE_TEST:-}" ]]; then
     echo "Requested PostgreSQL restart checkpoint does not exist: ${ROS_POSTGRES_RESTART_BEFORE_TEST}" >&2
     exit 2
   fi
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "Docker is required for the requested PostgreSQL restart proof" >&2
+  if [[ "$ROS_POSTGRES_CONTAINER_ENGINE" != "docker" && "$ROS_POSTGRES_CONTAINER_ENGINE" != "podman" ]]; then
+    echo "PostgreSQL restart container engine must be docker or podman" >&2
+    exit 2
+  fi
+  if ! command -v "$ROS_POSTGRES_CONTAINER_ENGINE" >/dev/null 2>&1; then
+    echo "The selected container engine is required for the requested PostgreSQL restart proof" >&2
     exit 127
   fi
   if [[ ! -f "$ROS_POSTGRES_RESTART_PROOF_FILE" \
@@ -66,7 +71,7 @@ for test_file in database/tests/*.sql; do
         "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
     )"
     echo "Restarting PostgreSQL before ${test_file}"
-    docker restart -- "$ROS_POSTGRES_RESTART_CONTAINER" >/dev/null
+    "$ROS_POSTGRES_CONTAINER_ENGINE" restart -- "$ROS_POSTGRES_RESTART_CONTAINER" >/dev/null
     wait_for_postgres "after restart"
     restart_identity_after="$(
       psql "$DATABASE_URL" -Atqc \

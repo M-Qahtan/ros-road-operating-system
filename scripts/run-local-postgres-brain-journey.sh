@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "Required local integration tool 'docker' is unavailable; no PostgreSQL journey was executed" >&2
+container_engine=''
+for candidate_engine in docker podman; do
+  if command -v "$candidate_engine" >/dev/null 2>&1; then
+    container_engine="$candidate_engine"
+    break
+  fi
+done
+readonly container_engine
+
+if [[ -z "$container_engine" ]]; then
+  echo "Required local integration tool 'docker' or 'podman' is unavailable; no PostgreSQL journey was executed" >&2
   exit 127
 fi
 
@@ -36,13 +45,13 @@ readonly restart_proof_file="$(mktemp)"
 readonly closure_race_proof_file="$(mktemp)"
 
 cleanup() {
-  docker rm -f "$container_name" >/dev/null 2>&1 || true
+  "$container_engine" rm -f "$container_name" >/dev/null 2>&1 || true
   rm -f "$restart_proof_file"
   rm -f "$closure_race_proof_file"
 }
 trap cleanup EXIT
 
-docker run --rm --detach \
+"$container_engine" run --rm --detach \
   --name "$container_name" \
   --volume "$(pwd):/workspace:ro" \
   --env POSTGRES_DB=ros \
@@ -51,16 +60,17 @@ docker run --rm --detach \
   postgis/postgis:16-3.4 >/dev/null
 
 pg_isready() {
-  docker exec "$container_name" pg_isready "$@"
+  "$container_engine" exec "$container_name" pg_isready "$@"
 }
 
 psql() {
-  docker exec --interactive --workdir /workspace "$container_name" psql "$@"
+  "$container_engine" exec --interactive --workdir /workspace "$container_name" psql "$@"
 }
 
 export -f pg_isready psql
 export container_name
 export DATABASE_URL="postgresql://ros:${postgres_password}@127.0.0.1:5432/ros"
+export ROS_POSTGRES_CONTAINER_ENGINE="$container_engine"
 export ROS_POSTGRES_RESTART_CONTAINER="$container_name"
 export ROS_POSTGRES_RESTART_BEFORE_TEST="0011_ros_brain_journey_reconnect.sql"
 export ROS_POSTGRES_RESTART_PROOF_FILE="$restart_proof_file"
@@ -90,7 +100,9 @@ if [[ "${#closure_race_proof[@]}" -ne 8 \
   exit 2
 fi
 
-readonly image_id="$(docker inspect --format '{{.Image}}' "$container_name")"
+image_id="$("$container_engine" inspect --format '{{.Image}}' "$container_name")"
+if [[ "$image_id" =~ ^[a-f0-9]{64}$ ]]; then image_id="sha256:${image_id}"; fi
+readonly image_id
 readonly postgres_version="$(psql "$DATABASE_URL" -Atqc 'SHOW server_version')"
 readonly postgis_version="$(psql "$DATABASE_URL" -Atqc 'SELECT postgis_lib_version()')"
 readonly database_system_identifier="$(
@@ -118,6 +130,7 @@ fi
 
 ROS_RECEIPT_CANDIDATE_SHA="$candidate_sha" \
 ROS_RECEIPT_JOURNEY_MANIFEST_SHA256="$journey_manifest_sha256" \
+ROS_RECEIPT_CONTAINER_ENGINE="$container_engine" \
 ROS_RECEIPT_IMAGE_ID="$image_id" \
 ROS_RECEIPT_POSTGRES_VERSION="$postgres_version" \
 ROS_RECEIPT_POSTGIS_VERSION="$postgis_version" \
@@ -130,9 +143,10 @@ ROS_RECEIPT_REVERSE_RACE_WINNER="${closure_race_proof[4]}" \
 ROS_RECEIPT_REVERSE_RACE_LOSER_RESULT="${closure_race_proof[7]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v5",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v6",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
+    containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
     containerImageId: process.env.ROS_RECEIPT_IMAGE_ID,
     postgresVersion: process.env.ROS_RECEIPT_POSTGRES_VERSION,
     postgisVersion: process.env.ROS_RECEIPT_POSTGIS_VERSION,
