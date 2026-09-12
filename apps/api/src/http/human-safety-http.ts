@@ -641,6 +641,9 @@ export function createHumanSafetyHttpHandler(
       }, async () => {
         const event = await application.getById(caseId, actor);
         if (event.version !== expectedCaseVersion) throw new HumanSafetyHttpError(409, 'VERSION_CONFLICT', 'Human Safety case version is stale');
+        if (event.status === 'CLOSED') {
+          throw new HumanSafetyHttpError(409, 'INCIDENT_CLOSED', 'A closed incident cannot accept Human Safety commands');
+        }
         const backing = await store.read(actor, caseId);
         if (action === 'resolution-authorization') {
           if (backing.evidenceState !== 'TRUSTED') throw new HumanSafetyHttpError(409, 'EVIDENCE_NOT_TRUSTED', 'Trusted preserved evidence is required');

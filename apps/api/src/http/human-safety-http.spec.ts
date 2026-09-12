@@ -274,6 +274,47 @@ test('closed case withholds current recommendation while preserving governed jou
   assert.equal(current.store.mutations, 0);
 });
 
+test('closed case rejects every Human Safety command before contact storage access', async () => {
+  const current = await fixture(SUPERVISOR, currentGovernedReader(), HEALTHY_RUNTIME, 'S1');
+  let event = await current.application.getById(CASE_ID, SUPERVISOR);
+  for (const nextStatus of [
+    RoadEventStatus.Validating,
+    RoadEventStatus.Confirmed,
+    RoadEventStatus.SafetyAssessment,
+    RoadEventStatus.ResponseCoordination,
+    RoadEventStatus.RoadClearance,
+    RoadEventStatus.Recovery,
+    RoadEventStatus.Closed
+  ]) {
+    event = await current.application.transition({
+      roadEventId: CASE_ID, expectedVersion: event.version, nextStatus, reason: `advance to ${nextStatus}`
+    }, {
+      actor: SUPERVISOR, traceId: TRACE_ID, idempotencyKey: `closed-command-${nextStatus}`
+    });
+  }
+  const contactVersion = current.store.current.version;
+  for (const [action, extra] of [
+    ['takeover', {}],
+    ['escalate', {}],
+    ['assignment', { assigneeId: OTHER_ACTOR_ID }],
+    ['resolution-authorization', {}]
+  ] as const) {
+    const key = `closed-command-${action}-001`;
+    const response = await current.handler(request(
+      'POST', `/api/v1/human-safety/cases/${CASE_ID}/${action}`,
+      { expectedCaseVersion: event.version, expectedContactVersion: contactVersion,
+        reason: 'closed incident must remain immutable', idempotencyKey: key, ...extra },
+      { 'idempotency-key': key }
+    ));
+    assert.equal(response?.status, 409);
+    assert.equal((response!.body as { error: { code: string } }).error.code, 'INCIDENT_CLOSED');
+  }
+  assert.equal(current.store.reads, 0);
+  assert.equal(current.store.mutations, 0);
+  assert.equal(current.store.current.version, contactVersion);
+  assert.equal((await current.application.getById(CASE_ID, SUPERVISOR)).status, RoadEventStatus.Closed);
+});
+
 test('withheld governed recommendation suppresses legacy fallback and preserves urgent human review', async () => {
   const governed = new FakeGovernedRecommendations({
     status: 'WITHHELD',

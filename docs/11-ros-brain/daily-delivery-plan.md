@@ -177,6 +177,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **CLOSED INCIDENTS NO LONGER EXPOSE A CURRENT RECOMMENDATION; THE GOVERNED HISTORY REMAINS AVAILABLE FOR REVIEW.** |
 | Next handoff | Execute the clean v6 PostgreSQL journey on a Docker/Podman host and fix the first engine-level discrepancy, if any. |
 
+### Closed-case command rejection
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `5d4d6e827bd2426ab4fb50f2b78e6054b95a4e2d`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch thirty-six commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | The Human-Safety API now rejects takeover, escalation, assignment, and resolution-authorization commands with `INCIDENT_CLOSED` when the authorized RoadEvent is already durably `CLOSED`. Rejection occurs before the contact/evidence backing store is read and before any command write. |
+| Acceptance | The API test closes a low-severity RoadEvent through the real application transition path, invokes all four command routes as a supervisor, and requires four conflicts, zero Human-Safety store reads, zero mutations, an unchanged contact version, and a still-closed RoadEvent. |
+| Safety limits | This closes the already-closed request path. A command racing a concurrent closure still requires a shared PostgreSQL transaction/lock proof and is not claimed safe by this application-level test. Human intervention on an active incident remains available. |
+| Result | **AN ALREADY-CLOSED INCIDENT CANNOT RECEIVE A NEW HUMAN-SAFETY COMMAND OR CONTACT MUTATION THROUGH THE API.** |
+| Next handoff | Bind contact-command admission to the RoadEvent lock in PostgreSQL and add both closure/command race orderings to the local v6 journey. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
