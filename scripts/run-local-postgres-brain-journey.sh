@@ -15,7 +15,7 @@ if [[ -z "$container_engine" ]]; then
   exit 127
 fi
 
-for required_command in git mktemp node sha256sum; do
+for required_command in git mktemp node seq sha256sum sleep; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "Required local receipt tool '$required_command' is unavailable; no PostgreSQL journey was executed" >&2
     exit 127
@@ -68,6 +68,20 @@ pg_isready() {
 
 psql() {
   "$ROS_POSTGRES_CONTAINER_ENGINE" exec --interactive --workdir /workspace "$container_name" psql "$@"
+}
+
+wait_for_postgres() {
+  local phase="$1"
+  for attempt in $(seq 1 30); do
+    if pg_isready -d "$DATABASE_URL" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ "$attempt" == "30" ]]; then
+      echo "PostgreSQL did not become ready ${phase}" >&2
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 export -f pg_isready psql
@@ -123,6 +137,30 @@ if [[ "${#closure_race_proof[@]}" -ne 8 \
   exit 2
 fi
 
+readonly contact_recovery_identity_before_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+)"
+"$container_engine" restart -- "$container_name" >/dev/null
+wait_for_postgres "after contact recovery restart"
+readonly contact_recovery_identity_after_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+)"
+readonly contact_recovery_system_identifier_before_restart="${contact_recovery_identity_before_restart%%|*}"
+readonly contact_recovery_postmaster_started_at_before_restart="${contact_recovery_identity_before_restart#*|}"
+readonly contact_recovery_system_identifier_after_restart="${contact_recovery_identity_after_restart%%|*}"
+readonly contact_recovery_postmaster_started_at_after_restart="${contact_recovery_identity_after_restart#*|}"
+readonly contact_recovery_state="$(
+  psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response' AND event.id='10000000-0000-4000-8000-000000000005'"
+)"
+if [[ "$contact_recovery_system_identifier_before_restart" != "$contact_recovery_system_identifier_after_restart" \
+  || "$contact_recovery_postmaster_started_at_before_restart" == "$contact_recovery_postmaster_started_at_after_restart" \
+  || "$contact_recovery_state" != 'RECOVERY|2|2|2|1|1|0' ]]; then
+  echo "Contact recovery did not survive a PostgreSQL restart with exact durable state: $contact_recovery_state" >&2
+  exit 2
+fi
+
 image_id="$("$container_engine" inspect --format '{{.Image}}' "$container_name")"
 if [[ "$image_id" =~ ^[a-f0-9]{64}$ ]]; then image_id="sha256:${image_id}"; fi
 readonly image_id
@@ -143,10 +181,14 @@ if [[ ! "$candidate_sha" =~ ^[a-f0-9]{40}$ \
   || ! "$system_identifier_before_restart" =~ ^[0-9]+$ \
   || "$system_identifier_before_restart" != "$system_identifier_after_restart" \
   || "$system_identifier_after_restart" != "$database_system_identifier" \
+  || "$contact_recovery_system_identifier_before_restart" != "$system_identifier_after_restart" \
+  || "$contact_recovery_system_identifier_after_restart" != "$database_system_identifier" \
   || -z "$postmaster_started_at_before_restart" \
   || -z "$postmaster_started_at_after_restart" \
   || "$postmaster_started_at_before_restart" == "$postmaster_started_at_after_restart" \
-  || "$postmaster_started_at_after_restart" != "$postmaster_started_at" ]]; then
+  || "$postmaster_started_at_after_restart" != "$contact_recovery_postmaster_started_at_before_restart" \
+  || "$contact_recovery_postmaster_started_at_before_restart" == "$contact_recovery_postmaster_started_at_after_restart" \
+  || "$contact_recovery_postmaster_started_at_after_restart" != "$postmaster_started_at" ]]; then
   echo "PostgreSQL journey passed but its local receipt provenance is incomplete" >&2
   exit 2
 fi
@@ -171,9 +213,12 @@ ROS_RECEIPT_REVERSE_CONTACT_RACE_LOSER_RESULT="${contact_closure_race_proof[7]}"
 ROS_RECEIPT_CONTACT_ATOMIC_ROLLBACK="${contact_closure_race_proof[9]}" \
 ROS_RECEIPT_CONTACT_FORWARD_RETRY="${contact_closure_race_proof[11]}" \
 ROS_RECEIPT_CONTACT_DUPLICATE_RETRY="${contact_closure_race_proof[13]}" \
+ROS_RECEIPT_CONTACT_RECOVERY_STATE="$contact_recovery_state" \
+ROS_RECEIPT_CONTACT_RECOVERY_POSTMASTER_BEFORE="$contact_recovery_postmaster_started_at_before_restart" \
+ROS_RECEIPT_CONTACT_RECOVERY_POSTMASTER_AFTER="$contact_recovery_postmaster_started_at_after_restart" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v9",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v10",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -199,6 +244,12 @@ node -e '
     contactAtomicRollback: process.env.ROS_RECEIPT_CONTACT_ATOMIC_ROLLBACK,
     contactForwardRetry: process.env.ROS_RECEIPT_CONTACT_FORWARD_RETRY,
     contactDuplicateRetry: process.env.ROS_RECEIPT_CONTACT_DUPLICATE_RETRY,
+    contactRecoveryRestartVerified: true,
+    contactRecoveryState: process.env.ROS_RECEIPT_CONTACT_RECOVERY_STATE,
+    contactRecoveryPostmasterStartedAtBeforeRestart:
+      process.env.ROS_RECEIPT_CONTACT_RECOVERY_POSTMASTER_BEFORE,
+    contactRecoveryPostmasterStartedAtAfterRestart:
+      process.env.ROS_RECEIPT_CONTACT_RECOVERY_POSTMASTER_AFTER,
     result: "PASS",
     externalArchiveReceipt: null,
   };

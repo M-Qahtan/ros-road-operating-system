@@ -243,6 +243,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A ROLLED-BACK CONTACT COMMAND HAS A SINGLE FORWARD RECOVERY PATH WITHOUT DUPLICATING AUDIT OR OUTBOX EFFECTS.** |
 | Next handoff | Execute the clean v9 journey on Docker or Podman and correct the first PostgreSQL recovery discrepancy it reveals. |
 
+### Contact recovery restart durability
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `ac4b2b1f9c93a7fa0f27c75dabe1d9fb5c12f359`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty-two commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | After the atomic rollback, single forward retry, and duplicate rejection, the local journey restarts PostgreSQL a second time and reads the recovered Contact state through a new postmaster before it may emit a receipt. |
+| Durable acceptance | The database cluster identity must remain unchanged, the postmaster start time must change, and the recovered case must remain exactly `RECOVERY / event 2 / session 2 / contact 2 / audit 1 / cancelled 1 / pending 0`. Receipt schema v10 records both postmaster timestamps and the exact recovered state. |
+| Safety limits | The check remains local and provider-free. It sends no Contact action, closes no incident, grants no activation, and does not replace the required REL-013 external immutable archive. |
+| Result | **THE DEFINED FORWARD CONTACT RECOVERY MUST SURVIVE A NEW POSTGRESQL PROCESS WITHOUT LOSING OR DUPLICATING ITS DURABLE WRITE-SET.** |
+| Next handoff | Execute the clean v10 journey on Docker or Podman and correct the first live restart or persistence discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

@@ -93,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v9/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v10/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -173,7 +173,7 @@ test('forward retry after rollback commits once and duplicate retry is rejected'
   assert.match(contactClosureRace, /DUPLICATE_RETRY REJECTED/);
 });
 
-test('v9 receipt consumes contact races, rollback and exact forward retry proof', () => {
+test('v10 receipt consumes contact races, rollback and exact forward retry proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
@@ -187,7 +187,24 @@ test('v9 receipt consumes contact races, rollback and exact forward retry proof'
   assert.match(localHarness, /contactAtomicRollback/);
   assert.match(localHarness, /contactForwardRetry/);
   assert.match(localHarness, /contactDuplicateRetry/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v9/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v10/);
+});
+
+test('forward contact recovery survives a second PostgreSQL restart exactly', () => {
+  assert.match(localHarness, /contact_recovery_identity_before_restart/);
+  assert.match(localHarness, /contact_recovery_identity_after_restart/);
+  assert.match(localHarness, /restart -- "\$container_name"/);
+  assert.match(localHarness, /wait_for_postgres "after contact recovery restart"/);
+  assert.match(localHarness, /RECOVERY\|2\|2\|2\|1\|1\|0/);
+  assert.match(localHarness, /Contact recovery did not survive a PostgreSQL restart/);
+  assert.match(localHarness, /contactRecoveryRestartVerified: true/);
+  assert.match(localHarness, /contactRecoveryState/);
+  assert.match(localHarness, /contactRecoveryPostmasterStartedAtBeforeRestart/);
+  assert.match(localHarness, /contactRecoveryPostmasterStartedAtAfterRestart/);
+  assert.ok(
+    localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
+      localHarness.indexOf('wait_for_postgres "after contact recovery restart"'),
+  );
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {
@@ -199,7 +216,14 @@ test('live receipt consumes the exact validated before-and-after restart proof',
   assert.match(localHarness, /postmaster_started_at_before_restart/);
   assert.match(localHarness, /postmaster_started_at_after_restart/);
   assert.match(localHarness, /system_identifier_after_restart" != "\$database_system_identifier/);
-  assert.match(localHarness, /postmaster_started_at_after_restart" != "\$postmaster_started_at/);
+  assert.match(
+    localHarness,
+    /postmaster_started_at_after_restart" != "\$contact_recovery_postmaster_started_at_before_restart/,
+  );
+  assert.match(
+    localHarness,
+    /contact_recovery_postmaster_started_at_after_restart" != "\$postmaster_started_at/,
+  );
 });
 
 test('ordered SQL journey covers current read, source invalidation, rollback and a new client connection', () => {
