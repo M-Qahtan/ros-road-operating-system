@@ -94,3 +94,4 @@ export * from './perception-benchmark.js';
 export * from './evidence-assurance.js';
 export * from './adapter-certification.js';
 export * from './epistemic-coverage.js';
+export * from './evidence-acquisition.js';
