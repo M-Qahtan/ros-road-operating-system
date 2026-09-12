@@ -44,6 +44,9 @@ const OUTBOX_COLUMNS = `
   delivery_started_at, delivery_deadline_at`;
 
 export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
+  lockParentForCommand: `SELECT status, version FROM road_events
+    WHERE tenant_id = $1 AND purpose = $2 AND id::text = $3
+    FOR UPDATE`,
   getSessionForUpdate: `SELECT ${CONTACT_SESSION_COLUMNS} FROM ros_eye_contact_sessions
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
     FOR UPDATE`,
@@ -277,7 +280,20 @@ class PostgresContactRuntimeTransaction implements ContactRuntimeTransaction {
     await this.appendRevision(revisionState, [...revisionState.sessions, session], session.updatedAt);
   }
 
-  async updateSession(session: ContactSessionRecord, expectedVersion: number): Promise<'UPDATED' | 'CONFLICT'> {
+  async updateSession(
+    session: ContactSessionRecord,
+    expectedVersion: number,
+    parentGuard?: { readonly purpose: string; readonly expectedCaseVersion: number }
+  ): Promise<'UPDATED' | 'CONFLICT' | 'PARENT_CLOSED'> {
+    if (parentGuard !== undefined) {
+      const parent = await this.connection.query(POSTGRES_CONTACT_RUNTIME_SQL.lockParentForCommand, [
+        session.tenantId, parentGuard.purpose, session.caseId
+      ]);
+      const row = parent.rows[0];
+      if (parent.rowCount !== 1 || parent.rows.length !== 1 || row === undefined ||
+          integer(row, 'version') !== parentGuard.expectedCaseVersion) return 'CONFLICT';
+      if (text(row, 'status') === 'CLOSED') return 'PARENT_CLOSED';
+    }
     const revisionState = await this.loadRevisionState(session);
     const current = revisionState.sessions.find((candidate) => candidate.sessionId === session.sessionId);
     if (current === undefined || current.version !== expectedVersion) return 'CONFLICT';

@@ -69,6 +69,9 @@ class FakeStore implements HumanSafetyStore {
   async mutate(input: Parameters<HumanSafetyStore['mutate']>[0]): Promise<void> {
     this.mutations += 1;
     assert.equal(input.actorId, ACTOR_ID);
+    assert.equal(input.tenantId, OPERATOR.tenantId);
+    assert.equal(input.purpose, OPERATOR.purpose);
+    assert.ok(input.expectedCaseVersion >= 1);
     assert.equal(input.actorRole, input.action === 'assignment' ? 'SUPERVISOR' : input.actorRole);
     if (input.expectedContactVersion !== this.current.version) throw new Error('stale');
     this.current = {

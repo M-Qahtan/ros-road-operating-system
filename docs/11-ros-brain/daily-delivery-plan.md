@@ -188,6 +188,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AN ALREADY-CLOSED INCIDENT CANNOT RECEIVE A NEW HUMAN-SAFETY COMMAND OR CONTACT MUTATION THROUGH THE API.** |
 | Next handoff | Bind contact-command admission to the RoadEvent lock in PostgreSQL and add both closure/command race orderings to the local v6 journey. |
 
+### Atomic contact-command parent guard
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `e4513a049e24eda1b52c5cd307e8855371427c33`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch thirty-seven commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | Persistent Human-Safety contact mutations now carry the trusted Purpose and expected RoadEvent version into the contact transaction. Before changing the session, PostgreSQL locks the exact Tenant + Purpose + case parent row and returns `PARENT_CLOSED` or a version conflict without touching contact state. The HTTP boundary maps the closed disposition to `INCIDENT_CLOSED`. |
+| Concurrency semantics | If closure owns the RoadEvent lock first, the waiting contact command observes `CLOSED` and loses. If the contact command owns it first, its contact revision commits before closure can revalidate the source snapshot, so the high-risk closure path must observe the changed Contact owner receipt and lose safely. |
+| Acceptance | Focused adapter tests require the exact scoped `FOR UPDATE` query to precede the session update and prove closed/stale parents produce no session or revision-ledger write. HTTP tests continue to prove existing closed cases reject every Human-Safety command. Live PostgreSQL scheduling of both orderings remains unverified. |
+| Result | **CONTACT COMMAND ADMISSION AND ROAD-EVENT CLOSURE NOW SHARE THE PARENT ROW LOCK; LIVE ENGINE RACE EVIDENCE REMAINS OPEN.** |
+| Next handoff | Add both contact-command/closure orderings to the disposable PostgreSQL journey and bind their actual dispositions into the next receipt schema. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

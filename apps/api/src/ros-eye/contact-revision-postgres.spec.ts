@@ -125,6 +125,46 @@ test('session correction verifies the prior aggregate and appends the next indep
   assert.notEqual(receipt.values[4], beforeDigest);
 });
 
+test('guarded session correction locks the exact active parent version before contact mutation', async () => {
+  const before = session();
+  const beforeDigest = contactRevisionDigest(SCOPE, [before]);
+  const sql = new FakeSql((text) => {
+    if (text.includes('SELECT status, version FROM road_events')) {
+      return { rows: [{ status: 'RECOVERY', version: 7 }], rowCount: 1 };
+    }
+    if (text.includes('SELECT purpose FROM road_events')) return { rows: [{ purpose: SCOPE.purpose }], rowCount: 1 };
+    if (text.includes('FROM ros_eye_contact_sessions') && text.includes('ORDER BY')) return { rows: [sessionRow(before)], rowCount: 1 };
+    if (text.includes('FROM ros_eye_contact_revision_ledger')) return { rows: [{ revision: 1, digest: beforeDigest }], rowCount: 1 };
+    return { rows: [], rowCount: 1 };
+  });
+  const result = await new PostgresContactRuntimeRepository(sql).transaction((tx) =>
+    tx.updateSession(session(2, 'HUMAN_REVIEW'), 1, { purpose: SCOPE.purpose, expectedCaseVersion: 7 })
+  );
+  assert.equal(result, 'UPDATED');
+  const lock = sql.queries.find((query) => query.text.includes('SELECT status, version FROM road_events'))!;
+  assert.deepEqual(lock.values, [SCOPE.tenantId, SCOPE.purpose, CASE_ID]);
+  assert.match(lock.text, /FOR UPDATE/);
+  assert.ok(sql.queries.findIndex((query) => query === lock) <
+    sql.queries.findIndex((query) => query.text.includes('UPDATE ros_eye_contact_sessions SET')));
+});
+
+test('guarded session correction rejects a closed or stale parent before contact mutation', async () => {
+  for (const [parent, expected] of [
+    [{ status: 'CLOSED', version: 7 }, 'PARENT_CLOSED'],
+    [{ status: 'RECOVERY', version: 8 }, 'CONFLICT']
+  ] as const) {
+    const sql = new FakeSql((text) => text.includes('SELECT status, version FROM road_events')
+      ? { rows: [parent], rowCount: 1 }
+      : { rows: [], rowCount: 1 });
+    const result = await new PostgresContactRuntimeRepository(sql).transaction((tx) =>
+      tx.updateSession(session(2, 'HUMAN_REVIEW'), 1, { purpose: SCOPE.purpose, expectedCaseVersion: 7 })
+    );
+    assert.equal(result, expected);
+    assert.equal(sql.queries.some((query) => query.text.includes('UPDATE ros_eye_contact_sessions SET')), false);
+    assert.equal(sql.queries.some((query) => query.text.includes('ros_eye_contact_revision_ledger')), false);
+  }
+});
+
 test('missing or drifted prior contact receipt blocks a session mutation', async () => {
   for (const ledgerRows of [[], [{ revision: 1, digest: 'f'.repeat(64) }]]) {
     const sql = new FakeSql((text) => {

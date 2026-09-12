@@ -97,7 +97,9 @@ export interface HumanSafetyStore {
   read(scope: { readonly tenantId: string; readonly purpose: string }, caseId: string): Promise<HumanSafetyBacking>;
   mutate(input: {
     readonly tenantId: string;
+    readonly purpose: string;
     readonly caseId: string;
+    readonly expectedCaseVersion: number;
     readonly sessionId: string;
     readonly expectedContactVersion: number;
     readonly action: HumanSafetyContactAction;
@@ -281,7 +283,8 @@ export class PostgresHumanSafetyStore implements HumanSafetyStore {
   }
 
   async mutate(input: {
-    readonly tenantId: string; readonly caseId: string; readonly sessionId: string;
+    readonly tenantId: string; readonly purpose: string; readonly caseId: string; readonly sessionId: string;
+    readonly expectedCaseVersion: number;
     readonly expectedContactVersion: number; readonly action: HumanSafetyContactAction;
     readonly actorId: string; readonly actorRole: 'OPERATOR' | 'SUPERVISOR'; readonly assigneeId?: string;
     readonly reason: string; readonly traceId: string; readonly occurredAt: string;
@@ -319,10 +322,16 @@ export class PostgresHumanSafetyStore implements HumanSafetyStore {
         leaseOwner: null, leaseExpiresAt: null, version: current.version + 1,
         lastInteractionAt: input.occurredAt, updatedAt: input.occurredAt
       };
-      if (suppressAutomation) await tx.cancelPendingAutomation(input, input.occurredAt);
-      if ((await tx.updateSession(next, current.version)) !== 'UPDATED') {
+      const update = await tx.updateSession(next, current.version, {
+        purpose: input.purpose, expectedCaseVersion: input.expectedCaseVersion
+      });
+      if (update === 'PARENT_CLOSED') {
+        throw new HumanSafetyHttpError(409, 'INCIDENT_CLOSED', 'A closed incident cannot accept Human Safety commands');
+      }
+      if (update !== 'UPDATED') {
         throw new HumanSafetyHttpError(409, 'VERSION_CONFLICT', 'Contact session changed concurrently');
       }
+      if (suppressAutomation) await tx.cancelPendingAutomation(input, input.occurredAt);
       const eventType = input.action === 'takeover' ? 'OPERATOR_TAKEOVER'
         : input.action === 'escalate' ? 'OPERATOR_ESCALATION' : 'OPERATOR_ASSIGNMENT';
       const eventId = `mvp-${createHash('sha256').update(`${input.tenantId}|${input.caseId}|${input.sessionId}|${next.version}|${eventType}`).digest('hex')}`;
@@ -663,7 +672,8 @@ export function createHumanSafetyHttpHandler(
         } else {
           if (backing.contact === null || expectedContactVersion === null) throw new HumanSafetyHttpError(409, 'CONTACT_SESSION_REQUIRED', 'A current contact session version is required');
           await store.mutate({
-            tenantId: actor.tenantId, caseId, sessionId: backing.contact.sessionId,
+            tenantId: actor.tenantId, purpose: actor.purpose, caseId, sessionId: backing.contact.sessionId,
+            expectedCaseVersion: event.version,
             expectedContactVersion, action: action as HumanSafetyContactAction,
             actorId: actor.actorId, actorRole: primaryHumanRole(actor),
             ...(assigneeId === undefined ? {} : { assigneeId }), reason,

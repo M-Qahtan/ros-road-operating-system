@@ -71,7 +71,11 @@ export interface ContactOutboxMessage extends ContactScope {
 export interface ContactRuntimeTransaction {
   getSessionForUpdate(scope: ContactScope): Promise<ContactSessionRecord | null>;
   insertSession(session: ContactSessionRecord): Promise<void>;
-  updateSession(session: ContactSessionRecord, expectedVersion: number): Promise<'UPDATED' | 'CONFLICT'>;
+  updateSession(
+    session: ContactSessionRecord,
+    expectedVersion: number,
+    parentGuard?: { readonly purpose: string; readonly expectedCaseVersion: number }
+  ): Promise<'UPDATED' | 'CONFLICT' | 'PARENT_CLOSED'>;
   insertInboxIfAbsent(scope: ContactScope, idempotencyKey: string): Promise<'INSERTED' | 'EXISTS'>;
   insertAuditIfAbsent(event: ContactAuditEvent): Promise<'INSERTED' | 'EXISTS'>;
   insertOutboxIfAbsent(message: ContactOutboxMessage): Promise<'INSERTED' | 'EXISTS'>;
