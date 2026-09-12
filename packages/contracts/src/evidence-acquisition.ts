@@ -54,6 +54,8 @@ export interface EvidenceAcquisitionPlan {
   readonly stateDigest: string;
   readonly coverageMapId: string;
   readonly coverageMapDigest: string;
+  /** Digest supplied by a separate trusted source-registry boundary. */
+  readonly sourceRegistryDigest: string;
   readonly purpose: string;
   readonly jurisdiction: string;
   readonly generatedAt: string;
@@ -84,13 +86,22 @@ const REQUEST_TYPES = new Set<EvidenceAcquisitionRequestType>([
 const COVERAGE_STATES = new Set<EpistemicCoverageState>([
   'OBSERVED', 'DEGRADED', 'BLIND', 'CONTRADICTED', 'UNKNOWN',
 ]);
+const COVERAGE_DIMENSIONS = new Set<EpistemicCoverageDimension>([
+  'OCCUPANCY',
+  'DYNAMIC_OBJECTS',
+  'VELOCITY',
+  'VULNERABLE_ROAD_USERS',
+  'SIGNAL_STATE',
+  'ENVIRONMENT',
+  'INFRASTRUCTURE',
+]);
 
 export function validateEvidenceAcquisitionTarget(value: EvidenceAcquisitionTarget): readonly string[] {
   const errors: string[] = [];
   const raw = value as unknown as Record<string, unknown> | null;
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return ['INVALID_ACQUISITION_TARGET'];
   if (!boundedIdentifier(raw.regionId)) errors.push('INVALID_TARGET_REGION_ID');
-  if (typeof raw.dimension !== 'string' || raw.dimension.length === 0) errors.push('INVALID_TARGET_DIMENSION');
+  if (typeof raw.dimension !== 'string' || !COVERAGE_DIMENSIONS.has(raw.dimension as EpistemicCoverageDimension)) errors.push('INVALID_TARGET_DIMENSION');
   if (typeof raw.currentCoverageState !== 'string' || !COVERAGE_STATES.has(raw.currentCoverageState as EpistemicCoverageState)) {
     errors.push('INVALID_TARGET_COVERAGE_STATE');
   }
@@ -117,7 +128,7 @@ export function validateEvidenceAcquisitionRequest(value: EvidenceAcquisitionReq
   if (typeof raw.requestType !== 'string' || !REQUEST_TYPES.has(raw.requestType as EvidenceAcquisitionRequestType)) errors.push('INVALID_REQUEST_TYPE');
   if (!boundedIdentifier(raw.sourceId)) errors.push('INVALID_REQUEST_SOURCE_ID');
   if (!boundedIdentifier(raw.regionId)) errors.push('INVALID_REQUEST_REGION_ID');
-  if (typeof raw.dimension !== 'string' || raw.dimension.length === 0) errors.push('INVALID_REQUEST_DIMENSION');
+  if (typeof raw.dimension !== 'string' || !COVERAGE_DIMENSIONS.has(raw.dimension as EpistemicCoverageDimension)) errors.push('INVALID_REQUEST_DIMENSION');
   if (typeof raw.expectedIndependenceClassDigest !== 'string' || !SHA256_HEX.test(raw.expectedIndependenceClassDigest)) {
     errors.push('INVALID_REQUEST_INDEPENDENCE_DIGEST');
   }
@@ -153,6 +164,7 @@ export function validateEvidenceAcquisitionPlan(value: EvidenceAcquisitionPlan):
   if (typeof raw.stateDigest !== 'string' || !SHA256_HEX.test(raw.stateDigest)) errors.push('INVALID_PLAN_STATE_DIGEST');
   if (!boundedIdentifier(raw.coverageMapId)) errors.push('INVALID_PLAN_COVERAGE_MAP_ID');
   if (typeof raw.coverageMapDigest !== 'string' || !SHA256_HEX.test(raw.coverageMapDigest)) errors.push('INVALID_PLAN_COVERAGE_DIGEST');
+  if (typeof raw.sourceRegistryDigest !== 'string' || !SHA256_HEX.test(raw.sourceRegistryDigest)) errors.push('INVALID_SOURCE_REGISTRY_DIGEST');
   if (typeof raw.purpose !== 'string' || raw.purpose.trim().length === 0 || raw.purpose.length > 128) errors.push('INVALID_PLAN_PURPOSE');
   if (typeof raw.jurisdiction !== 'string' || raw.jurisdiction.trim().length === 0 || raw.jurisdiction.length > 128) errors.push('INVALID_PLAN_JURISDICTION');
   const generatedAt = typeof raw.generatedAt === 'string' ? Date.parse(raw.generatedAt) : Number.NaN;
