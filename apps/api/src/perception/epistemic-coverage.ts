@@ -4,6 +4,7 @@ import {
   assessSensorObservationAdmission,
   cognitiveStateRequiresAbstention,
   validateEpistemicCoverageAssertion,
+  validateEpistemicCoverageContradiction,
   validateEpistemicCoverageRegion,
   validateEpistemicIndependenceLease,
   type CognitiveRoadState,
@@ -13,6 +14,7 @@ import {
   type EpistemicCoverageAssertion,
   type EpistemicCoverageAssertionState,
   type EpistemicCoverageCell,
+  type EpistemicCoverageContradiction,
   type EpistemicCoverageDimension,
   type EpistemicCoverageMap,
   type EpistemicCoverageRegion,
@@ -35,6 +37,7 @@ export interface EpistemicCoverageBuildInput {
   readonly observations: readonly SensorObservationEnvelope[];
   readonly leases: readonly EpistemicIndependenceLease[];
   readonly assertions: readonly EpistemicCoverageAssertion[];
+  readonly contradictions?: readonly EpistemicCoverageContradiction[];
   readonly minimumIndependentCoverage?: number;
   readonly maximumObservedOcclusionFraction?: number;
 }
@@ -44,6 +47,13 @@ interface TrustedCoverageAssertion {
   readonly observation: SensorObservationEnvelope;
   readonly lease: EpistemicIndependenceLease;
   readonly admissionDisposition: 'ACCEPT' | 'DEGRADED_USABLE';
+}
+
+interface TrustedCoverageContradiction {
+  readonly reason: string;
+  readonly observationIds: readonly string[];
+  readonly independenceClassDigests: readonly string[];
+  readonly validUntilEpochMs: number;
 }
 
 interface IndependenceClassSummary {
@@ -97,7 +107,11 @@ export function buildEpistemicCoverageMap(input: EpistemicCoverageBuildInput): E
   }
 
   const validLeases = input.leases.filter((lease) => {
-    if (validateEpistemicIndependenceLease(lease, input.trustedNowEpochMs).length > 0) return false;
+    try {
+      if (validateEpistemicIndependenceLease(lease, input.trustedNowEpochMs).length > 0) return false;
+    } catch {
+      return false;
+    }
     return lease.roadStateDigest === input.state.stateDigest
       && lease.purpose === input.purpose
       && lease.jurisdiction === input.jurisdiction
@@ -140,16 +154,27 @@ export function buildEpistemicCoverageMap(input: EpistemicCoverageBuildInput): E
     trustedByCell.set(key, existing);
   }
 
+  const trustedContradictionsByCell = buildTrustedContradictions({
+    contradictions: input.contradictions ?? [],
+    regionById,
+    dimensions: input.dimensions,
+    observationById,
+    admissionByObservationId,
+    validLeases,
+    trustedNowEpochMs: input.trustedNowEpochMs,
+    stateValidUntilEpochMs,
+  });
+
   const dimensions = [...new Set(input.dimensions)].sort();
   const cells: EpistemicCoverageCell[] = [];
   for (const region of [...input.regions].sort((a, b) => a.regionId.localeCompare(b.regionId))) {
     for (const dimension of dimensions) {
-      const trusted = trustedByCell.get(coverageCellKey(region.regionId, dimension)) ?? [];
+      const key = coverageCellKey(region.regionId, dimension);
       cells.push(fuseCoverageCell({
         regionId: region.regionId,
         dimension,
-        trusted,
-        trustedNowEpochMs: input.trustedNowEpochMs,
+        trusted: trustedByCell.get(key) ?? [],
+        contradictions: trustedContradictionsByCell.get(key) ?? [],
         stateValidUntilEpochMs,
         minimumIndependentCoverage,
         maximumObservedOcclusionFraction,
@@ -308,6 +333,72 @@ export function evaluateCoverageGovernedCounterfactualCandidates(input: {
   });
 }
 
+function buildTrustedContradictions(input: {
+  readonly contradictions: readonly EpistemicCoverageContradiction[];
+  readonly regionById: ReadonlyMap<string, EpistemicCoverageRegion>;
+  readonly dimensions: readonly EpistemicCoverageDimension[];
+  readonly observationById: ReadonlyMap<string, SensorObservationEnvelope>;
+  readonly admissionByObservationId: ReadonlyMap<string, ReturnType<typeof assessSensorObservationAdmission>>;
+  readonly validLeases: readonly EpistemicIndependenceLease[];
+  readonly trustedNowEpochMs: number;
+  readonly stateValidUntilEpochMs: number;
+}): Map<string, TrustedCoverageContradiction[]> {
+  const result = new Map<string, TrustedCoverageContradiction[]>();
+  const ids = new Set<string>();
+
+  for (const contradiction of input.contradictions) {
+    if (ids.has(contradiction.contradictionId)) throw new Error('DUPLICATE_COVERAGE_CONTRADICTION_ID');
+    ids.add(contradiction.contradictionId);
+    if (validateEpistemicCoverageContradiction(contradiction).length > 0) continue;
+    if (!input.regionById.has(contradiction.regionId) || !input.dimensions.includes(contradiction.dimension)) continue;
+
+    const contradictionValidUntil = Date.parse(contradiction.validUntil);
+    if (!Number.isFinite(contradictionValidUntil) || contradictionValidUntil <= input.trustedNowEpochMs) continue;
+
+    const expectedBinding = coverageObjectBinding(contradiction.regionId, contradiction.dimension);
+    const actualClasses = new Set<string>();
+    let allObservationsTrusted = true;
+    let validUntilEpochMs = Math.min(input.stateValidUntilEpochMs, contradictionValidUntil);
+
+    for (const observationId of contradiction.observationIds) {
+      const observation = input.observationById.get(observationId);
+      const admission = input.admissionByObservationId.get(observationId);
+      if (observation === undefined || admission === undefined || !admission.usableForCurrentState) {
+        allObservationsTrusted = false;
+        break;
+      }
+      const lease = input.validLeases.find((item) => item.objectBinding === expectedBinding && item.observationIds.includes(observationId));
+      if (lease === undefined) {
+        allObservationsTrusted = false;
+        break;
+      }
+      actualClasses.add(lease.independenceClassDigest);
+      validUntilEpochMs = Math.min(
+        validUntilEpochMs,
+        Date.parse(lease.expiresAt),
+        Date.parse(observation.capturedAt) + observation.timing.freshnessTtlMs,
+      );
+    }
+
+    const declaredClasses = new Set(contradiction.independenceClassDigests);
+    const exactClassBinding = actualClasses.size === declaredClasses.size
+      && [...actualClasses].every((item) => declaredClasses.has(item));
+    if (!allObservationsTrusted || actualClasses.size < 2 || !exactClassBinding) continue;
+
+    const key = coverageCellKey(contradiction.regionId, contradiction.dimension);
+    const existing = result.get(key) ?? [];
+    existing.push({
+      reason: contradiction.reason,
+      observationIds: uniqueSorted(contradiction.observationIds),
+      independenceClassDigests: uniqueSorted(contradiction.independenceClassDigests),
+      validUntilEpochMs,
+    });
+    result.set(key, existing);
+  }
+
+  return result;
+}
+
 function validateBuildInput(input: EpistemicCoverageBuildInput): void {
   if (!input.mapId.trim()) throw new Error('MISSING_COVERAGE_MAP_ID');
   if (!Number.isFinite(input.trustedNowEpochMs)) throw new Error('INVALID_TRUSTED_COVERAGE_TIME');
@@ -327,12 +418,56 @@ function fuseCoverageCell(input: {
   readonly regionId: string;
   readonly dimension: EpistemicCoverageDimension;
   readonly trusted: readonly TrustedCoverageAssertion[];
-  readonly trustedNowEpochMs: number;
+  readonly contradictions: readonly TrustedCoverageContradiction[];
   readonly stateValidUntilEpochMs: number;
   readonly minimumIndependentCoverage: number;
   readonly maximumObservedOcclusionFraction: number;
 }): EpistemicCoverageCell {
-  if (input.trusted.length === 0) {
+  const byClass = new Map<string, TrustedCoverageAssertion[]>();
+  for (const item of input.trusted) {
+    const existing = byClass.get(item.lease.independenceClassDigest) ?? [];
+    existing.push(item);
+    byClass.set(item.lease.independenceClassDigest, existing);
+  }
+  const summaries = [...byClass.entries()].map(([digest, values]) => summarizeIndependenceClass(digest, values, input.stateValidUntilEpochMs));
+
+  if (input.contradictions.length > 0) {
+    const contradictionClasses = uniqueSorted(input.contradictions.flatMap((item) => item.independenceClassDigests));
+    const contradictionObservations = uniqueSorted(input.contradictions.flatMap((item) => item.observationIds));
+    const summaryObservations = summaries.flatMap((item) => item.observationIds);
+    const validUntilEpochMs = Math.min(
+      input.stateValidUntilEpochMs,
+      ...input.contradictions.map((item) => item.validUntilEpochMs),
+      ...summaries.map((item) => item.validUntilEpochMs),
+    );
+    return {
+      regionId: input.regionId,
+      dimension: input.dimension,
+      state: 'CONTRADICTED',
+      effectiveIndependentEvidence: new Set([
+        ...contradictionClasses,
+        ...summaries.map((item) => item.independenceClassDigest),
+      ]).size,
+      independenceClassDigests: uniqueSorted([
+        ...contradictionClasses,
+        ...summaries.map((item) => item.independenceClassDigest),
+      ]),
+      sourceClasses: uniqueSorted(summaries.flatMap((item) => item.sourceClasses)) as SensorSourceClass[],
+      supportingObservationIds: uniqueSorted([...contradictionObservations, ...summaryObservations]),
+      degradationCauses: uniqueSorted(summaries.flatMap((item) => item.degradationCauses)) as SensorDegradationCause[],
+      maximumObservedOcclusionFraction: summaries.length === 0
+        ? null
+        : Math.max(...summaries.map((item) => item.maximumOcclusionFraction)),
+      reasonCodes: uniqueSorted([
+        'MATERIAL_COVERAGE_CONTRADICTION',
+        ...input.contradictions.map((item) => item.reason),
+      ]),
+      validUntil: new Date(validUntilEpochMs).toISOString(),
+      authority: 'NONE',
+    };
+  }
+
+  if (summaries.length === 0) {
     return {
       regionId: input.regionId,
       dimension: input.dimension,
@@ -349,44 +484,31 @@ function fuseCoverageCell(input: {
     };
   }
 
-  const byClass = new Map<string, TrustedCoverageAssertion[]>();
-  for (const item of input.trusted) {
-    const existing = byClass.get(item.lease.independenceClassDigest) ?? [];
-    existing.push(item);
-    byClass.set(item.lease.independenceClassDigest, existing);
-  }
-  const summaries = [...byClass.entries()].map(([digest, values]) => summarizeIndependenceClass(digest, values, input.stateValidUntilEpochMs));
-  const states = new Set(summaries.map((item) => item.state));
   const reasons = new Set<string>();
+  const strongCovered = summaries.filter((item) => item.state === 'COVERED'
+    && !item.degradedByAdmission
+    && item.maximumOcclusionFraction <= input.maximumObservedOcclusionFraction);
+  const coverageCapable = summaries.filter((item) => item.state === 'COVERED' || item.state === 'DEGRADED');
+  const blind = summaries.filter((item) => item.state === 'BLIND');
   let state: EpistemicCoverageCell['state'];
 
-  if (states.has('BLIND') && (states.has('COVERED') || states.has('DEGRADED'))) {
-    state = 'CONTRADICTED';
-    reasons.add('MATERIAL_COVERAGE_CONTRADICTION');
-  } else if ([...states].every((item) => item === 'BLIND')) {
-    state = 'BLIND';
-    reasons.add('ALL_TRUSTED_COVERAGE_CLASSES_BLIND');
-  } else if ([...states].every((item) => item === 'UNKNOWN')) {
-    state = 'UNKNOWN';
-    reasons.add('TRUSTED_SOURCES_REPORT_COVERAGE_UNKNOWN');
-  } else {
-    const maxOcclusion = Math.max(...summaries.map((item) => item.maximumOcclusionFraction));
-    const degraded = states.has('DEGRADED')
-      || states.has('BLIND')
-      || states.has('UNKNOWN')
-      || summaries.some((item) => item.degradedByAdmission)
-      || maxOcclusion > input.maximumObservedOcclusionFraction;
-
-    if (summaries.length < input.minimumIndependentCoverage) {
-      state = 'DEGRADED';
-      reasons.add('INSUFFICIENT_INDEPENDENT_COVERAGE');
-    } else if (degraded) {
-      state = 'DEGRADED';
-      reasons.add('COVERAGE_DEGRADED_OR_OCCLUDED');
+  if (coverageCapable.length === 0) {
+    if (blind.length > 0) {
+      state = 'BLIND';
+      reasons.add('NO_TRUSTED_SOURCE_CAN_OBSERVE_REGION_DIMENSION');
     } else {
-      state = 'OBSERVED';
-      reasons.add('INDEPENDENT_CURRENT_COVERAGE_CORROBORATED');
+      state = 'UNKNOWN';
+      reasons.add('TRUSTED_SOURCES_REPORT_COVERAGE_UNKNOWN');
     }
+  } else if (strongCovered.length >= input.minimumIndependentCoverage) {
+    state = 'OBSERVED';
+    reasons.add('INDEPENDENT_CURRENT_COVERAGE_CORROBORATED');
+    if (blind.length > 0) reasons.add('SOME_SOURCES_BLIND_BUT_COVERAGE_SUFFICIENT');
+  } else {
+    state = 'DEGRADED';
+    if (coverageCapable.length < input.minimumIndependentCoverage) reasons.add('INSUFFICIENT_INDEPENDENT_COVERAGE');
+    else reasons.add('COVERAGE_DEGRADED_OR_OCCLUDED');
+    if (blind.length > 0) reasons.add('SOME_SOURCES_BLIND');
   }
 
   for (const summary of summaries) for (const reason of summary.reasonCodes) reasons.add(reason);
