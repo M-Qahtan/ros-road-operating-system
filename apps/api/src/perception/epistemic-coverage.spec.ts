@@ -3,11 +3,13 @@ import test from 'node:test';
 import {
   COGNITIVE_ROAD_STATE_SCHEMA,
   EPISTEMIC_COVERAGE_ASSERTION_SCHEMA,
+  EPISTEMIC_COVERAGE_CONTRADICTION_SCHEMA,
   EPISTEMIC_INDEPENDENCE_LEASE_SCHEMA,
   SENSOR_OBSERVATION_SCHEMA,
   type CognitiveRoadState,
   type CounterfactualCandidate,
   type EpistemicCoverageAssertion,
+  type EpistemicCoverageContradiction,
   type EpistemicCoverageDimension,
   type EpistemicCoverageRegion,
   type EpistemicIndependenceLease,
@@ -25,6 +27,7 @@ const stateDigest = 'd'.repeat(64);
 const geometryDigest = 'e'.repeat(64);
 const digestA = 'a'.repeat(64);
 const digestB = 'b'.repeat(64);
+const digestC = 'f'.repeat(64);
 const region: EpistemicCoverageRegion = {
   regionId: 'crosswalk-41',
   zoneId: 'RUH-Z41',
@@ -152,10 +155,29 @@ function assertion(
   };
 }
 
+function materialContradiction(
+  observationIds: readonly string[] = ['obs-a', 'obs-b'],
+  independenceClassDigests: readonly string[] = [digestA, digestB],
+): EpistemicCoverageContradiction {
+  return {
+    schema: EPISTEMIC_COVERAGE_CONTRADICTION_SCHEMA,
+    contradictionId: 'coverage-contradiction-001',
+    regionId: region.regionId,
+    dimension: 'VULNERABLE_ROAD_USERS',
+    observationIds,
+    independenceClassDigests,
+    reason: 'GEOMETRIC_COVERAGE_EVIDENCE_CONFLICT',
+    validUntil: '2026-09-12T06:00:06+03:00',
+    material: true,
+    authority: 'NONE',
+  };
+}
+
 function build(
   observations: readonly SensorObservationEnvelope[],
   leases: readonly EpistemicIndependenceLease[],
   assertions: readonly EpistemicCoverageAssertion[],
+  contradictions: readonly EpistemicCoverageContradiction[] = [],
 ) {
   return buildEpistemicCoverageMap({
     mapId: 'coverage-map-001',
@@ -169,6 +191,7 @@ function build(
     observations,
     leases,
     assertions,
+    contradictions,
   });
 }
 
@@ -213,11 +236,49 @@ test('stale observations cannot manufacture current coverage', () => {
   assert.equal(map.cells[0]!.effectiveIndependentEvidence, 0);
 });
 
-test('independent covered versus blind assertions become CONTRADICTED and force abstention', () => {
+test('one blind source does not falsely contradict an independent covered source', () => {
   const map = build(
-    [observation('obs-a', 'radar-a'), observation('obs-b', 'radar-b')],
+    [observation('obs-a', 'radar-a'), observation('obs-b', 'camera-b')],
     [lease('lease-a', 'obs-a', digestA), lease('lease-b', 'obs-b', digestB)],
     [assertion('assert-a', 'obs-a', 'COVERED'), assertion('assert-b', 'obs-b', 'BLIND', 1)],
+  );
+
+  assert.equal(map.cells[0]!.state, 'DEGRADED');
+  assert(map.cells[0]!.reasonCodes.includes('SOME_SOURCES_BLIND'));
+  assert(!map.cells[0]!.reasonCodes.includes('MATERIAL_COVERAGE_CONTRADICTION'));
+});
+
+test('two independent covered classes remain OBSERVED even when a third source is blind', () => {
+  const map = build(
+    [
+      observation('obs-a', 'radar-a'),
+      observation('obs-b', 'radar-b'),
+      observation('obs-c', 'camera-c'),
+    ],
+    [
+      lease('lease-a', 'obs-a', digestA),
+      lease('lease-b', 'obs-b', digestB),
+      lease('lease-c', 'obs-c', digestC),
+    ],
+    [
+      assertion('assert-a', 'obs-a', 'COVERED'),
+      assertion('assert-b', 'obs-b', 'COVERED'),
+      assertion('assert-c', 'obs-c', 'BLIND', 1),
+    ],
+  );
+
+  assert.equal(map.cells[0]!.state, 'OBSERVED');
+  assert(map.cells[0]!.reasonCodes.includes('SOME_SOURCES_BLIND_BUT_COVERAGE_SUFFICIENT'));
+});
+
+test('explicit material contradiction backed by two trusted independence classes forces abstention', () => {
+  const observations = [observation('obs-a', 'radar-a'), observation('obs-b', 'radar-b')];
+  const leases = [lease('lease-a', 'obs-a', digestA), lease('lease-b', 'obs-b', digestB)];
+  const map = build(
+    observations,
+    leases,
+    [assertion('assert-a', 'obs-a'), assertion('assert-b', 'obs-b')],
+    [materialContradiction()],
   );
   const gate = evaluateDecisionCriticalCoverage({
     map,
@@ -230,6 +291,21 @@ test('independent covered versus blind assertions become CONTRADICTED and force 
   assert.equal(map.cells[0]!.state, 'CONTRADICTED');
   assert.equal(gate.decision, 'ABSTAIN');
   assert(gate.reasonCodes.includes('DECISION_CRITICAL_COVERAGE_CONTRADICTED'));
+});
+
+test('forged material contradiction without exact independence-class binding is ignored', () => {
+  const observations = [observation('obs-a', 'radar-a'), observation('obs-b', 'radar-b')];
+  const leases = [lease('lease-a', 'obs-a', digestA), lease('lease-b', 'obs-b', digestB)];
+  const forged = materialContradiction(['obs-a', 'obs-b'], [digestA, digestC]);
+  const map = build(
+    observations,
+    leases,
+    [assertion('assert-a', 'obs-a'), assertion('assert-b', 'obs-b')],
+    [forged],
+  );
+
+  assert.equal(map.cells[0]!.state, 'OBSERVED');
+  assert(!map.cells[0]!.reasonCodes.includes('MATERIAL_COVERAGE_CONTRADICTION'));
 });
 
 test('degraded sensor or occlusion keeps decision-critical corridor from recommendation-grade coverage', () => {
