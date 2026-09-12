@@ -39,6 +39,13 @@ export interface CommandCenterCaseView {
   readonly safetyCase: HumanSafetyCaseContract;
   readonly contactSession: HumanContactSessionContract | null;
   readonly recommendation: SafetyFusionRecommendation | null;
+  /** Governed API disposition; absent on older compatibility responses. */
+  readonly recommendationState?: Readonly<{
+    source: 'GOVERNED_JOURNAL' | 'LEGACY_COMPATIBILITY' | 'NONE';
+    status: 'CURRENT' | 'WITHHELD' | 'UNVERIFIED' | 'ABSENT';
+    humanReviewStatus: 'PENDING' | null; snapshotReason: string | null;
+    mode: 'SHADOW_ONLY'; activationAuthorized: false;
+  }>;
   /** Present on governed API responses; absent on older compatibility responses. */
   readonly sourceVersionState?: Readonly<{
     status: 'VERIFIED' | 'WITHHELD' | 'UNAVAILABLE'; reason: string | null;

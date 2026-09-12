@@ -97,7 +97,12 @@ function renderSourceVersions(item: CommandCenterCaseView): string {
 
 function renderRecommendation(item: CommandCenterCaseView): string {
   const recommendation = item.recommendation;
-  if (recommendation === null) return '<section class="recommendation-panel"><h3>توصية الدمج</h3><p class="muted">لا توجد توصية متاحة؛ يلزم تقييم بشري.</p></section>';
+  if (recommendation === null) {
+    const unavailable = item.recommendationState?.snapshotReason === 'CASE_CLOSED'
+      ? 'أُغلقت الحالة؛ حُجبت التوصية الحالية مع بقاء سجلها التاريخي للمراجعة.'
+      : 'لا توجد توصية متاحة؛ يلزم تقييم بشري.';
+    return `<section class="recommendation-panel"><h3>توصية الدمج</h3><p class="muted">${unavailable}</p></section>`;
+  }
   return `<section class="recommendation-panel" aria-labelledby="recommendation-title"><div class="section-title"><div><h3 id="recommendation-title">توصية سلامة قابلة للتفسير</h3><p>توصية فقط — لا تملك سلطة خفض الخطورة أو الحل أو الإرسال.</p></div><span class="badge severity-${recommendation.recommendedSeverity}">${escape(recommendation.recommendedSeverity)} · ثقة ${Math.round(recommendation.confidence * 100)}٪</span></div>
     <div class="recommendation-grid"><div><strong>عدم اليقين</strong><span>${Math.round(recommendation.uncertainty * 100)}٪</span></div><div><strong>المراجعة البشرية</strong><span>${recommendation.requiresHumanReview ? 'إلزامية' : 'غير مطلوبة'}</span></div><div><strong>السلطة</strong><span>${escape(recommendation.authority)}</span></div><div><strong>البصمة</strong><code>${escape(recommendation.deterministicFingerprint)}</code></div></div>
     <ul class="reason-list">${recommendation.reasonCodes.map((code) => `<li>${escape(REASON_AR[code] ?? code)}</li>`).join('')}</ul><div class="guard-grid">${recommendation.guardResults.map((guard) => `<span class="guard guard-${guard.disposition}">${escape(guard.kind)}: ${escape(GUARD_AR[guard.disposition])}</span>`).join('')}</div></section>`;

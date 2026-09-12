@@ -166,6 +166,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE V6 CHILD PROCESS NOW RECEIVES THE EXACT VALIDATED CONTAINER ENGINE; LIVE ENGINE EXECUTION REMAINS OPEN.** |
 | Next handoff | Execute the clean v6 journey on a Docker/Podman host and fix the first engine-level discrepancy, if any. |
 
+### Closed-case recommendation projection
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `7bc8184c974d456f8ef19ba88ced245a53fd7dfa`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch thirty-five commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | A RoadEvent whose durable status is `CLOSED` is now projected as a resolved Human-Safety case even when no high-risk closure authorization was required. Governed and legacy recommendations are withheld from the live case response after closure while their journal/history remains untouched. The dashboard identifies the recommendation as historical instead of rendering it as a current explainable recommendation. |
+| Acceptance | API coverage closes a low-severity RoadEvent through the real application transition path, then requires `RESOLVED`, a null recommendation, `WITHHELD / CASE_CLOSED / SHADOW_ONLY / activationAuthorized=false`, abstaining next-evidence advice, preserved verified source versions, and zero Human-Safety store mutation. Dashboard coverage requires the historical-withholding message and no current-recommendation panel. |
+| Safety limits | This is a read projection only. It does not delete a recommendation, change severity, authorize closure, collect data, dispatch, or add operational authority. Tenant and Purpose authorization remains on the existing route. |
+| Result | **CLOSED INCIDENTS NO LONGER EXPOSE A CURRENT RECOMMENDATION; THE GOVERNED HISTORY REMAINS AVAILABLE FOR REVIEW.** |
+| Next handoff | Execute the clean v6 PostgreSQL journey on a Docker/Podman host and fix the first engine-level discrepancy, if any. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

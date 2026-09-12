@@ -386,6 +386,7 @@ function primaryHumanRole(actor: AuthenticatedActor): 'OPERATOR' | 'SUPERVISOR' 
 }
 
 function stateOf(event: RoadEventReadModel, contact: ContactSessionRecord | null): HumanSafetyCaseContract['state'] {
+  if (event.status === 'CLOSED') return 'RESOLVED';
   if (event.closureAuthorization !== null) return 'RESOLVED';
   if (contact === null) return event.severity.requiresHumanReview ? 'HUMAN_REVIEW' : 'UNKNOWN';
   const states: Readonly<Record<ContactSessionRecord['state'], HumanSafetyCaseContract['state']>> = {
@@ -408,7 +409,7 @@ function view(
 ): HumanSafetyCaseView {
   const contact = backing.contact;
   const authorization = event.closureAuthorization;
-  const selected = selectRecommendation(backing.recommendation, governed);
+  const selected = selectRecommendation(backing.recommendation, governed, event.status === 'CLOSED');
   const sourceVersionState = authoritativeSourceVersions(governed);
   const verifiedVersions = sourceVersionState.status === 'VERIFIED' ? sourceVersionState : null;
   const current: Omit<HumanSafetyCaseView, 'nextEvidenceAdvice'> = {
@@ -465,8 +466,19 @@ function authoritativeSourceVersions(governed: GovernedRecommendationQueryResult
 
 function selectRecommendation(
   legacy: SafetyFusionRecommendation | null,
-  governed: GovernedRecommendationQueryResult | null
+  governed: GovernedRecommendationQueryResult | null,
+  caseClosed: boolean
 ): { readonly recommendation: SafetyFusionRecommendation | null; readonly state: HumanSafetyRecommendationState } {
+  if (caseClosed) {
+    return {
+      recommendation: null,
+      state: recommendationState(
+        governed?.status === 'AVAILABLE' || governed?.status === 'WITHHELD' ? 'GOVERNED_JOURNAL'
+          : legacy === null ? 'NONE' : 'LEGACY_COMPATIBILITY',
+        'WITHHELD', governed?.humanReviewStatus ?? null, 'CASE_CLOSED'
+      )
+    };
+  }
   if (governed?.status === 'AVAILABLE' && governed.recommendation !== null && governed.snapshot?.status === 'VERIFIED') {
     return { recommendation: governed.recommendation, state: recommendationState('GOVERNED_JOURNAL', 'CURRENT', 'PENDING', 'VERIFIED') };
   }

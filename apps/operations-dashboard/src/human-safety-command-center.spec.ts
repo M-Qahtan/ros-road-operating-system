@@ -131,6 +131,29 @@ test('Arabic command-center renders only verified governed source revisions as a
   assert.match(html, /<dt>المؤشرات<\/dt><dd>15<\/dd>/);
 });
 
+test('closed case renders the governed recommendation as historical and unavailable', async () => {
+  const now = new Date('2026-07-31T04:00:00.000Z');
+  const cases = seedCommandCenterCases(now).map((item, index) => index !== 0 ? item : ({
+    ...item,
+    safetyCase: { ...item.safetyCase, state: 'RESOLVED' as const },
+    recommendation: null,
+    recommendationState: {
+      source: 'GOVERNED_JOURNAL' as const, status: 'WITHHELD' as const,
+      humanReviewStatus: 'PENDING' as const, snapshotReason: 'CASE_CLOSED',
+      mode: 'SHADOW_ONLY' as const, activationAuthorized: false as const
+    }
+  }));
+  const controller = new HumanSafetyCommandCenterController(
+    new SimulatedHumanSafetyCommandCenterGateway(cases),
+    { actorId: 'supervisor-1', roles: ['SUPERVISOR'] }, () => now
+  );
+  await controller.load();
+  await controller.select('case-ros-eye-001');
+  const html = renderHumanSafetyCommandCenter(controller.state, controller, now);
+  assert.match(html, /أُغلقت الحالة؛ حُجبت التوصية الحالية مع بقاء سجلها التاريخي للمراجعة/);
+  assert.doesNotMatch(html, /توصية سلامة قابلة للتفسير/);
+});
+
 test('ambiguous remote action failure marks Human Safety data stale and disables retry', async () => {
   const now = new Date('2026-07-31T04:00:00.000Z');
   const controller = new HumanSafetyCommandCenterController(

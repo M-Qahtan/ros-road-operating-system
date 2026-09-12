@@ -129,7 +129,8 @@ function currentGovernedReader(): GovernedRecommendationReader {
 async function fixture(
   actor: AuthenticatedActor = OPERATOR,
   governed: GovernedRecommendationReader | null = null,
-  health: HumanSafetyOperationalHealthReader | null = HEALTHY_RUNTIME
+  health: HumanSafetyOperationalHealthReader | null = HEALTHY_RUNTIME,
+  severity: 'S1' | 'S4' = 'S4'
 ) {
   const repository = new MemoryRoadEventRepository();
   const appIdempotency = new MemoryIdempotencyAdapter();
@@ -139,7 +140,8 @@ async function fixture(
   );
   await application.create({
     id: CASE_ID, occurredAt: '2020-08-20T23:50:00.000Z', latitude: 24.7136, longitude: 46.6753,
-    severity: { level: 'S4' as never, score: 95, confidence: 0.95, reasonCodes: ['possible_impact'], requiresHumanReview: true }
+    severity: { level: severity as never, score: severity === 'S4' ? 95 : 20, confidence: 0.95,
+      reasonCodes: ['possible_impact'], requiresHumanReview: severity === 'S4' }
   }, { actor: OPERATOR, traceId: TRACE_ID, idempotencyKey: 'create-human-safety-case-001' });
   const store = new FakeStore();
   const idempotency = new TrackingIdempotency();
@@ -235,6 +237,41 @@ test('current governed recommendation replaces legacy compatibility only for the
   assert.equal(item.nextEvidenceAdvice.sourceFingerprint, recommendation.deterministicFingerprint);
   assert.equal(governed.actor, OPERATOR);
   assert.equal(store.mutations, 0);
+});
+
+test('closed case withholds current recommendation while preserving governed journal history', async () => {
+  const governed = currentGovernedReader();
+  const current = await fixture(SUPERVISOR, governed, HEALTHY_RUNTIME, 'S1');
+  let event = await current.application.getById(CASE_ID, SUPERVISOR);
+  for (const nextStatus of [
+    RoadEventStatus.Validating,
+    RoadEventStatus.Confirmed,
+    RoadEventStatus.SafetyAssessment,
+    RoadEventStatus.ResponseCoordination,
+    RoadEventStatus.RoadClearance,
+    RoadEventStatus.Recovery,
+    RoadEventStatus.Closed
+  ]) {
+    event = await current.application.transition({
+      roadEventId: CASE_ID, expectedVersion: event.version, nextStatus, reason: `advance to ${nextStatus}`
+    }, {
+      actor: SUPERVISOR, traceId: TRACE_ID, idempotencyKey: `closed-recommendation-${nextStatus}`
+    });
+  }
+
+  const response = await current.handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+  const item = (response!.body as { data: HumanSafetyCaseView }).data;
+  assert.equal(response?.status, 200);
+  assert.equal(item.safetyCase.state, 'RESOLVED');
+  assert.equal(item.recommendation, null);
+  assert.deepEqual(item.recommendationState, {
+    source: 'GOVERNED_JOURNAL', status: 'WITHHELD', humanReviewStatus: 'PENDING',
+    snapshotReason: 'CASE_CLOSED', mode: 'SHADOW_ONLY', activationAuthorized: false
+  });
+  assert.equal(item.nextEvidenceAdvice.status, 'ABSTAIN');
+  assert.equal(item.sourceVersionState.status, 'VERIFIED');
+  assert.equal((governed as FakeGovernedRecommendations).reads, 1);
+  assert.equal(current.store.mutations, 0);
 });
 
 test('withheld governed recommendation suppresses legacy fallback and preserves urgent human review', async () => {
