@@ -8,6 +8,7 @@ const setup = readFileSync('database/tests/0010_ros_brain_journey_setup.sql', 'u
 const reconnect = readFileSync('database/tests/0011_ros_brain_journey_reconnect.sql', 'utf8');
 const recoveryForward = readFileSync('database/tests/0012_ros_brain_journey_recovery_forward.sql', 'utf8');
 const closureRace = readFileSync('scripts/run-postgres-closure-race.sh', 'utf8');
+const contactClosureRace = readFileSync('scripts/run-postgres-contact-closure-race.sh', 'utf8');
 
 test('PostgreSQL integration runner fails explicitly before claiming an unexecuted test', () => {
   assert.match(runner, /command -v "\$required_command"/);
@@ -92,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v6/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v7/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -137,6 +138,26 @@ test('v6 receipt consumes both exact durable closure-race dispositions', () => {
   assert.match(localHarness, /closureRaceLoserResult/);
   assert.match(localHarness, /reverseRaceWinner/);
   assert.match(localHarness, /reverseRaceLoserResult/);
+});
+
+test('contact command and closure race in both row-lock orderings', () => {
+  assert.match(contactClosureRace, /ros_brain_contact_closure_waiter/);
+  assert.match(contactClosureRace, /ros_brain_contact_command_waiter/);
+  assert.match(contactClosureRace, /SOURCE_SNAPSHOT_CHANGED/);
+  assert.match(contactClosureRace, /INCIDENT_CLOSED/);
+  assert.match(contactClosureRace, /RECOVERY\|2\|2\|2/);
+  assert.match(contactClosureRace, /CLOSED\|3\|1\|1/);
+  assert.match(runner, /bash scripts\/run-postgres-contact-closure-race\.sh/);
+});
+
+test('v7 receipt consumes both exact contact-command race dispositions', () => {
+  assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
+  assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
+  assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
+  assert.match(localHarness, /contact_closure_race_proof\[4\].*CLOSURE/);
+  assert.match(localHarness, /contact_closure_race_proof\[7\].*INCIDENT_CLOSED/);
+  assert.match(localHarness, /contactClosureRaceVerified: true/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v7/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {

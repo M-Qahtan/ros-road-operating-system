@@ -33,6 +33,7 @@ readonly journey_manifest_sha256="$(
     scripts/run-local-postgres-brain-journey.sh \
     scripts/run-postgres-integration.sh \
     scripts/run-postgres-closure-race.sh \
+    scripts/run-postgres-contact-closure-race.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -43,11 +44,13 @@ readonly container_name="ros-brain-postgres-${$}"
 readonly postgres_password="ros-local-integration-only"
 readonly restart_proof_file="$(mktemp)"
 readonly closure_race_proof_file="$(mktemp)"
+readonly contact_closure_race_proof_file="$(mktemp)"
 
 cleanup() {
   "$container_engine" rm -f "$container_name" >/dev/null 2>&1 || true
   rm -f "$restart_proof_file"
   rm -f "$closure_race_proof_file"
+  rm -f "$contact_closure_race_proof_file"
 }
 trap cleanup EXIT
 
@@ -75,11 +78,25 @@ export ROS_POSTGRES_RESTART_CONTAINER="$container_name"
 export ROS_POSTGRES_RESTART_BEFORE_TEST="0011_ros_brain_journey_reconnect.sql"
 export ROS_POSTGRES_RESTART_PROOF_FILE="$restart_proof_file"
 export ROS_POSTGRES_CLOSURE_RACE_PROOF_FILE="$closure_race_proof_file"
+export ROS_POSTGRES_CONTACT_CLOSURE_RACE_PROOF_FILE="$contact_closure_race_proof_file"
 bash scripts/run-postgres-integration.sh
 
 mapfile -t restart_proof < "$restart_proof_file"
 if [[ "${#restart_proof[@]}" -ne 4 ]]; then
   echo "PostgreSQL journey passed without a complete restart identity proof" >&2
+  exit 2
+fi
+mapfile -t contact_closure_race_proof < "$contact_closure_race_proof_file"
+if [[ "${#contact_closure_race_proof[@]}" -ne 8 \
+  || "${contact_closure_race_proof[0]}" != "CONTACT_COMMAND" \
+  || "${contact_closure_race_proof[1]}" != "COMMITTED" \
+  || "${contact_closure_race_proof[2]}" != "CLOSURE" \
+  || ! "${contact_closure_race_proof[3]}" =~ ^(SOURCE_SNAPSHOT_CHANGED|SERIALIZATION_FAILURE)$ \
+  || "${contact_closure_race_proof[4]}" != "CLOSURE" \
+  || "${contact_closure_race_proof[5]}" != "COMMITTED" \
+  || "${contact_closure_race_proof[6]}" != "CONTACT_COMMAND" \
+  || ! "${contact_closure_race_proof[7]}" =~ ^(INCIDENT_CLOSED|SERIALIZATION_FAILURE)$ ]]; then
+  echo "PostgreSQL journey passed without one exact safe winner in both contact/closure race orderings" >&2
   exit 2
 fi
 readonly system_identifier_before_restart="${restart_proof[0]}"
@@ -141,9 +158,13 @@ ROS_RECEIPT_CLOSURE_RACE_WINNER="${closure_race_proof[0]}" \
 ROS_RECEIPT_CLOSURE_RACE_LOSER_RESULT="${closure_race_proof[3]}" \
 ROS_RECEIPT_REVERSE_RACE_WINNER="${closure_race_proof[4]}" \
 ROS_RECEIPT_REVERSE_RACE_LOSER_RESULT="${closure_race_proof[7]}" \
+ROS_RECEIPT_CONTACT_RACE_WINNER="${contact_closure_race_proof[0]}" \
+ROS_RECEIPT_CONTACT_RACE_LOSER_RESULT="${contact_closure_race_proof[3]}" \
+ROS_RECEIPT_REVERSE_CONTACT_RACE_WINNER="${contact_closure_race_proof[4]}" \
+ROS_RECEIPT_REVERSE_CONTACT_RACE_LOSER_RESULT="${contact_closure_race_proof[7]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v6",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v7",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -161,6 +182,11 @@ node -e '
     closureRaceLoserResult: process.env.ROS_RECEIPT_CLOSURE_RACE_LOSER_RESULT,
     reverseRaceWinner: process.env.ROS_RECEIPT_REVERSE_RACE_WINNER,
     reverseRaceLoserResult: process.env.ROS_RECEIPT_REVERSE_RACE_LOSER_RESULT,
+    contactClosureRaceVerified: true,
+    contactRaceWinner: process.env.ROS_RECEIPT_CONTACT_RACE_WINNER,
+    contactRaceLoserResult: process.env.ROS_RECEIPT_CONTACT_RACE_LOSER_RESULT,
+    reverseContactRaceWinner: process.env.ROS_RECEIPT_REVERSE_CONTACT_RACE_WINNER,
+    reverseContactRaceLoserResult: process.env.ROS_RECEIPT_REVERSE_CONTACT_RACE_LOSER_RESULT,
     result: "PASS",
     externalArchiveReceipt: null,
   };

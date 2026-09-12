@@ -199,6 +199,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **CONTACT COMMAND ADMISSION AND ROAD-EVENT CLOSURE NOW SHARE THE PARENT ROW LOCK; LIVE ENGINE RACE EVIDENCE REMAINS OPEN.** |
 | Next handoff | Add both contact-command/closure orderings to the disposable PostgreSQL journey and bind their actual dispositions into the next receipt schema. |
 
+### Contact-command/closure engine race definition
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `73787e7c80430eb238d75f6c7714e83ca30bd1dff4`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch thirty-eight commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | The disposable PostgreSQL journey now schedules both contact-command/closure row-lock orderings. A command winner must commit contact session and append-only revision 2 while closure loses to source drift; a closure winner must leave session/revision 1 intact while the command loses as closed or by serialization. |
+| Durable acceptance | Both participants run `SERIALIZABLE`, the waiter must be observed on the RoadEvent lock, and exact final states are required. Receipt schema v7 consumes all eight disposition fields; an ambiguous winner or unexpected contact write suppresses the receipt. |
+| Safety limits | This defines executable local-engine evidence only. It does not claim a live pass, archive REL-013 evidence, deployment, external communication, or added operational authority. |
+| Result | **BOTH CONTACT-COMMAND/CLOSURE RACE ORDERINGS ARE DEFINED FAIL-CLOSED; LIVE ENGINE EXECUTION REMAINS OPEN.** |
+| Next handoff | Execute the clean v7 journey on Docker or Podman and correct the first PostgreSQL lock/isolation discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
