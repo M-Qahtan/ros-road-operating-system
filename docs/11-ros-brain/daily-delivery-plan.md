@@ -254,6 +254,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE DEFINED FORWARD CONTACT RECOVERY MUST SURVIVE A NEW POSTGRESQL PROCESS WITHOUT LOSING OR DUPLICATING ITS DURABLE WRITE-SET.** |
 | Next handoff | Execute the clean v10 journey on Docker or Podman and correct the first live restart or persistence discrepancy it reveals. |
 
+### Post-restart duplicate contact rejection
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `21f9d7c7e06549f638453a89ff32bc1deb2a64ea`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty-three commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | After forward recovery and a verified PostgreSQL restart, the journey locks the exact `Tenant + Purpose + Case` parent and retries the stale Contact version. The durable version boundary must reject it before any session, revision, Audit, or Outbox mutation. |
+| Durable acceptance | PostgreSQL must return `POST_RESTART_CONTACT_VERSION_CONFLICT`, and the full state must remain exactly `RECOVERY / event 2 / session 2 / contact 2 / audit 1 / cancelled 1 / pending 0`. Receipt schema v11 records `contactPostRestartDuplicateRetry=REJECTED` and the unchanged state. |
+| Safety limits | This is a provider-free local recovery assertion. It sends no message, changes no incident authority, and cannot replace live engine execution or the REL-013 external immutable archive. |
+| Result | **CONTACT IDEMPOTENCY MUST REMAIN DURABLE ACROSS A DATABASE RESTART, NOT ONLY INSIDE THE ORIGINAL POSTMASTER.** |
+| Next handoff | Execute the clean v11 journey on Docker or Podman and correct the first live version-boundary or persistence discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

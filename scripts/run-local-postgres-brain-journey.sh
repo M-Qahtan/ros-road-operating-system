@@ -45,12 +45,14 @@ readonly postgres_password="ros-local-integration-only"
 readonly restart_proof_file="$(mktemp)"
 readonly closure_race_proof_file="$(mktemp)"
 readonly contact_closure_race_proof_file="$(mktemp)"
+readonly post_restart_duplicate_log="$(mktemp)"
 
 cleanup() {
   "$container_engine" rm -f "$container_name" >/dev/null 2>&1 || true
   rm -f "$restart_proof_file"
   rm -f "$closure_race_proof_file"
   rm -f "$contact_closure_race_proof_file"
+  rm -f "$post_restart_duplicate_log"
 }
 trap cleanup EXIT
 
@@ -161,6 +163,42 @@ if [[ "$contact_recovery_system_identifier_before_restart" != "$contact_recovery
   exit 2
 fi
 
+set +e
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 >"$post_restart_duplicate_log" 2>&1 <<'SQL'
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+DO $$ DECLARE parent_status road_event_status; parent_version integer; BEGIN
+  SELECT status, version INTO parent_status, parent_version FROM road_events
+  WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
+    AND id='10000000-0000-4000-8000-000000000005' FOR UPDATE;
+  IF parent_status='CLOSED' THEN RAISE EXCEPTION 'INCIDENT_CLOSED'; END IF;
+  IF parent_version<>2 THEN RAISE EXCEPTION 'PARENT_VERSION_CONFLICT'; END IF;
+END $$;
+DO $$ DECLARE changed integer; BEGIN
+  UPDATE ros_eye_contact_sessions SET state='ESCALATED', version=2
+  WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000005'
+    AND session_id='contact-race-rollback' AND version=1;
+  GET DIAGNOSTICS changed = ROW_COUNT;
+  IF changed<>1 THEN RAISE EXCEPTION 'POST_RESTART_CONTACT_VERSION_CONFLICT'; END IF;
+END $$;
+COMMIT;
+SQL
+post_restart_duplicate_status=$?
+set -e
+readonly post_restart_duplicate_output="$(cat "$post_restart_duplicate_log")"
+if [[ "$post_restart_duplicate_status" -eq 0 \
+  || "$post_restart_duplicate_output" != *POST_RESTART_CONTACT_VERSION_CONFLICT* ]]; then
+  echo "Post-restart duplicate contact retry bypassed its durable version boundary" >&2
+  echo "$post_restart_duplicate_output" >&2
+  exit 2
+fi
+readonly post_restart_duplicate_state="$(
+  psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response' AND event.id='10000000-0000-4000-8000-000000000005'"
+)"
+if [[ "$post_restart_duplicate_state" != "$contact_recovery_state" ]]; then
+  echo "Post-restart duplicate contact retry changed durable state: $post_restart_duplicate_state" >&2
+  exit 2
+fi
+
 image_id="$("$container_engine" inspect --format '{{.Image}}' "$container_name")"
 if [[ "$image_id" =~ ^[a-f0-9]{64}$ ]]; then image_id="sha256:${image_id}"; fi
 readonly image_id
@@ -216,9 +254,10 @@ ROS_RECEIPT_CONTACT_DUPLICATE_RETRY="${contact_closure_race_proof[13]}" \
 ROS_RECEIPT_CONTACT_RECOVERY_STATE="$contact_recovery_state" \
 ROS_RECEIPT_CONTACT_RECOVERY_POSTMASTER_BEFORE="$contact_recovery_postmaster_started_at_before_restart" \
 ROS_RECEIPT_CONTACT_RECOVERY_POSTMASTER_AFTER="$contact_recovery_postmaster_started_at_after_restart" \
+ROS_RECEIPT_CONTACT_POST_RESTART_DUPLICATE_STATE="$post_restart_duplicate_state" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v10",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v11",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -250,6 +289,9 @@ node -e '
       process.env.ROS_RECEIPT_CONTACT_RECOVERY_POSTMASTER_BEFORE,
     contactRecoveryPostmasterStartedAtAfterRestart:
       process.env.ROS_RECEIPT_CONTACT_RECOVERY_POSTMASTER_AFTER,
+    contactPostRestartDuplicateRetry: "REJECTED",
+    contactPostRestartDuplicateState:
+      process.env.ROS_RECEIPT_CONTACT_POST_RESTART_DUPLICATE_STATE,
     result: "PASS",
     externalArchiveReceipt: null,
   };

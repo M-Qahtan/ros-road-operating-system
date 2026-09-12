@@ -93,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v10/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v11/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -173,7 +173,7 @@ test('forward retry after rollback commits once and duplicate retry is rejected'
   assert.match(contactClosureRace, /DUPLICATE_RETRY REJECTED/);
 });
 
-test('v10 receipt consumes contact races, rollback and exact forward retry proof', () => {
+test('v11 receipt consumes contact races, rollback and exact forward retry proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
@@ -187,7 +187,7 @@ test('v10 receipt consumes contact races, rollback and exact forward retry proof
   assert.match(localHarness, /contactAtomicRollback/);
   assert.match(localHarness, /contactForwardRetry/);
   assert.match(localHarness, /contactDuplicateRetry/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v10/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v11/);
 });
 
 test('forward contact recovery survives a second PostgreSQL restart exactly', () => {
@@ -205,6 +205,16 @@ test('forward contact recovery survives a second PostgreSQL restart exactly', ()
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
       localHarness.indexOf('wait_for_postgres "after contact recovery restart"'),
   );
+});
+
+test('duplicate contact retry remains rejected without writes after restart', () => {
+  assert.match(localHarness, /post_restart_duplicate_log="\$\(mktemp\)"/);
+  assert.match(localHarness, /POST_RESTART_CONTACT_VERSION_CONFLICT/);
+  assert.match(localHarness, /Post-restart duplicate contact retry bypassed its durable version boundary/);
+  assert.match(localHarness, /post_restart_duplicate_state" != "\$contact_recovery_state/);
+  assert.match(localHarness, /Post-restart duplicate contact retry changed durable state/);
+  assert.match(localHarness, /contactPostRestartDuplicateRetry: "REJECTED"/);
+  assert.match(localHarness, /contactPostRestartDuplicateState/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {
