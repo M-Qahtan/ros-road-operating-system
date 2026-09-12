@@ -92,3 +92,4 @@ export * from './cognitive-road-state.js';
 export * from './saudi-road-safety.js';
 export * from './perception-benchmark.js';
 export * from './evidence-assurance.js';
+export * from './adapter-certification.js';
