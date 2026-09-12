@@ -156,6 +156,16 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE LOCAL LIVE JOURNEY IS PORTABLE ACROSS DOCKER AND PODMAN WITHOUT WEAKENING ITS RECEIPT; ENGINE EXECUTION REMAINS OPEN.** |
 | Next handoff | Execute the clean v6 journey on a local host with Docker or Podman and correct any PostgreSQL-level discrepancy it reveals. |
 
+### Exported client engine binding correction
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `022bd0460db264f1c3fdbf3204736142a1b2b73a`; `main` remained unchanged, the branch thirty-four commits ahead and zero behind, with no branch PR or workflow run. |
+| Safety failure corrected | The exported `psql` and `pg_isready` functions referenced the parent shell's unexported `container_engine`, which would fail under `set -u` in the child integration runner. They now use the validated exported `ROS_POSTGRES_CONTAINER_ENGINE` binding. |
+| Acceptance | A regression test isolates the exported function bodies, requires the exported binding, rejects the parent-local binding, and proves the environment export precedes the child runner invocation. |
+| Result | **THE V6 CHILD PROCESS NOW RECEIVES THE EXACT VALIDATED CONTAINER ENGINE; LIVE ENGINE EXECUTION REMAINS OPEN.** |
+| Next handoff | Execute the clean v6 journey on a Docker/Podman host and fix the first engine-level discrepancy, if any. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

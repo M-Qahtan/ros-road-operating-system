@@ -24,14 +24,27 @@ test('PostgreSQL integration runner fails explicitly before claiming an unexecut
 test('local journey uses Docker or Podman container-owned clients and restarts before the recovery assertion', () => {
   assert.match(localHarness, /for candidate_engine in docker podman/);
   assert.match(localHarness, /--volume "\$\(pwd\):\/workspace:ro"/);
-  assert.match(localHarness, /"\$container_engine" exec "\$container_name" pg_isready/);
-  assert.match(localHarness, /"\$container_engine" exec --interactive --workdir \/workspace "\$container_name" psql/);
+  assert.match(localHarness, /"\$ROS_POSTGRES_CONTAINER_ENGINE" exec "\$container_name" pg_isready/);
+  assert.match(localHarness, /"\$ROS_POSTGRES_CONTAINER_ENGINE" exec --interactive --workdir \/workspace "\$container_name" psql/);
   assert.match(localHarness, /export -f pg_isready psql/);
   assert.match(localHarness, /ROS_POSTGRES_CONTAINER_ENGINE="\$container_engine"/);
   assert.match(localHarness, /ROS_POSTGRES_RESTART_BEFORE_TEST="0011_ros_brain_journey_reconnect\.sql"/);
   assert.match(runner, /"\$ROS_POSTGRES_CONTAINER_ENGINE" restart -- "\$ROS_POSTGRES_RESTART_CONTAINER"/);
   assert.ok(runner.indexOf('restart -- "$ROS_POSTGRES_RESTART_CONTAINER"') < runner.indexOf('echo "Running ${test_file}"'));
   assert.match(runner, /wait_for_postgres "after restart"/);
+});
+
+test('exported database client functions use only the exported container engine binding', () => {
+  const exportedFunctions = localHarness.slice(
+    localHarness.indexOf('pg_isready()'),
+    localHarness.indexOf('export -f pg_isready psql'),
+  );
+  assert.match(exportedFunctions, /\$ROS_POSTGRES_CONTAINER_ENGINE/);
+  assert.doesNotMatch(exportedFunctions, /"\$container_engine"/);
+  assert.ok(
+    localHarness.indexOf('export ROS_POSTGRES_CONTAINER_ENGINE="$container_engine"') <
+      localHarness.indexOf('bash scripts/run-postgres-integration.sh'),
+  );
 });
 
 test('restart checkpoint is mandatory and post-restart exact retry remains singular', () => {

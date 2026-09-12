@@ -381,6 +381,10 @@ The disposable journey now accepts either Docker or Podman, preferring Docker wh
 
 Result: **THE NO-CLOUD LIVE JOURNEY CAN RUN THROUGH DOCKER OR PODMAN WITH ENGINE-BOUND V6 PROVENANCE; ACTUAL ENGINE EXECUTION REMAINS OPEN.** The next single handoff is to run the clean candidate on a host with either engine and fix any database-level discrepancy.
 
+The child-process binding correction resumed from GitHub candidate `022bd0460db264f1c3fdbf3204736142a1b2b73a`. Static review found that the exported `psql` and `pg_isready` functions still referenced the parent-only `container_engine` variable. Under the child runner's `set -u`, that would abort before the first readiness probe. Both functions now consume the already validated and exported `ROS_POSTGRES_CONTAINER_ENGINE`; a focused regression test requires this binding and its export ordering. Receipt schema v6 and every existing safety assertion remain unchanged.
+
+Result: **THE PORTABLE JOURNEY NO LONGER LOSES ITS ENGINE IDENTITY AT THE PROCESS BOUNDARY; LIVE POSTGRESQL EXECUTION REMAINS REQUIRED.** The next single handoff is to run the exact clean candidate through Docker or Podman and correct the first real engine discrepancy.
+
 Delivery uses review branch `codex/ros-brain-next-evidence-daily`. Opening a PR currently starts workflows whose successful completion triggers `.github/workflows/archive-ci-evidence.yml`, including AWS credential acquisition and S3/KMS archive operations. Therefore this cycle saves the branch for review without opening a PR or changing the archival gates. A reviewed no-spend workflow decision is needed before initiating that path; the branch push itself does not match the existing `push` workflow triggers, which target `main`.
 
 ## Release and pilot boundaries

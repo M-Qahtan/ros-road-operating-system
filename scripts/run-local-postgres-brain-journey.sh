@@ -60,11 +60,11 @@ trap cleanup EXIT
   postgis/postgis:16-3.4 >/dev/null
 
 pg_isready() {
-  "$container_engine" exec "$container_name" pg_isready "$@"
+  "$ROS_POSTGRES_CONTAINER_ENGINE" exec "$container_name" pg_isready "$@"
 }
 
 psql() {
-  "$container_engine" exec --interactive --workdir /workspace "$container_name" psql "$@"
+  "$ROS_POSTGRES_CONTAINER_ENGINE" exec --interactive --workdir /workspace "$container_name" psql "$@"
 }
 
 export -f pg_isready psql
