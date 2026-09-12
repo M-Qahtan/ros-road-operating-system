@@ -87,7 +87,7 @@ if [[ "${#restart_proof[@]}" -ne 4 ]]; then
   exit 2
 fi
 mapfile -t contact_closure_race_proof < "$contact_closure_race_proof_file"
-if [[ "${#contact_closure_race_proof[@]}" -ne 8 \
+if [[ "${#contact_closure_race_proof[@]}" -ne 10 \
   || "${contact_closure_race_proof[0]}" != "CONTACT_COMMAND" \
   || "${contact_closure_race_proof[1]}" != "COMMITTED" \
   || "${contact_closure_race_proof[2]}" != "CLOSURE" \
@@ -95,8 +95,10 @@ if [[ "${#contact_closure_race_proof[@]}" -ne 8 \
   || "${contact_closure_race_proof[4]}" != "CLOSURE" \
   || "${contact_closure_race_proof[5]}" != "COMMITTED" \
   || "${contact_closure_race_proof[6]}" != "CONTACT_COMMAND" \
-  || ! "${contact_closure_race_proof[7]}" =~ ^(INCIDENT_CLOSED|SERIALIZATION_FAILURE)$ ]]; then
-  echo "PostgreSQL journey passed without one exact safe winner in both contact/closure race orderings" >&2
+  || ! "${contact_closure_race_proof[7]}" =~ ^(INCIDENT_CLOSED|SERIALIZATION_FAILURE)$ \
+  || "${contact_closure_race_proof[8]}" != "ATOMIC_ROLLBACK" \
+  || "${contact_closure_race_proof[9]}" != "VERIFIED" ]]; then
+  echo "PostgreSQL journey passed without exact contact/closure winners and atomic rollback proof" >&2
   exit 2
 fi
 readonly system_identifier_before_restart="${restart_proof[0]}"
@@ -162,9 +164,10 @@ ROS_RECEIPT_CONTACT_RACE_WINNER="${contact_closure_race_proof[0]}" \
 ROS_RECEIPT_CONTACT_RACE_LOSER_RESULT="${contact_closure_race_proof[3]}" \
 ROS_RECEIPT_REVERSE_CONTACT_RACE_WINNER="${contact_closure_race_proof[4]}" \
 ROS_RECEIPT_REVERSE_CONTACT_RACE_LOSER_RESULT="${contact_closure_race_proof[7]}" \
+ROS_RECEIPT_CONTACT_ATOMIC_ROLLBACK="${contact_closure_race_proof[9]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v7",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v8",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -187,6 +190,7 @@ node -e '
     contactRaceLoserResult: process.env.ROS_RECEIPT_CONTACT_RACE_LOSER_RESULT,
     reverseContactRaceWinner: process.env.ROS_RECEIPT_REVERSE_CONTACT_RACE_WINNER,
     reverseContactRaceLoserResult: process.env.ROS_RECEIPT_REVERSE_CONTACT_RACE_LOSER_RESULT,
+    contactAtomicRollback: process.env.ROS_RECEIPT_CONTACT_ATOMIC_ROLLBACK,
     result: "PASS",
     externalArchiveReceipt: null,
   };

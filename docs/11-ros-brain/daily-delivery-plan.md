@@ -221,6 +221,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE CONTACT/CLOSURE RACE NOW FAILS CLOSED ACROSS THE WHOLE CONTACT COMMAND WRITE-SET, NOT ONLY THE SESSION ROW.** |
 | Next handoff | Execute the clean v7 journey on Docker or Podman and correct the first PostgreSQL transaction discrepancy it reveals. |
 
+### Contact-command atomic rollback proof
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `85d36a4982a637ba746f9fd6a425f36eef8e3f90`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | The PostgreSQL journey injects a deterministic failure after session update, Contact revision append, Outbox cancellation, and Audit append but before commit. The transaction must restore the exact pre-command state. |
+| Durable acceptance | After the injected failure, the case remains `RECOVERY / event 2 / session 1 / contact 1 / audit 0 / cancelled 0 / pending 1`. Receipt schema v8 requires `ATOMIC_ROLLBACK=VERIFIED` in addition to both race orderings. |
+| Safety limits | This is a local fail-closed recovery definition. It sends no provider message and grants no closure, emergency, collection, or control authority. Live PostgreSQL execution and REL-013 archival remain unverified. |
+| Result | **A MID-COMMAND FAILURE CANNOT BECOME A PARTIAL CONTACT MUTATION OR FALSE AUDIT CLAIM IN THE DEFINED JOURNEY.** |
+| Next handoff | Execute the clean v8 journey on Docker or Podman and correct the first PostgreSQL rollback/locking discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

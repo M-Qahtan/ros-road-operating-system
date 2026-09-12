@@ -15,7 +15,8 @@ readonly command_log="$(mktemp)"
 readonly closure_log="$(mktemp)"
 readonly closure_winner_log="$(mktemp)"
 readonly command_loser_log="$(mktemp)"
-cleanup() { rm -f "$command_log" "$closure_log" "$closure_winner_log" "$command_loser_log"; }
+readonly rollback_log="$(mktemp)"
+cleanup() { rm -f "$command_log" "$closure_log" "$closure_winner_log" "$command_loser_log" "$rollback_log"; }
 trap cleanup EXIT
 
 seed_case() {
@@ -232,8 +233,52 @@ if [[ "$closure_winner_status" -ne 0 || "$command_loser_status" -eq 0 || -z "$co
 closure_race_state="$(psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.id='10000000-0000-4000-8000-000000000004'")"
 [[ "$closure_race_state" == 'CLOSED|3|1|1|0|0|1' ]] || { echo "Unsafe closure-winner state: $closure_race_state" >&2; exit 2; }
 
+seed_case '10000000-0000-4000-8000-000000000005' 'contact-race-rollback' "$(printf '6%.0s' {1..64})" '2026-09-08T20:08:00Z'
+
+set +e
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 >"$rollback_log" 2>&1 <<'SQL'
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+SELECT status, version FROM road_events
+WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
+  AND id='10000000-0000-4000-8000-000000000005' FOR UPDATE;
+UPDATE ros_eye_contact_sessions SET state='ESCALATED', version=2,
+  automation_suppressed=true, next_action_at=NULL, response_deadline_at=NULL,
+  updated_at='2026-09-08T20:08:01Z'
+WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000005'
+  AND session_id='contact-race-rollback' AND version=1;
+INSERT INTO ros_eye_contact_revision_ledger (tenant_id, purpose, case_id, revision, status, digest, recorded_at)
+VALUES ('riyadh-pilot', 'road-safety-response', '10000000-0000-4000-8000-000000000005', 2, 'PRESENT', repeat('9', 64), '2026-09-08T20:08:01Z');
+UPDATE ros_eye_contact_outbox SET cancelled_at='2026-09-08T20:08:01Z'
+WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000005'
+  AND session_id='contact-race-rollback' AND delivered_at IS NULL AND cancelled_at IS NULL;
+INSERT INTO ros_eye_contact_audit (
+  tenant_id, case_id, session_id, event_id, event_type, state, session_version,
+  actor_type, actor_id, authorized_by_role, authority_policy_version, reason_code,
+  occurred_at, trace_id, runtime_policy_version
+) VALUES (
+  'riyadh-pilot', '10000000-0000-4000-8000-000000000005', 'contact-race-rollback',
+  'contact-race-rollback-audit', 'OPERATOR_ESCALATION', 'ESCALATED', 2,
+  'OPERATOR', '20000000-0000-4000-8000-000000000001', 'OPERATOR',
+  'ros-human-safety-authority.v1', 'SUPERVISOR_REVIEW', '2026-09-08T20:08:01Z',
+  '30000000-0000-4000-8000-000000000009', 'ros-eye.contact-runtime.v6'
+);
+DO $$ BEGIN RAISE EXCEPTION 'CONTACT_COMMAND_FAULT_INJECTED'; END $$;
+COMMIT;
+SQL
+rollback_status=$?
+set -e
+rollback_output="$(cat "$rollback_log")"
+if [[ "$rollback_status" -eq 0 || "$rollback_output" != *CONTACT_COMMAND_FAULT_INJECTED* ]]; then
+  echo "Injected contact-command fault did not abort the transaction" >&2
+  echo "$rollback_output" >&2
+  exit 2
+fi
+rollback_state="$(psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.id='10000000-0000-4000-8000-000000000005'")"
+[[ "$rollback_state" == 'RECOVERY|2|1|1|0|0|1' ]] || { echo "Injected command fault left a partial write-set: $rollback_state" >&2; exit 2; }
+
 printf '%s\n' \
   CONTACT_COMMAND COMMITTED CLOSURE "$closure_result" \
   CLOSURE COMMITTED CONTACT_COMMAND "$command_loser_result" \
+  ATOMIC_ROLLBACK VERIFIED \
   > "$ROS_POSTGRES_CONTACT_CLOSURE_RACE_PROOF_FILE"
 echo "PostgreSQL contact-command/closure races passed with one safe winner in each ordering"

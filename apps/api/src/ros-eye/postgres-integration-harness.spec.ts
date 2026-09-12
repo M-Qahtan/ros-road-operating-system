@@ -93,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v7/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v8/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -158,14 +158,24 @@ test('contact race treats session, revision, audit and pending outbox as one com
   assert.match(contactClosureRace, /contact-race-closure-wins-audit/);
 });
 
-test('v7 receipt consumes both exact contact-command race dispositions', () => {
+test('fault after the full contact command write-set rolls the transaction back exactly', () => {
+  assert.match(contactClosureRace, /CONTACT_COMMAND_FAULT_INJECTED/);
+  assert.match(contactClosureRace, /RECOVERY\|2\|1\|1\|0\|0\|1/);
+  assert.match(contactClosureRace, /partial write-set/);
+  assert.match(contactClosureRace, /ATOMIC_ROLLBACK VERIFIED/);
+});
+
+test('v8 receipt consumes both exact contact-command races and rollback proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
   assert.match(localHarness, /contact_closure_race_proof\[4\].*CLOSURE/);
   assert.match(localHarness, /contact_closure_race_proof\[7\].*INCIDENT_CLOSED/);
+  assert.match(localHarness, /contact_closure_race_proof\[8\].*ATOMIC_ROLLBACK/);
+  assert.match(localHarness, /contact_closure_race_proof\[9\].*VERIFIED/);
   assert.match(localHarness, /contactClosureRaceVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v7/);
+  assert.match(localHarness, /contactAtomicRollback/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v8/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {
