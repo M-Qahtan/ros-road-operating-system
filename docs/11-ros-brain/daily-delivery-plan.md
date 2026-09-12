@@ -232,6 +232,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A MID-COMMAND FAILURE CANNOT BECOME A PARTIAL CONTACT MUTATION OR FALSE AUDIT CLAIM IN THE DEFINED JOURNEY.** |
 | Next handoff | Execute the clean v8 journey on Docker or Podman and correct the first PostgreSQL rollback/locking discrepancy it reveals. |
 
+### Contact-command forward recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `e2082c7c779cf5ee1f62019f6e367b39cda504a4`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty-one commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | After the injected mid-command rollback, the journey retries from the restored parent/contact versions and requires one complete session, revision, Audit, and Outbox-cancellation commit. An immediate duplicate retry must lose at the Contact version boundary without changing the recovered state. |
+| Durable acceptance | Forward recovery ends at `RECOVERY / event 2 / session 2 / contact 2 / audit 1 / cancelled 1 / pending 0`; duplicate retry preserves `session 2 / contact 2 / audit 1 / cancelled 1`. Receipt schema v9 requires both `FORWARD_RETRY=COMMITTED` and `DUPLICATE_RETRY=REJECTED`. |
+| Safety limits | Recovery remains a local PostgreSQL test definition with simulated Outbox state and no provider call, dispatch, closure authority, or activation. Live engine execution and REL-013 archival remain unverified. |
+| Result | **A ROLLED-BACK CONTACT COMMAND HAS A SINGLE FORWARD RECOVERY PATH WITHOUT DUPLICATING AUDIT OR OUTBOX EFFECTS.** |
+| Next handoff | Execute the clean v9 journey on Docker or Podman and correct the first PostgreSQL recovery discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

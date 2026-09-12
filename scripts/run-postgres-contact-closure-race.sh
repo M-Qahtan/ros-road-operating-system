@@ -16,7 +16,8 @@ readonly closure_log="$(mktemp)"
 readonly closure_winner_log="$(mktemp)"
 readonly command_loser_log="$(mktemp)"
 readonly rollback_log="$(mktemp)"
-cleanup() { rm -f "$command_log" "$closure_log" "$closure_winner_log" "$command_loser_log" "$rollback_log"; }
+readonly duplicate_retry_log="$(mktemp)"
+cleanup() { rm -f "$command_log" "$closure_log" "$closure_winner_log" "$command_loser_log" "$rollback_log" "$duplicate_retry_log"; }
 trap cleanup EXIT
 
 seed_case() {
@@ -276,9 +277,75 @@ fi
 rollback_state="$(psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.id='10000000-0000-4000-8000-000000000005'")"
 [[ "$rollback_state" == 'RECOVERY|2|1|1|0|0|1' ]] || { echo "Injected command fault left a partial write-set: $rollback_state" >&2; exit 2; }
 
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+DO $$ DECLARE parent_status road_event_status; parent_version integer; BEGIN
+  SELECT status, version INTO parent_status, parent_version FROM road_events
+  WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
+    AND id='10000000-0000-4000-8000-000000000005' FOR UPDATE;
+  IF parent_status='CLOSED' THEN RAISE EXCEPTION 'INCIDENT_CLOSED'; END IF;
+  IF parent_version<>2 THEN RAISE EXCEPTION 'PARENT_VERSION_CONFLICT'; END IF;
+END $$;
+UPDATE ros_eye_contact_sessions SET state='ESCALATED', version=2,
+  automation_suppressed=true, next_action_at=NULL, response_deadline_at=NULL,
+  updated_at='2026-09-08T20:08:02Z'
+WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000005'
+  AND session_id='contact-race-rollback' AND version=1;
+INSERT INTO ros_eye_contact_revision_ledger (tenant_id, purpose, case_id, revision, status, digest, recorded_at)
+VALUES ('riyadh-pilot', 'road-safety-response', '10000000-0000-4000-8000-000000000005', 2, 'PRESENT', repeat('9', 64), '2026-09-08T20:08:02Z');
+UPDATE ros_eye_contact_outbox SET cancelled_at='2026-09-08T20:08:02Z'
+WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000005'
+  AND session_id='contact-race-rollback' AND delivered_at IS NULL AND cancelled_at IS NULL;
+INSERT INTO ros_eye_contact_audit (
+  tenant_id, case_id, session_id, event_id, event_type, state, session_version,
+  actor_type, actor_id, authorized_by_role, authority_policy_version, reason_code,
+  occurred_at, trace_id, runtime_policy_version
+) VALUES (
+  'riyadh-pilot', '10000000-0000-4000-8000-000000000005', 'contact-race-rollback',
+  'contact-race-rollback-audit', 'OPERATOR_ESCALATION', 'ESCALATED', 2,
+  'OPERATOR', '20000000-0000-4000-8000-000000000001', 'OPERATOR',
+  'ros-human-safety-authority.v1', 'SUPERVISOR_REVIEW', '2026-09-08T20:08:02Z',
+  '30000000-0000-4000-8000-000000000009', 'ros-eye.contact-runtime.v6'
+);
+COMMIT;
+SQL
+retry_state="$(psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.id='10000000-0000-4000-8000-000000000005'")"
+[[ "$retry_state" == 'RECOVERY|2|2|2|1|1|0' ]] || { echo "Forward retry did not commit one complete write-set: $retry_state" >&2; exit 2; }
+
+set +e
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 >"$duplicate_retry_log" 2>&1 <<'SQL'
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+DO $$ DECLARE current_version integer; BEGIN
+  SELECT version INTO current_version FROM road_events
+  WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
+    AND id='10000000-0000-4000-8000-000000000005' FOR UPDATE;
+  IF current_version<>2 THEN RAISE EXCEPTION 'PARENT_VERSION_CONFLICT'; END IF;
+END $$;
+DO $$ DECLARE changed integer; BEGIN
+  UPDATE ros_eye_contact_sessions SET state='ESCALATED', version=2
+  WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000005'
+    AND session_id='contact-race-rollback' AND version=1;
+  GET DIAGNOSTICS changed = ROW_COUNT;
+  IF changed<>1 THEN RAISE EXCEPTION 'CONTACT_VERSION_CONFLICT'; END IF;
+END $$;
+COMMIT;
+SQL
+duplicate_retry_status=$?
+set -e
+duplicate_retry_output="$(cat "$duplicate_retry_log")"
+if [[ "$duplicate_retry_status" -eq 0 || "$duplicate_retry_output" != *CONTACT_VERSION_CONFLICT* ]]; then
+  echo "Duplicate forward retry was not rejected by the restored contact version boundary" >&2
+  echo "$duplicate_retry_output" >&2
+  exit 2
+fi
+duplicate_retry_state="$(psql "$DATABASE_URL" -Atqc "SELECT session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=session.tenant_id AND ledger.purpose='road-safety-response' AND ledger.case_id=session.case_id::uuid) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=session.tenant_id AND audit.case_id=session.case_id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=session.tenant_id AND outbox.case_id=session.case_id AND outbox.cancelled_at IS NOT NULL) FROM ros_eye_contact_sessions session WHERE session.tenant_id='riyadh-pilot' AND session.case_id='10000000-0000-4000-8000-000000000005'")"
+[[ "$duplicate_retry_state" == '2|2|1|1' ]] || { echo "Duplicate retry changed the committed recovery state: $duplicate_retry_state" >&2; exit 2; }
+
 printf '%s\n' \
   CONTACT_COMMAND COMMITTED CLOSURE "$closure_result" \
   CLOSURE COMMITTED CONTACT_COMMAND "$command_loser_result" \
   ATOMIC_ROLLBACK VERIFIED \
+  FORWARD_RETRY COMMITTED \
+  DUPLICATE_RETRY REJECTED \
   > "$ROS_POSTGRES_CONTACT_CLOSURE_RACE_PROOF_FILE"
 echo "PostgreSQL contact-command/closure races passed with one safe winner in each ordering"
