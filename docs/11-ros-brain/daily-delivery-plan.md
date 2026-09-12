@@ -210,6 +210,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **BOTH CONTACT-COMMAND/CLOSURE RACE ORDERINGS ARE DEFINED FAIL-CLOSED; LIVE ENGINE EXECUTION REMAINS OPEN.** |
 | Next handoff | Execute the clean v7 journey on Docker or Podman and correct the first PostgreSQL lock/isolation discrepancy it reveals. |
 
+### Atomic contact-command race write-set
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `20ace28737f2ddb14c6ace2d647344859ff362b7`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch thirty-nine commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | Each contact/closure race now exercises the complete durable command write-set: guarded session version, append-only Contact revision, immutable operator audit, and cancellation of the pending Outbox action. |
+| Durable acceptance | A command winner must end at `RECOVERY / event 2 / session 2 / contact 2 / audit 1 / cancelled 1 / pending 0`. A closure winner must end at `CLOSED / event 3 / session 1 / contact 1 / audit 0 / cancelled 0 / pending 1`; any partial loser write blocks the v7 receipt. |
+| Safety limits | Pending Outbox cancellation is local simulated state only; no provider is called and no message, emergency action, or external authority is dispatched. Live PostgreSQL execution and REL-013 archival remain unverified. |
+| Result | **THE CONTACT/CLOSURE RACE NOW FAILS CLOSED ACROSS THE WHOLE CONTACT COMMAND WRITE-SET, NOT ONLY THE SESSION ROW.** |
+| Next handoff | Execute the clean v7 journey on Docker or Podman and correct the first PostgreSQL transaction discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

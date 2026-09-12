@@ -145,9 +145,17 @@ test('contact command and closure race in both row-lock orderings', () => {
   assert.match(contactClosureRace, /ros_brain_contact_command_waiter/);
   assert.match(contactClosureRace, /SOURCE_SNAPSHOT_CHANGED/);
   assert.match(contactClosureRace, /INCIDENT_CLOSED/);
-  assert.match(contactClosureRace, /RECOVERY\|2\|2\|2/);
-  assert.match(contactClosureRace, /CLOSED\|3\|1\|1/);
+  assert.match(contactClosureRace, /RECOVERY\|2\|2\|2\|1\|1\|0/);
+  assert.match(contactClosureRace, /CLOSED\|3\|1\|1\|0\|0\|1/);
   assert.match(runner, /bash scripts\/run-postgres-contact-closure-race\.sh/);
+});
+
+test('contact race treats session, revision, audit and pending outbox as one command write-set', () => {
+  assert.match(contactClosureRace, /INSERT INTO ros_eye_contact_outbox/);
+  assert.match(contactClosureRace, /UPDATE ros_eye_contact_outbox SET cancelled_at=/);
+  assert.match(contactClosureRace, /INSERT INTO ros_eye_contact_audit/);
+  assert.match(contactClosureRace, /contact-race-command-wins-audit/);
+  assert.match(contactClosureRace, /contact-race-closure-wins-audit/);
 });
 
 test('v7 receipt consumes both exact contact-command race dispositions', () => {

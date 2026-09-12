@@ -39,11 +39,18 @@ VALUES
 INSERT INTO ros_eye_contact_sessions (
   tenant_id, case_id, session_id, state, version, protocol_version, prompt_policy_version,
   accessibility_policy_version, language, identity_confidence, attempt_count,
-  last_interaction_at, automation_suppressed, accessibility, updated_at
+  next_action_at, last_interaction_at, automation_suppressed, accessibility, updated_at
 ) VALUES (
   'riyadh-pilot', :'case_id', :'session_id', 'HUMAN_REVIEW', 1,
   'contact.v1', 'prompt.v1', 'accessibility.v1', 'ar', 'UNVERIFIED', 0,
-  :'occurred_at', true, '{}'::jsonb, :'occurred_at'
+  :'occurred_at', :'occurred_at', false, '{}'::jsonb, :'occurred_at'
+);
+INSERT INTO ros_eye_contact_outbox (
+  tenant_id, case_id, session_id, message_id, channel, prompt_id,
+  idempotency_key, attempt, available_at
+) VALUES (
+  'riyadh-pilot', :'case_id', :'session_id', 'pending-contact-action', 'IN_APP',
+  'human-safety-follow-up', 'contact-race-pending-action', 1, :'occurred_at'
 );
 INSERT INTO ros_eye_contact_revision_ledger (
   tenant_id, purpose, case_id, revision, status, digest, recorded_at
@@ -93,11 +100,27 @@ DO $$ DECLARE parent_status road_event_status; parent_version integer; BEGIN
 END $$;
 SELECT pg_advisory_lock(20260909, 3);
 SELECT pg_sleep(10);
-UPDATE ros_eye_contact_sessions SET state='ESCALATED', version=2, updated_at='2026-09-08T20:06:01Z'
+UPDATE ros_eye_contact_sessions SET state='ESCALATED', version=2,
+  automation_suppressed=true, next_action_at=NULL, response_deadline_at=NULL,
+  updated_at='2026-09-08T20:06:01Z'
 WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000003'
   AND session_id='contact-race-command-wins' AND version=1;
 INSERT INTO ros_eye_contact_revision_ledger (tenant_id, purpose, case_id, revision, status, digest, recorded_at)
 VALUES ('riyadh-pilot', 'road-safety-response', '10000000-0000-4000-8000-000000000003', 2, 'PRESENT', repeat('9', 64), '2026-09-08T20:06:01Z');
+UPDATE ros_eye_contact_outbox SET cancelled_at='2026-09-08T20:06:01Z'
+WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000003'
+  AND session_id='contact-race-command-wins' AND delivered_at IS NULL AND cancelled_at IS NULL;
+INSERT INTO ros_eye_contact_audit (
+  tenant_id, case_id, session_id, event_id, event_type, state, session_version,
+  actor_type, actor_id, authorized_by_role, authority_policy_version, reason_code,
+  occurred_at, trace_id, runtime_policy_version
+) VALUES (
+  'riyadh-pilot', '10000000-0000-4000-8000-000000000003', 'contact-race-command-wins',
+  'contact-race-command-wins-audit', 'OPERATOR_ESCALATION', 'ESCALATED', 2,
+  'OPERATOR', '20000000-0000-4000-8000-000000000001', 'OPERATOR',
+  'ros-human-safety-authority.v1', 'SUPERVISOR_REVIEW', '2026-09-08T20:06:01Z',
+  '30000000-0000-4000-8000-000000000007', 'ros-eye.contact-runtime.v6'
+);
 COMMIT;
 SQL
 readonly command_pid=$!
@@ -141,8 +164,8 @@ closure_output="$(cat "$closure_log")"; closure_result=''
 [[ "$closure_output" == *SOURCE_SNAPSHOT_CHANGED* ]] && closure_result=SOURCE_SNAPSHOT_CHANGED
 [[ "$closure_output" == *"could not serialize access"* ]] && closure_result=SERIALIZATION_FAILURE
 if [[ "$command_status" -ne 0 || "$closure_status" -eq 0 || -z "$closure_result" ]]; then echo "Contact-command winner race was not fail-closed" >&2; cat "$command_log" "$closure_log" >&2; exit 2; fi
-command_race_state="$(psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || max(ledger.revision)::text FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text JOIN ros_eye_contact_revision_ledger ledger ON ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id WHERE event.id='10000000-0000-4000-8000-000000000003' GROUP BY event.status,event.version,session.version")"
-[[ "$command_race_state" == 'RECOVERY|2|2|2' ]] || { echo "Unsafe command-winner state: $command_race_state" >&2; exit 2; }
+command_race_state="$(psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.id='10000000-0000-4000-8000-000000000003'")"
+[[ "$command_race_state" == 'RECOVERY|2|2|2|1|1|0' ]] || { echo "Unsafe command-winner state: $command_race_state" >&2; exit 2; }
 
 seed_case '10000000-0000-4000-8000-000000000004' 'contact-race-closure-wins' "$(printf '5%.0s' {1..64})" '2026-09-08T20:07:00Z'
 
@@ -171,11 +194,27 @@ DO $$ DECLARE parent_status road_event_status; BEGIN
     AND purpose='road-safety-response' AND id='10000000-0000-4000-8000-000000000004' FOR UPDATE;
   IF parent_status='CLOSED' THEN RAISE EXCEPTION 'INCIDENT_CLOSED'; END IF;
 END $$;
-UPDATE ros_eye_contact_sessions SET state='ESCALATED', version=2, updated_at='2026-09-08T20:07:01Z'
+UPDATE ros_eye_contact_sessions SET state='ESCALATED', version=2,
+  automation_suppressed=true, next_action_at=NULL, response_deadline_at=NULL,
+  updated_at='2026-09-08T20:07:01Z'
 WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004'
   AND session_id='contact-race-closure-wins' AND version=1;
 INSERT INTO ros_eye_contact_revision_ledger (tenant_id, purpose, case_id, revision, status, digest, recorded_at)
 VALUES ('riyadh-pilot', 'road-safety-response', '10000000-0000-4000-8000-000000000004', 2, 'PRESENT', repeat('9', 64), '2026-09-08T20:07:01Z');
+UPDATE ros_eye_contact_outbox SET cancelled_at='2026-09-08T20:07:01Z'
+WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004'
+  AND session_id='contact-race-closure-wins' AND delivered_at IS NULL AND cancelled_at IS NULL;
+INSERT INTO ros_eye_contact_audit (
+  tenant_id, case_id, session_id, event_id, event_type, state, session_version,
+  actor_type, actor_id, authorized_by_role, authority_policy_version, reason_code,
+  occurred_at, trace_id, runtime_policy_version
+) VALUES (
+  'riyadh-pilot', '10000000-0000-4000-8000-000000000004', 'contact-race-closure-wins',
+  'contact-race-closure-wins-audit', 'OPERATOR_ESCALATION', 'ESCALATED', 2,
+  'OPERATOR', '20000000-0000-4000-8000-000000000001', 'OPERATOR',
+  'ros-human-safety-authority.v1', 'SUPERVISOR_REVIEW', '2026-09-08T20:07:01Z',
+  '30000000-0000-4000-8000-000000000008', 'ros-eye.contact-runtime.v6'
+);
 COMMIT;
 SQL
 readonly command_loser_pid=$!
@@ -190,8 +229,8 @@ command_loser_output="$(cat "$command_loser_log")"; command_loser_result=''
 [[ "$command_loser_output" == *INCIDENT_CLOSED* ]] && command_loser_result=INCIDENT_CLOSED
 [[ "$command_loser_output" == *"could not serialize access"* ]] && command_loser_result=SERIALIZATION_FAILURE
 if [[ "$closure_winner_status" -ne 0 || "$command_loser_status" -eq 0 || -z "$command_loser_result" ]]; then echo "Closure-winner contact race was not fail-closed" >&2; cat "$closure_winner_log" "$command_loser_log" >&2; exit 2; fi
-closure_race_state="$(psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || max(ledger.revision)::text FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text JOIN ros_eye_contact_revision_ledger ledger ON ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id WHERE event.id='10000000-0000-4000-8000-000000000004' GROUP BY event.status,event.version,session.version")"
-[[ "$closure_race_state" == 'CLOSED|3|1|1' ]] || { echo "Unsafe closure-winner state: $closure_race_state" >&2; exit 2; }
+closure_race_state="$(psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.id='10000000-0000-4000-8000-000000000004'")"
+[[ "$closure_race_state" == 'CLOSED|3|1|1|0|0|1' ]] || { echo "Unsafe closure-winner state: $closure_race_state" >&2; exit 2; }
 
 printf '%s\n' \
   CONTACT_COMMAND COMMITTED CLOSURE "$closure_result" \
