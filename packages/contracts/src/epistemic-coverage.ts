@@ -1,6 +1,7 @@
 import type { SensorDegradationCause, SensorSourceClass } from './sensor-perception.js';
 
 export const EPISTEMIC_COVERAGE_ASSERTION_SCHEMA = 'ros.epistemic-coverage-assertion/v1' as const;
+export const EPISTEMIC_COVERAGE_CONTRADICTION_SCHEMA = 'ros.epistemic-coverage-contradiction/v1' as const;
 export const EPISTEMIC_COVERAGE_MAP_SCHEMA = 'ros.epistemic-coverage-map/v1' as const;
 
 export type EpistemicCoverageDimension =
@@ -45,9 +46,12 @@ export interface EpistemicCoverageRegion {
 }
 
 /**
- * A source may assert observability of a region, but the assertion itself is
- * not trusted until ROS binds it to a current admitted observation and a valid
- * Epistemic Independence Lease.
+ * A source may assert its own observability of a region, but the assertion
+ * itself is not trusted until ROS binds it to a current admitted observation
+ * and a valid Epistemic Independence Lease.
+ *
+ * BLIND here means this evidence source cannot observe the requested dimension
+ * in the bound region. It does not mean another independent modality cannot.
  */
 export interface EpistemicCoverageAssertion {
   readonly schema: typeof EPISTEMIC_COVERAGE_ASSERTION_SCHEMA;
@@ -61,6 +65,23 @@ export interface EpistemicCoverageAssertion {
   readonly degradationCauses: readonly SensorDegradationCause[];
   readonly reasonCodes: readonly string[];
   readonly validUntil: string;
+  readonly authority: 'NONE';
+}
+
+/**
+ * Material contradiction is a separate evidence product. It cannot be inferred
+ * merely because one sensor is blind while another sensor has coverage.
+ */
+export interface EpistemicCoverageContradiction {
+  readonly schema: typeof EPISTEMIC_COVERAGE_CONTRADICTION_SCHEMA;
+  readonly contradictionId: string;
+  readonly regionId: string;
+  readonly dimension: EpistemicCoverageDimension;
+  readonly observationIds: readonly string[];
+  readonly independenceClassDigests: readonly string[];
+  readonly reason: string;
+  readonly validUntil: string;
+  readonly material: true;
   readonly authority: 'NONE';
 }
 
@@ -118,6 +139,25 @@ const ASSERTION_STATES = new Set<EpistemicCoverageAssertionState>(['COVERED', 'D
 const REGION_TYPES = new Set<EpistemicRegionType>([
   'LANE', 'CROSSWALK', 'INTERSECTION_CONFLICT_ZONE', 'ROAD_SEGMENT', 'SHOULDER', 'CUSTOM',
 ]);
+const DEGRADATION_CAUSES = new Set<SensorDegradationCause>([
+  'GLARE',
+  'LOW_LIGHT',
+  'THERMAL_HAZE',
+  'DUST',
+  'SANDSTORM',
+  'SMOKE',
+  'FIRE_SATURATION',
+  'PARTIAL_OCCLUSION',
+  'DIRTY_APERTURE',
+  'SIGNAL_NOISE',
+  'CLOCK_DRIFT',
+  'CALIBRATION_DRIFT',
+  'PACKET_LOSS',
+  'FRAME_DROP',
+  'NETWORK_LATENCY',
+  'POWER_DEGRADATION',
+  'UNKNOWN',
+]);
 
 export function validateEpistemicCoverageRegion(value: EpistemicCoverageRegion): readonly string[] {
   const errors: string[] = [];
@@ -145,9 +185,39 @@ export function validateEpistemicCoverageAssertion(value: EpistemicCoverageAsser
   if (typeof raw.state !== 'string' || !ASSERTION_STATES.has(raw.state as EpistemicCoverageAssertionState)) errors.push('INVALID_ASSERTION_STATE');
   if (typeof raw.confidence !== 'number' || !Number.isFinite(raw.confidence) || raw.confidence < 0 || raw.confidence > 1) errors.push('INVALID_ASSERTION_CONFIDENCE');
   if (typeof raw.occlusionFraction !== 'number' || !Number.isFinite(raw.occlusionFraction) || raw.occlusionFraction < 0 || raw.occlusionFraction > 1) errors.push('INVALID_OCCLUSION_FRACTION');
-  if (!Array.isArray(raw.degradationCauses) || raw.degradationCauses.some((item) => typeof item !== 'string')) errors.push('INVALID_DEGRADATION_CAUSES');
+  if (!Array.isArray(raw.degradationCauses)
+    || raw.degradationCauses.some((item) => typeof item !== 'string' || !DEGRADATION_CAUSES.has(item as SensorDegradationCause))) {
+    errors.push('INVALID_DEGRADATION_CAUSES');
+  }
   if (!Array.isArray(raw.reasonCodes) || raw.reasonCodes.some((item) => typeof item !== 'string' || item.length === 0 || item.length > 128)) errors.push('INVALID_REASON_CODES');
   if (typeof raw.validUntil !== 'string' || !Number.isFinite(Date.parse(raw.validUntil))) errors.push('INVALID_ASSERTION_VALID_UNTIL');
+  if (raw.authority !== 'NONE') errors.push('COVERAGE_AUTHORITY_FORBIDDEN');
+  return errors;
+}
+
+export function validateEpistemicCoverageContradiction(value: EpistemicCoverageContradiction): readonly string[] {
+  const errors: string[] = [];
+  const raw = value as unknown as Record<string, unknown> | null;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return ['INVALID_COVERAGE_CONTRADICTION'];
+  if (raw.schema !== EPISTEMIC_COVERAGE_CONTRADICTION_SCHEMA) errors.push('UNSUPPORTED_COVERAGE_CONTRADICTION_SCHEMA');
+  if (!boundedIdentifier(raw.contradictionId)) errors.push('INVALID_CONTRADICTION_ID');
+  if (!boundedIdentifier(raw.regionId)) errors.push('INVALID_REGION_ID');
+  if (typeof raw.dimension !== 'string' || !DIMENSIONS.has(raw.dimension as EpistemicCoverageDimension)) errors.push('INVALID_COVERAGE_DIMENSION');
+  if (!Array.isArray(raw.observationIds) || raw.observationIds.length < 2 || raw.observationIds.some((item) => !boundedIdentifier(item))) {
+    errors.push('INVALID_CONTRADICTION_OBSERVATIONS');
+  }
+  if (!Array.isArray(raw.independenceClassDigests)
+    || raw.independenceClassDigests.length < 2
+    || raw.independenceClassDigests.some((item) => typeof item !== 'string' || !SHA256_HEX.test(item))) {
+    errors.push('INVALID_CONTRADICTION_INDEPENDENCE_CLASSES');
+  }
+  if (Array.isArray(raw.independenceClassDigests)
+    && new Set(raw.independenceClassDigests).size !== raw.independenceClassDigests.length) {
+    errors.push('DUPLICATE_CONTRADICTION_INDEPENDENCE_CLASS');
+  }
+  if (typeof raw.reason !== 'string' || raw.reason.trim().length === 0 || raw.reason.length > 256) errors.push('INVALID_CONTRADICTION_REASON');
+  if (typeof raw.validUntil !== 'string' || !Number.isFinite(Date.parse(raw.validUntil))) errors.push('INVALID_CONTRADICTION_VALID_UNTIL');
+  if (raw.material !== true) errors.push('COVERAGE_CONTRADICTION_NOT_MATERIAL');
   if (raw.authority !== 'NONE') errors.push('COVERAGE_AUTHORITY_FORBIDDEN');
   return errors;
 }
