@@ -375,6 +375,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A PROVIDER-REPORTED SUCCESS THAT CANNOT BE DURABLY ACKNOWLEDGED IS ESCALATED AS AMBIGUOUS, NEVER MISLABELLED AS CANCELLED.** |
 | Next handoff | Bind the `HUMAN_REVIEW` disposition to the PostgreSQL journey result after the v18 zero-write proof. |
 
+### Candidate-bound ambiguous delivery disposition
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `0104f0662514c17016d32c5f731a64ea8cce0d76`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch fifty-four commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean. |
+| Added behavior | The disposable journey now derives `HUMAN_REVIEW` only from the combined result `provider SENT / delivery not recorded / retry not recorded / parent CLOSED / reservation unchanged`. Missing any member leaves the disposition `CONFLICT` and blocks the receipt. |
+| Durable acceptance | Receipt schema v19 records both the provider result and the derived disposition alongside the SQL finalization and rollback state, bound to the clean candidate and journey manifest. |
+| Safety limits | The journey uses a declared test provider result and does not contact an external service. Docker/Podman remains unavailable, so no v19 engine receipt exists; local evidence does not replace REL-013 external archival. |
+| Result | **THE ENGINE RECEIPT CANNOT LABEL AN UNACKNOWLEDGED PROVIDER SUCCESS CANCELLED OR PASS WITHOUT HUMAN REVIEW.** |
+| Next handoff | Execute the clean v19 journey on Docker or Podman and correct the first real finalization, disposition, or rollback discrepancy. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

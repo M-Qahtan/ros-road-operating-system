@@ -531,11 +531,12 @@ SET retry_count=(SELECT count(*) FROM retried);
 \set QUIET 0
 SELECT CASE
   WHEN proof.delivered_count=0 AND proof.retry_count=0
+    AND parent.status='CLOSED'
     AND message.lease_owner='pre-closure-finalization-worker'
     AND message.delivery_token='closed-parent-finalization-token'
     AND message.delivered_at IS NULL AND message.cancelled_at IS NULL
     AND message.last_error IS NULL AND message.last_error_code IS NULL
-  THEN 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|RESERVATION_UNCHANGED'
+  THEN 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|PARENT_CLOSED|RESERVATION_UNCHANGED'
   ELSE 'UNSAFE_FINALIZATION_RESULT'
 END
 FROM closed_parent_finalization_proof AS proof
@@ -543,13 +544,27 @@ JOIN ros_eye_contact_outbox AS message
   ON message.tenant_id='riyadh-pilot'
   AND message.case_id='10000000-0000-4000-8000-000000000004'
   AND message.session_id='contact-race-closure-wins'
-  AND message.message_id='pending-contact-action';
+  AND message.message_id='pending-contact-action'
+JOIN road_events AS parent
+  ON parent.tenant_id=message.tenant_id AND parent.id::text=message.case_id;
 \set QUIET 1
 ROLLBACK;
 SQL
 )"
-if [[ "$closed_parent_outbox_finalization_result" != 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|RESERVATION_UNCHANGED' ]]; then
+if [[ "$closed_parent_outbox_finalization_result" != 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|PARENT_CLOSED|RESERVATION_UNCHANGED' ]]; then
   echo "Closed-parent Contact result crossed its durable finalization fence: $closed_parent_outbox_finalization_result" >&2
+  exit 2
+fi
+
+readonly closed_parent_provider_result='SENT'
+closed_parent_provider_disposition='CONFLICT'
+if [[ "$closed_parent_provider_result" == 'SENT' \
+  && "$closed_parent_outbox_finalization_result" == 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|PARENT_CLOSED|RESERVATION_UNCHANGED' ]]; then
+  closed_parent_provider_disposition='HUMAN_REVIEW'
+fi
+readonly closed_parent_provider_disposition
+if [[ "$closed_parent_provider_disposition" != 'HUMAN_REVIEW' ]]; then
+  echo "Ambiguous closed-parent provider success did not escalate to human review" >&2
   exit 2
 fi
 
@@ -624,9 +639,11 @@ ROS_RECEIPT_CONTACT_STALE_PARENT_STATE="$post_restart_stale_parent_state" \
 ROS_RECEIPT_CONTACT_CLOSED_PARENT_STATE="$post_restart_closed_parent_state" \
 ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE="$closed_parent_outbox_state" \
 ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE_AFTER_FINALIZATION="$closed_parent_outbox_state_after_finalization" \
+ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_RESULT="$closed_parent_provider_result" \
+ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_DISPOSITION="$closed_parent_provider_disposition" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v18",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v19",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -686,6 +703,10 @@ node -e '
     contactClosedParentReservationAfterFinalization: "UNCHANGED",
     contactClosedParentOutboxStateAfterFinalization:
       process.env.ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE_AFTER_FINALIZATION,
+    contactClosedParentProviderResult:
+      process.env.ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_RESULT,
+    contactClosedParentProviderDisposition:
+      process.env.ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_DISPOSITION,
     result: "PASS",
     externalArchiveReceipt: null,
   };
