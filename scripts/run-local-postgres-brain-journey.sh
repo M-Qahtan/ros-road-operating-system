@@ -641,6 +641,30 @@ if [[ "$closed_parent_provider_disposition" != 'HUMAN_REVIEW' ]]; then
   exit 2
 fi
 
+readonly closed_parent_outbox_hash_before_recovery="$(
+  psql "$DATABASE_URL" -Atqc "SELECT md5(to_jsonb(message)::text) FROM ros_eye_contact_outbox AS message WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004' AND session_id='contact-race-closure-wins' AND message_id='pending-contact-action'"
+)"
+readonly closed_parent_ambiguity_recovery_result="$(
+  psql "$DATABASE_URL" -Atqc "WITH status AS (SELECT message.delivered_at, message.cancelled_at, parent.status AS parent_status, EXISTS (SELECT 1 FROM ros_eye_contact_audit AS audit WHERE audit.tenant_id=message.tenant_id AND audit.case_id=message.case_id AND audit.session_id=message.session_id AND audit.event_id='delivery-result-ambiguous-' || message.message_id AND audit.event_type='DELIVERY_RESULT_AMBIGUOUS') AS ambiguity_recorded FROM ros_eye_contact_outbox AS message LEFT JOIN road_events AS parent ON parent.tenant_id=message.tenant_id AND parent.id::text=message.case_id WHERE message.tenant_id='riyadh-pilot' AND message.case_id='10000000-0000-4000-8000-000000000004' AND message.session_id='contact-race-closure-wins' AND message.message_id='pending-contact-action') SELECT CASE WHEN ambiguity_recorded THEN 'HUMAN_REVIEW|PROVIDER_NOT_ENTERED' WHEN parent_status='CLOSED' OR cancelled_at IS NOT NULL THEN 'CANCELLED|PROVIDER_NOT_ENTERED' WHEN delivered_at IS NOT NULL THEN 'DELIVERED|PROVIDER_NOT_ENTERED' ELSE 'CONFLICT|PROVIDER_NOT_ENTERED' END FROM status"
+)"
+if [[ "$closed_parent_ambiguity_recovery_result" != 'HUMAN_REVIEW|PROVIDER_NOT_ENTERED' ]]; then
+  echo "Restarted Contact worker did not recover durable ambiguity without provider entry: $closed_parent_ambiguity_recovery_result" >&2
+  exit 2
+fi
+
+readonly closed_parent_outbox_state_after_recovery="$(
+  psql "$DATABASE_URL" -Atqc "SELECT count(*)::text || '|' || count(*) FILTER (WHERE lease_owner IS NULL)::text || '|' || count(*) FILTER (WHERE delivery_token IS NULL)::text FROM ros_eye_contact_outbox WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004' AND session_id='contact-race-closure-wins' AND message_id='pending-contact-action' AND delivered_at IS NULL AND cancelled_at IS NULL"
+)"
+readonly closed_parent_outbox_hash_after_recovery="$(
+  psql "$DATABASE_URL" -Atqc "SELECT md5(to_jsonb(message)::text) FROM ros_eye_contact_outbox AS message WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004' AND session_id='contact-race-closure-wins' AND message_id='pending-contact-action'"
+)"
+if [[ ! "$closed_parent_outbox_hash_before_recovery" =~ ^[a-f0-9]{32}$ \
+  || "$closed_parent_outbox_hash_after_recovery" != "$closed_parent_outbox_hash_before_recovery" \
+  || "$closed_parent_outbox_state_after_recovery" != "$closed_parent_outbox_state_after_finalization" ]]; then
+  echo "Ambiguity recovery mutated Contact outbox state: $closed_parent_outbox_state_after_recovery" >&2
+  exit 2
+fi
+
 image_id="$("$container_engine" inspect --format '{{.Image}}' "$container_name")"
 if [[ "$image_id" =~ ^[a-f0-9]{64}$ ]]; then image_id="sha256:${image_id}"; fi
 readonly image_id
@@ -709,9 +733,13 @@ ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_DISPOSITION="$closed_parent_provider_
 ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_FIRST="$closed_parent_ambiguity_audit_first" \
 ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_REPLAY="$closed_parent_ambiguity_audit_replay" \
 ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_STATE="$closed_parent_ambiguity_audit_state" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY="$closed_parent_ambiguity_recovery_result" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_STATE="$closed_parent_outbox_state_after_recovery" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_BEFORE="$closed_parent_outbox_hash_before_recovery" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_AFTER="$closed_parent_outbox_hash_after_recovery" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v20",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v21",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -781,6 +809,14 @@ node -e '
       process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_REPLAY,
     contactAmbiguityAuditState:
       process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_STATE,
+    contactAmbiguityRecovery:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY,
+    contactAmbiguityRecoveryOutboxState:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_STATE,
+    contactAmbiguityRecoveryOutboxHashBefore:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_BEFORE,
+    contactAmbiguityRecoveryOutboxHashAfter:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_AFTER,
     result: "PASS",
     externalArchiveReceipt: null,
   };

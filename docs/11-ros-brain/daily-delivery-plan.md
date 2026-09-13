@@ -419,6 +419,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A RESTARTED CONTACT WORKER CAN RECOVER DURABLE DELIVERY UNCERTAINTY WITHOUT REPEATING THE EXTERNAL SIDE EFFECT.** |
 | Next handoff | Add the no-provider recovery read to the disposable PostgreSQL journey and bind it to receipt v21. |
 
+### PostgreSQL proof for Contact ambiguity recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `5015a2c04e0b225e5b25450182abb81525ac6088`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch fifty-eight commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping test or journey process was active. |
+| Added behavior | After the durable ambiguity event and idempotent replay, the disposable journey now performs the restarted-worker status read and derives `HUMAN_REVIEW / PROVIDER_NOT_ENTERED` from the exact event. |
+| Durable acceptance | Receipt schema v21 requires the recovered disposition, explicit non-entry to the provider, and matching full-row Outbox hashes before and after recovery. Missing exact audit evidence remains fail-closed. |
+| Safety limits | Recovery is read-only and cannot acknowledge delivery, schedule retry, invoke a provider, cancel or close an incident, or grant activation. Docker/Podman execution and REL-013 external archival remain open. |
+| Result | **THE ENGINE RECEIPT CANNOT CLAIM RECOVERY IF THE PROVIDER IS RE-ENTERED OR THE CONTACT OUTBOX CHANGES.** |
+| Next handoff | Execute the clean v21 journey on Docker or Podman and correct the first real recovery-read or persistence discrepancy. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
