@@ -665,6 +665,23 @@ if [[ ! "$closed_parent_outbox_hash_before_recovery" =~ ^[a-f0-9]{32}$ \
   exit 2
 fi
 
+# The operator-facing Human Safety read gives unresolved delivery ambiguity
+# precedence over the terminal parent label without reopening the RoadEvent.
+readonly closed_parent_human_safety_state="$(
+  psql "$DATABASE_URL" -Atqc "WITH candidate AS (SELECT parent.status AS parent_status, EXISTS (SELECT 1 FROM ros_eye_contact_audit AS audit WHERE audit.tenant_id=parent.tenant_id AND audit.case_id=parent.id::text AND audit.session_id='contact-race-closure-wins' AND audit.event_id='delivery-result-ambiguous-pending-contact-action' AND audit.event_type='DELIVERY_RESULT_AMBIGUOUS') AS ambiguity_recorded FROM road_events AS parent WHERE parent.tenant_id='riyadh-pilot' AND parent.purpose='TRAFFIC_COORDINATION' AND parent.id='10000000-0000-4000-8000-000000000004'::uuid) SELECT CASE WHEN ambiguity_recorded THEN 'HUMAN_REVIEW|PARENT_CLOSED' WHEN parent_status='CLOSED' THEN 'RESOLVED|PARENT_CLOSED' ELSE 'CONFLICT|PARENT_OPEN' END FROM candidate"
+)"
+if [[ "$closed_parent_human_safety_state" != 'HUMAN_REVIEW|PARENT_CLOSED' ]]; then
+  echo "Durable Contact ambiguity was hidden by the closed parent state: $closed_parent_human_safety_state" >&2
+  exit 2
+fi
+readonly closed_parent_outbox_hash_after_human_safety_read="$(
+  psql "$DATABASE_URL" -Atqc "SELECT md5(to_jsonb(message)::text) FROM ros_eye_contact_outbox AS message WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004' AND session_id='contact-race-closure-wins' AND message_id='pending-contact-action'"
+)"
+if [[ "$closed_parent_outbox_hash_after_human_safety_read" != "$closed_parent_outbox_hash_after_recovery" ]]; then
+  echo "Human Safety ambiguity visibility mutated Contact outbox state" >&2
+  exit 2
+fi
+
 image_id="$("$container_engine" inspect --format '{{.Image}}' "$container_name")"
 if [[ "$image_id" =~ ^[a-f0-9]{64}$ ]]; then image_id="sha256:${image_id}"; fi
 readonly image_id
@@ -737,9 +754,11 @@ ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY="$closed_parent_ambiguity_recovery_result
 ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_STATE="$closed_parent_outbox_state_after_recovery" \
 ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_BEFORE="$closed_parent_outbox_hash_before_recovery" \
 ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_AFTER="$closed_parent_outbox_hash_after_recovery" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_HUMAN_SAFETY_STATE="$closed_parent_human_safety_state" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_HUMAN_SAFETY_OUTBOX_HASH="$closed_parent_outbox_hash_after_human_safety_read" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v21",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v22",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -817,6 +836,10 @@ node -e '
       process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_BEFORE,
     contactAmbiguityRecoveryOutboxHashAfter:
       process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_AFTER,
+    contactAmbiguityHumanSafetyState:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_HUMAN_SAFETY_STATE,
+    contactAmbiguityHumanSafetyOutboxHash:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_HUMAN_SAFETY_OUTBOX_HASH,
     result: "PASS",
     externalArchiveReceipt: null,
   };

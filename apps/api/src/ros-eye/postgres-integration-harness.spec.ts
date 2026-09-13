@@ -93,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v21/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v22/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -173,7 +173,7 @@ test('forward retry after rollback commits once and duplicate retry is rejected'
   assert.match(contactClosureRace, /DUPLICATE_RETRY REJECTED/);
 });
 
-test('v21 receipt consumes contact races, rollback and exact forward retry proof', () => {
+test('v22 receipt consumes contact races, rollback and exact forward retry proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
@@ -187,7 +187,7 @@ test('v21 receipt consumes contact races, rollback and exact forward retry proof
   assert.match(localHarness, /contactAtomicRollback/);
   assert.match(localHarness, /contactForwardRetry/);
   assert.match(localHarness, /contactDuplicateRetry/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v21/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v22/);
 });
 
 test('forward contact recovery survives a second PostgreSQL restart exactly', () => {
@@ -332,6 +332,18 @@ test('restarted worker recovers durable ambiguity without provider entry or outb
   assert.match(localHarness, /contactAmbiguityRecoveryOutboxState/);
   assert.match(localHarness, /contactAmbiguityRecoveryOutboxHashBefore/);
   assert.match(localHarness, /contactAmbiguityRecoveryOutboxHashAfter/);
+});
+
+test('closed-parent ambiguity remains operator-visible without mutating Contact state', () => {
+  assert.match(localHarness, /closed_parent_human_safety_state/);
+  assert.match(localHarness, /HUMAN_REVIEW\|PARENT_CLOSED/);
+  assert.match(localHarness, /parent\.purpose='TRAFFIC_COORDINATION'/);
+  assert.match(localHarness, /delivery-result-ambiguous-pending-contact-action/);
+  assert.match(localHarness, /Durable Contact ambiguity was hidden by the closed parent state/);
+  assert.match(localHarness, /closed_parent_outbox_hash_after_human_safety_read/);
+  assert.match(localHarness, /Human Safety ambiguity visibility mutated Contact outbox state/);
+  assert.match(localHarness, /contactAmbiguityHumanSafetyState/);
+  assert.match(localHarness, /contactAmbiguityHumanSafetyOutboxHash/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {

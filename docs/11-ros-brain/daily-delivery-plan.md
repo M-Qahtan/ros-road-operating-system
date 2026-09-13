@@ -441,6 +441,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CLOSED INCIDENT WITH AN UNRESOLVED AMBIGUOUS CONTACT RESULT CAN NO LONGER APPEAR OPERATIONALLY RESOLVED.** |
 | Next handoff | Bind the committed ambiguity event to the Human Safety read disposition in the disposable PostgreSQL journey and receipt v22. |
 
+### PostgreSQL proof for operator-visible Contact ambiguity
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `83f676ac656aae893fbea98b82f834f8f0ec18ec`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch sixty commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping test or journey process was active. |
+| Added behavior | After recovering the durable Contact ambiguity, the disposable journey now runs the operator-facing state precedence against the exact tenant, purpose, case, session, message event, and closed RoadEvent. |
+| Durable acceptance | Receipt schema v22 requires `HUMAN_REVIEW / PARENT_CLOSED` and a full Outbox-row hash unchanged by the Human Safety read. A missing or mismatched ambiguity event yields neither a passing receipt nor a false resolved state. |
+| Safety limits | The read does not reopen or mutate the RoadEvent, resolve uncertainty, acknowledge delivery, schedule retry, invoke a provider, or authorize activation. Docker/Podman execution and REL-013 external archival remain open. |
+| Result | **THE ENGINE RECEIPT CANNOT PASS IF A DURABLE AMBIGUOUS CONTACT RESULT IS HIDDEN BEHIND THE CLOSED-PARENT LABEL.** |
+| Next handoff | Execute the clean v22 journey on Docker or Podman and correct the first real state-precedence or read-only persistence discrepancy. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
