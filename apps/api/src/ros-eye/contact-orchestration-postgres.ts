@@ -8,6 +8,10 @@ import type {
   OutboxDeliveryDisposition,
   ProcessClaimedOutboxInput
 } from './contact-orchestration.js';
+import {
+  CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION,
+  CONTACT_RUNTIME_POLICY_VERSION
+} from './contact-orchestration.js';
 import { contactRevisionDigest } from './contact-revision.js';
 
 export type ContactSqlRow = Readonly<Record<string, unknown>>;
@@ -168,6 +172,37 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
       AND parent.id::text = message.case_id
     WHERE message.tenant_id = $1 AND message.case_id = $2 AND message.session_id = $3
       AND message.message_id = $4`,
+  recordAmbiguousProviderResult: `WITH candidate AS (
+      SELECT session.state, session.version
+      FROM ros_eye_contact_outbox AS message
+      JOIN ros_eye_contact_sessions AS session
+        ON session.tenant_id = message.tenant_id
+        AND session.case_id = message.case_id
+        AND session.session_id = message.session_id
+      LEFT JOIN road_events AS parent
+        ON parent.tenant_id = message.tenant_id
+        AND parent.id::text = message.case_id
+      WHERE message.tenant_id = $1 AND message.case_id = $2 AND message.session_id = $3
+        AND message.message_id = $4
+        AND (message.cancelled_at IS NOT NULL OR parent.status = 'CLOSED')
+    ), inserted AS (
+      INSERT INTO ros_eye_contact_audit (
+        tenant_id, case_id, session_id, event_id, event_type, state, session_version,
+        actor_type, actor_id, authorized_by_role, authority_policy_version,
+        reason_code, occurred_at, trace_id, runtime_policy_version
+      )
+      SELECT $1, $2, $3, $5, 'DELIVERY_RESULT_AMBIGUOUS', candidate.state,
+        candidate.version, 'SYSTEM', $6, 'SYSTEM', $7,
+        'provider_sent_after_delivery_fence', clock_timestamp(), $4, $8
+      FROM candidate
+      ON CONFLICT DO NOTHING
+      RETURNING event_id
+    )
+    SELECT event_id FROM inserted
+    UNION ALL
+    SELECT event_id FROM ros_eye_contact_audit
+    WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3 AND event_id = $5
+    LIMIT 1`,
   releaseOutboxLease: `UPDATE ros_eye_contact_outbox
     SET lease_owner = NULL, lease_expires_at = NULL
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
@@ -254,7 +289,20 @@ export class PostgresContactRuntimeRepository implements ContactRuntimeRepositor
         // The provider reported success, but the durable acknowledgement and
         // bounded retry were both fenced. Do not call this cancelled: the
         // external side effect may already have happened and needs a human.
-        return readDispositionWithConnection(connection, input, true);
+        const disposition = await readDispositionWithConnection(connection, input, true);
+        if (disposition !== 'HUMAN_REVIEW') return disposition;
+        const ambiguityEventId = `delivery-result-ambiguous-${input.messageId}`;
+        const recorded = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult, [
+          input.tenantId,
+          input.caseId,
+          input.sessionId,
+          input.messageId,
+          ambiguityEventId,
+          input.workerId,
+          CONTACT_OPERATOR_AUTHORITY_POLICY_VERSION,
+          CONTACT_RUNTIME_POLICY_VERSION
+        ]);
+        return recorded.rows[0] === undefined ? 'CONFLICT' : 'HUMAN_REVIEW';
       }
 
       const retry = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, [

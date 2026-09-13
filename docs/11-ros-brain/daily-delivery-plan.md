@@ -386,6 +386,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE ENGINE RECEIPT CANNOT LABEL AN UNACKNOWLEDGED PROVIDER SUCCESS CANCELLED OR PASS WITHOUT HUMAN REVIEW.** |
 | Next handoff | Execute the clean v19 journey on Docker or Podman and correct the first real finalization, disposition, or rollback discrepancy. |
 
+### Durable audit for ambiguous Contact delivery
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `98d16906ad7c8c0d6475ad7cd75c824a50023aa1`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch fifty-five commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean. |
+| Added behavior | Before returning `HUMAN_REVIEW`, the PostgreSQL repository now appends `DELIVERY_RESULT_AMBIGUOUS` to the Contact-owned immutable audit. Its deterministic event identity is message-scoped and excludes the delivery token; retries reuse the same event. |
+| Durable acceptance | The insert is guarded by the exact Contact row plus a cancelled or closed parent. If neither the insert nor the identical prior event is visible, the result fails closed to `CONFLICT` instead of emitting an unpersisted human-review state. |
+| Safety limits | The audit states uncertainty only: it does not assert delivery, retry, cancellation, or external provider reversal. It adds no dispatch or activation authority. PostgreSQL engine execution and REL-013 external archival remain open. |
+| Result | **AMBIGUOUS PROVIDER SUCCESS NOW SURVIVES WORKER RESTART AS APPEND-ONLY CONTACT AUDIT BEFORE HUMAN REVIEW IS REPORTED.** |
+| Next handoff | Add the immutable ambiguity audit to the disposable PostgreSQL journey and require exact idempotent replay. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

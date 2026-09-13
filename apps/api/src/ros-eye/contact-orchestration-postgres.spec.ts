@@ -60,6 +60,8 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
   parentClosed = false;
   delivered = false;
   retried = false;
+  ambiguityRecorded = false;
+  ambiguityPersistenceAvailable = true;
 
   async transaction<T>(work: (connection: ContactSqlConnectionPort) => Promise<T>): Promise<T> {
     this.transactionStarts += 1;
@@ -86,6 +88,12 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus) {
       const rows = [{ delivered_at: this.delivered ? input.now : null, cancelled_at: this.cancelled ? input.now : null, delivery_token: this.cancelled ? null : input.deliveryToken, parent_status: this.parentClosed ? 'CLOSED' : 'RESPONSE_COORDINATION' }];
+      return { rowCount: 1, rows: rows as unknown as Row[] };
+    }
+    if (text === POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult) {
+      if (!this.ambiguityPersistenceAvailable) return { rowCount: 0, rows: [] };
+      this.ambiguityRecorded = true;
+      const rows = [{ event_id: `delivery-result-ambiguous-${input.messageId}` }];
       return { rowCount: 1, rows: rows as unknown as Row[] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.releaseOutboxLease) return { rowCount: 1, rows: [] };
@@ -124,7 +132,7 @@ test('operator cancellation during provider execution fences acknowledgement and
   pool.cancelled = true;
   providerRelease.resolve();
   assert.equal(await running, 'HUMAN_REVIEW');
-  assert.equal(pool.delivered, false); assert.equal(pool.activeTransactions, 0);
+  assert.equal(pool.delivered, false); assert.equal(pool.ambiguityRecorded, true); assert.equal(pool.activeTransactions, 0);
 });
 
 test('failed provider result finalizes as a durable retry without leaking a transaction across the call', async () => {
@@ -156,8 +164,19 @@ test('closure during provider execution fences writes and exposes provider succe
     pool.parentClosed = true;
     return 'SENT';
   });
-  assert.equal(result, 'HUMAN_REVIEW'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false);
+  assert.equal(result, 'HUMAN_REVIEW'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false); assert.equal(pool.ambiguityRecorded, true);
   assert.equal(pool.transactionStarts, 2); assert.equal(pool.activeTransactions, 0);
+});
+
+test('unpersisted provider success ambiguity fails closed instead of emitting ephemeral human review', async () => {
+  const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
+  pool.ambiguityPersistenceAvailable = false;
+  const result = await repository.processClaimedOutbox(input, async () => {
+    pool.parentClosed = true;
+    return 'SENT';
+  });
+  assert.equal(result, 'CONFLICT'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false);
+  assert.equal(pool.ambiguityRecorded, false); assert.equal(pool.activeTransactions, 0);
 });
 
 test('closure after an unavailable provider remains cancelled without false delivery ambiguity', async () => {
@@ -167,4 +186,5 @@ test('closure after an unavailable provider remains cancelled without false deli
     return 'UNAVAILABLE';
   });
   assert.equal(result, 'CANCELLED'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false);
+  assert.equal(pool.ambiguityRecorded, false);
 });

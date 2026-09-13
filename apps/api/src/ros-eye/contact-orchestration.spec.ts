@@ -202,4 +202,7 @@ test('PostgreSQL contracts use composite claims, short token reservations, and d
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery, /parent\.status <> 'CLOSED'/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /delivery_token = \$6/); assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /delivery_deadline_at >= clock_timestamp\(\)/); assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /parent\.status <> 'CLOSED'/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, /cancelled_at IS NULL/); assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, /parent\.status <> 'CLOSED'/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult, /DELIVERY_RESULT_AMBIGUOUS/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult, /provider_sent_after_delivery_fence/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult, /ON CONFLICT DO NOTHING/);
 });
