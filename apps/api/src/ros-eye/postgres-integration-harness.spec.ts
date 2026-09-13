@@ -93,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v12/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v13/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -173,7 +173,7 @@ test('forward retry after rollback commits once and duplicate retry is rejected'
   assert.match(contactClosureRace, /DUPLICATE_RETRY REJECTED/);
 });
 
-test('v12 receipt consumes contact races, rollback and exact forward retry proof', () => {
+test('v13 receipt consumes contact races, rollback and exact forward retry proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
@@ -187,7 +187,7 @@ test('v12 receipt consumes contact races, rollback and exact forward retry proof
   assert.match(localHarness, /contactAtomicRollback/);
   assert.match(localHarness, /contactForwardRetry/);
   assert.match(localHarness, /contactDuplicateRetry/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v12/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v13/);
 });
 
 test('forward contact recovery survives a second PostgreSQL restart exactly', () => {
@@ -225,6 +225,16 @@ test('wrong-purpose contact retry is rejected before mutation after restart', ()
   assert.match(localHarness, /post_restart_wrong_purpose_state" != "\$contact_recovery_state/);
   assert.match(localHarness, /contactWrongPurposeRetry: "REJECTED"/);
   assert.match(localHarness, /contactWrongPurposeState/);
+});
+
+test('wrong-tenant contact retry is rejected before mutation after restart', () => {
+  assert.match(localHarness, /post_restart_wrong_tenant_log="\$\(mktemp\)"/);
+  assert.match(localHarness, /tenant_id='foreign-tenant' AND purpose='road-safety-response'/);
+  assert.match(localHarness, /IF NOT FOUND THEN RAISE EXCEPTION 'POST_RESTART_TENANT_SCOPE_MISMATCH'/);
+  assert.match(localHarness, /Wrong-tenant contact retry was not rejected at the durable parent scope boundary/);
+  assert.match(localHarness, /post_restart_wrong_tenant_state" != "\$contact_recovery_state/);
+  assert.match(localHarness, /contactWrongTenantRetry: "REJECTED"/);
+  assert.match(localHarness, /contactWrongTenantState/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {
