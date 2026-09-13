@@ -123,7 +123,7 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
           AND parent.status <> 'CLOSED'
       )
     RETURNING message.*`,
-  markOutboxDelivered: `UPDATE ros_eye_contact_outbox
+  markOutboxDelivered: `UPDATE ros_eye_contact_outbox AS message
     SET delivered_at = clock_timestamp(),
         lease_owner = NULL,
         lease_expires_at = NULL,
@@ -135,8 +135,14 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
       AND message_id = $4 AND lease_owner = $5
       AND delivery_token = $6
       AND delivery_deadline_at >= clock_timestamp()
-      AND delivered_at IS NULL AND cancelled_at IS NULL`,
-  markOutboxRetry: `UPDATE ros_eye_contact_outbox
+      AND delivered_at IS NULL AND cancelled_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM road_events AS parent
+        WHERE parent.tenant_id = message.tenant_id
+          AND parent.id::text = message.case_id
+          AND parent.status <> 'CLOSED'
+      )`,
+  markOutboxRetry: `UPDATE ros_eye_contact_outbox AS message
     SET available_at = $7::timestamptz,
         lease_owner = NULL,
         lease_expires_at = NULL,
@@ -147,7 +153,13 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
       AND message_id = $4 AND lease_owner = $5
       AND delivery_token = $6
-      AND delivered_at IS NULL AND cancelled_at IS NULL`,
+      AND delivered_at IS NULL AND cancelled_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM road_events AS parent
+        WHERE parent.tenant_id = message.tenant_id
+          AND parent.id::text = message.case_id
+          AND parent.status <> 'CLOSED'
+      )`,
   readOutboxStatus: `SELECT message.delivered_at, message.cancelled_at, message.delivery_token,
       parent.status AS parent_status
     FROM ros_eye_contact_outbox AS message

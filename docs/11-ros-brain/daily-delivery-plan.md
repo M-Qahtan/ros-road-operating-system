@@ -342,6 +342,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE CLOSED-PARENT OUTBOX FENCE IS PART OF THE CANDIDATE-BOUND ENGINE JOURNEY AND CANNOT REPORT PASS IF THE PROVIDER BOUNDARY IS CROSSED.** |
 | Next handoff | Execute the clean v17 journey on Docker or Podman and correct the first real claim, reservation, or rollback discrepancy. |
 
+### Contact finalization fence after concurrent closure
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `e5ca0f3c48b44b322564bddd49387f6ac48c149f`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch fifty-one commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping build or journey process was active. |
+| Added behavior | Both PostgreSQL finalization statements now recheck the exact tenant/case parent before recording delivery or scheduling retry. If the RoadEvent becomes `CLOSED` while the untrusted provider callback is outside the transaction, neither finalization write is accepted and the repository returns `CANCELLED`. |
+| Local acceptance | Focused coverage closes the parent during the provider callback and requires zero `delivered` and zero `retry` writes. SQL contract coverage requires the parent-state predicate on both finalization statements while preserving token and deadline fencing. |
+| Safety limits | This prevents ROS from acknowledging delivery or retry after observed closure; it cannot retract a provider action that started before closure. No external provider is called by the test, and live PostgreSQL execution plus REL-013 archival remain open. |
+| Result | **A PROVIDER RESULT RETURNING AFTER INCIDENT CLOSURE CANNOT BECOME A DURABLE CONTACT DELIVERY OR RETRY.** |
+| Next handoff | Add the closure-during-provider finalization ordering to the disposable PostgreSQL journey and bind the zero-write result to the next receipt schema. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

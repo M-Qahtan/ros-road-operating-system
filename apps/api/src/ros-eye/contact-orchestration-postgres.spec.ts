@@ -75,12 +75,12 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
       return { rowCount: rows.length, rows: rows as unknown as Row[] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered) {
-      if (this.cancelled) return { rowCount: 0, rows: [] };
+      if (this.cancelled || this.parentClosed) return { rowCount: 0, rows: [] };
       this.delivered = true;
       return { rowCount: 1, rows: [] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry) {
-      if (this.cancelled) return { rowCount: 0, rows: [] };
+      if (this.cancelled || this.parentClosed) return { rowCount: 0, rows: [] };
       this.retried = true;
       return { rowCount: 1, rows: [] };
     }
@@ -147,4 +147,15 @@ test('closed parent fences a claimed message before provider invocation', async 
   });
   assert.equal(result, 'CANCELLED'); assert.equal(providerInvoked, false);
   assert.equal(pool.transactionStarts, 1); assert.equal(pool.activeTransactions, 0);
+});
+
+test('closure during provider execution fences delivered acknowledgement and retry', async () => {
+  const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
+  const result = await repository.processClaimedOutbox(input, async () => {
+    assert.equal(pool.activeTransactions, 0);
+    pool.parentClosed = true;
+    return 'SENT';
+  });
+  assert.equal(result, 'CANCELLED'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false);
+  assert.equal(pool.transactionStarts, 2); assert.equal(pool.activeTransactions, 0);
 });
