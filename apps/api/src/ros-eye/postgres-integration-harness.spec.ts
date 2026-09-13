@@ -93,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v14/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v15/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -173,7 +173,7 @@ test('forward retry after rollback commits once and duplicate retry is rejected'
   assert.match(contactClosureRace, /DUPLICATE_RETRY REJECTED/);
 });
 
-test('v14 receipt consumes contact races, rollback and exact forward retry proof', () => {
+test('v15 receipt consumes contact races, rollback and exact forward retry proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
@@ -187,7 +187,7 @@ test('v14 receipt consumes contact races, rollback and exact forward retry proof
   assert.match(localHarness, /contactAtomicRollback/);
   assert.match(localHarness, /contactForwardRetry/);
   assert.match(localHarness, /contactDuplicateRetry/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v14/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v15/);
 });
 
 test('forward contact recovery survives a second PostgreSQL restart exactly', () => {
@@ -245,6 +245,15 @@ test('wrong-case contact retry is rejected before mutation after restart', () =>
   assert.match(localHarness, /post_restart_wrong_case_state" != "\$contact_recovery_state/);
   assert.match(localHarness, /contactWrongCaseRetry: "REJECTED"/);
   assert.match(localHarness, /contactWrongCaseState/);
+});
+
+test('stale parent version rejects contact retry without writes after restart', () => {
+  assert.match(localHarness, /post_restart_stale_parent_log="\$\(mktemp\)"/);
+  assert.match(localHarness, /IF parent_version<>1 THEN RAISE EXCEPTION 'POST_RESTART_PARENT_VERSION_CONFLICT'/);
+  assert.match(localHarness, /Stale-parent contact retry was not rejected at the durable RoadEvent version boundary/);
+  assert.match(localHarness, /post_restart_stale_parent_state" != "\$contact_recovery_state/);
+  assert.match(localHarness, /contactStaleParentRetry: "REJECTED"/);
+  assert.match(localHarness, /contactStaleParentState/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {

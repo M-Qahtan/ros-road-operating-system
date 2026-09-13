@@ -49,6 +49,7 @@ readonly post_restart_duplicate_log="$(mktemp)"
 readonly post_restart_wrong_purpose_log="$(mktemp)"
 readonly post_restart_wrong_tenant_log="$(mktemp)"
 readonly post_restart_wrong_case_log="$(mktemp)"
+readonly post_restart_stale_parent_log="$(mktemp)"
 
 cleanup() {
   "$container_engine" rm -f "$container_name" >/dev/null 2>&1 || true
@@ -59,6 +60,7 @@ cleanup() {
   rm -f "$post_restart_wrong_purpose_log"
   rm -f "$post_restart_wrong_tenant_log"
   rm -f "$post_restart_wrong_case_log"
+  rm -f "$post_restart_stale_parent_log"
 }
 trap cleanup EXIT
 
@@ -304,6 +306,39 @@ if [[ "$post_restart_wrong_case_state" != "$contact_recovery_state" ]]; then
   exit 2
 fi
 
+set +e
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 >"$post_restart_stale_parent_log" 2>&1 <<'SQL'
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+DO $$ DECLARE parent_status road_event_status; parent_version integer; BEGIN
+  SELECT status, version INTO parent_status, parent_version FROM road_events
+  WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
+    AND id='10000000-0000-4000-8000-000000000005' FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'POST_RESTART_PARENT_SCOPE_MISMATCH'; END IF;
+  IF parent_status='CLOSED' THEN RAISE EXCEPTION 'INCIDENT_CLOSED'; END IF;
+  IF parent_version<>1 THEN RAISE EXCEPTION 'POST_RESTART_PARENT_VERSION_CONFLICT'; END IF;
+END $$;
+UPDATE ros_eye_contact_sessions SET state='HUMAN_REVIEW', version=3
+WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000005'
+  AND session_id='contact-race-rollback' AND version=2;
+COMMIT;
+SQL
+post_restart_stale_parent_status=$?
+set -e
+readonly post_restart_stale_parent_output="$(cat "$post_restart_stale_parent_log")"
+if [[ "$post_restart_stale_parent_status" -eq 0 \
+  || "$post_restart_stale_parent_output" != *POST_RESTART_PARENT_VERSION_CONFLICT* ]]; then
+  echo "Stale-parent contact retry was not rejected at the durable RoadEvent version boundary" >&2
+  echo "$post_restart_stale_parent_output" >&2
+  exit 2
+fi
+readonly post_restart_stale_parent_state="$(
+  psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response' AND event.id='10000000-0000-4000-8000-000000000005'"
+)"
+if [[ "$post_restart_stale_parent_state" != "$contact_recovery_state" ]]; then
+  echo "Stale-parent contact retry changed durable state: $post_restart_stale_parent_state" >&2
+  exit 2
+fi
+
 image_id="$("$container_engine" inspect --format '{{.Image}}' "$container_name")"
 if [[ "$image_id" =~ ^[a-f0-9]{64}$ ]]; then image_id="sha256:${image_id}"; fi
 readonly image_id
@@ -363,9 +398,10 @@ ROS_RECEIPT_CONTACT_POST_RESTART_DUPLICATE_STATE="$post_restart_duplicate_state"
 ROS_RECEIPT_CONTACT_WRONG_PURPOSE_STATE="$post_restart_wrong_purpose_state" \
 ROS_RECEIPT_CONTACT_WRONG_TENANT_STATE="$post_restart_wrong_tenant_state" \
 ROS_RECEIPT_CONTACT_WRONG_CASE_STATE="$post_restart_wrong_case_state" \
+ROS_RECEIPT_CONTACT_STALE_PARENT_STATE="$post_restart_stale_parent_state" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v14",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v15",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -409,6 +445,9 @@ node -e '
     contactWrongCaseRetry: "REJECTED",
     contactWrongCaseState:
       process.env.ROS_RECEIPT_CONTACT_WRONG_CASE_STATE,
+    contactStaleParentRetry: "REJECTED",
+    contactStaleParentState:
+      process.env.ROS_RECEIPT_CONTACT_STALE_PARENT_STATE,
     result: "PASS",
     externalArchiveReceipt: null,
   };

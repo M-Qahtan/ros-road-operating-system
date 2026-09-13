@@ -298,6 +298,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CONTACT COMMAND CANNOT BORROW CONTACT STATE FROM ANOTHER CASE, INCLUDING AFTER DATABASE RESTART.** |
 | Next handoff | Execute the clean v14 journey on Docker or Podman and correct the first live case-isolation or persistence discrepancy it reveals. |
 
+### Post-restart Contact parent-version isolation
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `04d3799324f5df41e1ed6e4c5cbc5ea014521844`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty-seven commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | After recovery and restart, the journey locks the exact `Tenant + Purpose + Case` RoadEvent but supplies its stale expected parent version. The command must reject before the otherwise-current Contact session can advance. |
+| Durable acceptance | PostgreSQL must return `POST_RESTART_PARENT_VERSION_CONFLICT`, and the full primary state must remain exactly `RECOVERY / event 2 / session 2 / contact 2 / audit 1 / cancelled 1 / pending 0`. Receipt schema v15 records the rejection and unchanged state. |
+| Safety limits | This local assertion proves the version component of the command boundary. It sends no Contact action, grants no authority, and cannot replace a live engine run or the REL-013 external immutable archive. |
+| Result | **A CURRENT CONTACT VERSION CANNOT BE MUTATED THROUGH A STALE ROAD EVENT PARENT VERSION, INCLUDING AFTER DATABASE RESTART.** |
+| Next handoff | Execute the clean v15 journey on Docker or Podman and correct the first live parent-version or persistence discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
