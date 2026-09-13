@@ -287,6 +287,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CONTACT COMMAND CANNOT CROSS THE TENANT BOUNDARY, INCLUDING AFTER DATABASE RESTART.** |
 | Next handoff | Execute the clean v13 journey on Docker or Podman and correct the first live tenant-isolation or persistence discrepancy it reveals. |
 
+### Post-restart Contact case isolation
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `bb2f7a05579d5232cf6bf452369c4ca36a135130`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty-six commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | After recovery and restart, the journey submits a Contact mutation with the correct tenant and purpose but a foreign case identity. The exact parent lookup must reject it before any Contact access or mutation. |
+| Durable acceptance | PostgreSQL must return `POST_RESTART_CASE_SCOPE_MISMATCH`, and the full primary state must remain exactly `RECOVERY / event 2 / session 2 / contact 2 / audit 1 / cancelled 1 / pending 0`. Receipt schema v14 records the rejection and unchanged state. |
+| Safety limits | This local assertion completes the exact `Tenant + Purpose + Case` boundary definition. It sends no Contact action, grants no authority, and cannot replace a live engine run or the REL-013 external immutable archive. |
+| Result | **A CONTACT COMMAND CANNOT BORROW CONTACT STATE FROM ANOTHER CASE, INCLUDING AFTER DATABASE RESTART.** |
+| Next handoff | Execute the clean v14 journey on Docker or Podman and correct the first live case-isolation or persistence discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

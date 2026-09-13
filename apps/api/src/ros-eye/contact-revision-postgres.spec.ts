@@ -165,20 +165,21 @@ test('guarded session correction rejects a closed or stale parent before contact
   }
 });
 
-test('guarded session correction rejects a missing exact tenant or purpose parent before contact access', async () => {
-  for (const [tenantId, purpose] of [
-    [SCOPE.tenantId, 'foreign-purpose'],
-    ['foreign-tenant', SCOPE.purpose]
+test('guarded session correction rejects a missing exact tenant, purpose or case parent before contact access', async () => {
+  for (const [tenantId, purpose, caseId] of [
+    [SCOPE.tenantId, 'foreign-purpose', CASE_ID],
+    ['foreign-tenant', SCOPE.purpose, CASE_ID],
+    [SCOPE.tenantId, SCOPE.purpose, '20000000-0000-4000-8000-000000000006']
   ] as const) {
     const sql = new FakeSql((text) => text.includes('SELECT status, version FROM road_events')
       ? { rows: [], rowCount: 0 }
       : { rows: [], rowCount: 1 });
-    const candidate = { ...session(2, 'HUMAN_REVIEW'), tenantId };
+    const candidate = { ...session(2, 'HUMAN_REVIEW'), tenantId, caseId };
     const result = await new PostgresContactRuntimeRepository(sql).transaction((tx) =>
       tx.updateSession(candidate, 1, { purpose, expectedCaseVersion: 7 })
     );
     assert.equal(result, 'CONFLICT');
-    assert.deepEqual(sql.queries[0]?.values, [tenantId, purpose, CASE_ID]);
+    assert.deepEqual(sql.queries[0]?.values, [tenantId, purpose, caseId]);
     assert.equal(sql.queries.some((query) => query.text.includes('FROM ros_eye_contact_sessions')), false);
     assert.equal(sql.queries.some((query) => query.text.includes('ros_eye_contact_revision_ledger')), false);
   }
