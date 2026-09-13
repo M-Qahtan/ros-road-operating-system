@@ -364,6 +364,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A V18 ENGINE RECEIPT CANNOT PASS IF A RESULT RETURNING AFTER INCIDENT CLOSURE IS RECORDED AS DELIVERY OR RETRY.** |
 | Next handoff | Execute the clean v18 journey on Docker or Podman and correct the first real finalization or rollback discrepancy. |
 
+### Ambiguous provider success after incident closure
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `b238bdfa8da0586b8623f393162a6325fd8390ba`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch fifty-three commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping journey was active. |
+| Added behavior | When a Contact provider reports `SENT` but closure or operator cancellation fences both durable delivery acknowledgement and retry, the PostgreSQL repository now returns `HUMAN_REVIEW` instead of the misleading `CANCELLED`. Closure before provider entry, or closure after an explicit `UNAVAILABLE`, remains `CANCELLED`. |
+| Local acceptance | Focused tests distinguish all three orderings and require no delivered or retry write in the ambiguous path. The provider remains outside the SQL transaction and no execution authority is added. |
+| Safety limits | `HUMAN_REVIEW` records uncertainty; it does not claim that the external message was delivered, cancelled, or retracted. Live PostgreSQL execution and REL-013 external archival remain open. |
+| Result | **A PROVIDER-REPORTED SUCCESS THAT CANNOT BE DURABLY ACKNOWLEDGED IS ESCALATED AS AMBIGUOUS, NEVER MISLABELLED AS CANCELLED.** |
+| Next handoff | Bind the `HUMAN_REVIEW` disposition to the PostgreSQL journey result after the v18 zero-write proof. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

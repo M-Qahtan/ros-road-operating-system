@@ -251,7 +251,10 @@ export class PostgresContactRuntimeRepository implements ContactRuntimeRepositor
           'delivery_deadline_expired'
         ]);
         if (lateRetry.rowCount === 1) return 'RETRY';
-        return readDispositionWithConnection(connection, input);
+        // The provider reported success, but the durable acknowledgement and
+        // bounded retry were both fenced. Do not call this cancelled: the
+        // external side effect may already have happened and needs a human.
+        return readDispositionWithConnection(connection, input, true);
       }
 
       const retry = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, [
@@ -454,7 +457,8 @@ interface ContactRevisionState {
 
 async function readDispositionWithConnection(
   connection: ContactSqlConnectionPort,
-  input: ProcessClaimedOutboxInput
+  input: ProcessClaimedOutboxInput,
+  providerReportedSent = false
 ): Promise<OutboxDeliveryDisposition> {
   const status = await connection.query(POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus, [
     input.tenantId,
@@ -464,8 +468,10 @@ async function readDispositionWithConnection(
   ]);
   const row = status.rows[0];
   if (row === undefined) return 'CONFLICT';
-  if (row.parent_status === 'CLOSED') return 'CANCELLED';
-  if (row.cancelled_at !== null && row.cancelled_at !== undefined) return 'CANCELLED';
+  if (row.parent_status === 'CLOSED') return providerReportedSent ? 'HUMAN_REVIEW' : 'CANCELLED';
+  if (row.cancelled_at !== null && row.cancelled_at !== undefined) {
+    return providerReportedSent ? 'HUMAN_REVIEW' : 'CANCELLED';
+  }
   if (row.delivered_at !== null && row.delivered_at !== undefined) return 'DELIVERED';
   return 'CONFLICT';
 }

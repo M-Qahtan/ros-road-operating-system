@@ -108,7 +108,7 @@ test('PostgreSQL delivery reservation commits before the provider callback and f
   assert.equal(pool.transactionStarts, 2); assert.equal(pool.delivered, true);
 });
 
-test('operator cancellation during provider execution is not blocked and fences later acknowledgement', async () => {
+test('operator cancellation during provider execution fences acknowledgement and exposes ambiguous delivery', async () => {
   const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
   const providerRelease = deferred(); const providerStarted = deferred();
 
@@ -123,7 +123,7 @@ test('operator cancellation during provider execution is not blocked and fences 
   assert.equal(pool.activeTransactions, 0);
   pool.cancelled = true;
   providerRelease.resolve();
-  assert.equal(await running, 'CANCELLED');
+  assert.equal(await running, 'HUMAN_REVIEW');
   assert.equal(pool.delivered, false); assert.equal(pool.activeTransactions, 0);
 });
 
@@ -149,13 +149,22 @@ test('closed parent fences a claimed message before provider invocation', async 
   assert.equal(pool.transactionStarts, 1); assert.equal(pool.activeTransactions, 0);
 });
 
-test('closure during provider execution fences delivered acknowledgement and retry', async () => {
+test('closure during provider execution fences writes and exposes provider success for human review', async () => {
   const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
   const result = await repository.processClaimedOutbox(input, async () => {
     assert.equal(pool.activeTransactions, 0);
     pool.parentClosed = true;
     return 'SENT';
   });
-  assert.equal(result, 'CANCELLED'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false);
+  assert.equal(result, 'HUMAN_REVIEW'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false);
   assert.equal(pool.transactionStarts, 2); assert.equal(pool.activeTransactions, 0);
+});
+
+test('closure after an unavailable provider remains cancelled without false delivery ambiguity', async () => {
+  const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
+  const result = await repository.processClaimedOutbox(input, async () => {
+    pool.parentClosed = true;
+    return 'UNAVAILABLE';
+  });
+  assert.equal(result, 'CANCELLED'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false);
 });

@@ -20,7 +20,7 @@ export const CONTACT_DELIVERY_TIMEOUT_MS = 5_000;
 export type ContactChannel = 'IN_APP' | 'PUSH' | 'SMS_SIM' | 'TELEPHONY_SIM';
 export type ContactAuthorizedRole = 'SYSTEM' | 'OPERATOR' | 'SUPERVISOR' | 'SAFETY_LEAD';
 export type RuntimeDisposition = 'APPLIED' | 'IDEMPOTENT' | 'HUMAN_REVIEW' | 'ESCALATED' | 'CONFLICT';
-export type OutboxDeliveryDisposition = 'DELIVERED' | 'RETRY' | 'CANCELLED' | 'CONFLICT';
+export type OutboxDeliveryDisposition = 'DELIVERED' | 'RETRY' | 'CANCELLED' | 'HUMAN_REVIEW' | 'CONFLICT';
 export type ContactPromptId = 'contact.consent' | 'contact.language' | 'contact.response' | 'contact.accessibility' | 'contact.handoff';
 
 export interface ContactScope {
