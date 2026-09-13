@@ -57,6 +57,7 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
   maximumActiveTransactions = 0;
   transactionStarts = 0;
   cancelled = false;
+  parentClosed = false;
   delivered = false;
   retried = false;
 
@@ -70,7 +71,7 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
 
   async query<Row extends ContactSqlRow = ContactSqlRow>(text: string): Promise<ContactSqlQueryResult<Row>> {
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery) {
-      const rows = this.cancelled ? [] : [outboxRow()];
+      const rows = this.cancelled || this.parentClosed ? [] : [outboxRow()];
       return { rowCount: rows.length, rows: rows as unknown as Row[] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered) {
@@ -84,7 +85,7 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
       return { rowCount: 1, rows: [] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus) {
-      const rows = [{ delivered_at: this.delivered ? input.now : null, cancelled_at: this.cancelled ? input.now : null, delivery_token: this.cancelled ? null : input.deliveryToken }];
+      const rows = [{ delivered_at: this.delivered ? input.now : null, cancelled_at: this.cancelled ? input.now : null, delivery_token: this.cancelled ? null : input.deliveryToken, parent_status: this.parentClosed ? 'CLOSED' : 'RESPONSE_COORDINATION' }];
       return { rowCount: 1, rows: rows as unknown as Row[] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.releaseOutboxLease) return { rowCount: 1, rows: [] };
@@ -134,4 +135,16 @@ test('failed provider result finalizes as a durable retry without leaking a tran
   });
   assert.equal(result, 'RETRY'); assert.equal(pool.retried, true);
   assert.equal(pool.transactionStarts, 2); assert.equal(pool.activeTransactions, 0);
+});
+
+test('closed parent fences a claimed message before provider invocation', async () => {
+  const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
+  pool.parentClosed = true;
+  let providerInvoked = false;
+  const result = await repository.processClaimedOutbox(input, async () => {
+    providerInvoked = true;
+    return 'SENT';
+  });
+  assert.equal(result, 'CANCELLED'); assert.equal(providerInvoked, false);
+  assert.equal(pool.transactionStarts, 1); assert.equal(pool.activeTransactions, 0);
 });

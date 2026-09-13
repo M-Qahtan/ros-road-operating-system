@@ -320,6 +320,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A DATABASE RESTART CANNOT TURN A CLOSED INCIDENT BACK INTO AN ACCEPTING CONTACT COMMAND SURFACE.** |
 | Next handoff | Execute the clean v16 journey on Docker or Podman and correct the first live terminal-state or persistence discrepancy it reveals. |
 
+### Closed-incident Contact delivery reservation fence
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `c8190688fb0a537d191b0888f577736c32785d03`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty-nine commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping test or journey process was active. |
+| Added behavior | The PostgreSQL Contact worker now excludes pending outbox rows whose exact tenant/case parent is already `CLOSED`, and repeats that parent-state fence when converting a prior claim into a short delivery reservation. If closure is observed at reservation, the repository returns `CANCELLED` without invoking the provider. |
+| Local acceptance | Focused repository coverage requires a closed parent to produce no provider call and no second finalization transaction. SQL contract coverage requires both the claim and reservation statements to retain the `CLOSED` parent fence while preserving the existing short reservation and `SKIP LOCKED` behavior. |
+| Safety limits | This prevents claims and reservations that begin after committed closure. It does not prove the remaining concurrent interval after a reservation has committed and before the external provider returns; that interval requires an engine journey and an explicit closure/delivery coordination decision. No provider, cloud service, or field endpoint is invoked by this local evidence. |
+| Result | **A CONTACT MESSAGE CANNOT BE NEWLY CLAIMED OR RESERVED AFTER THE WORKER OBSERVES ITS PARENT INCIDENT AS CLOSED.** |
+| Next handoff | Add the closed-parent outbox claim/reservation path to the disposable PostgreSQL journey, including proof that the provider callback is never entered, and bind it to the next engine receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

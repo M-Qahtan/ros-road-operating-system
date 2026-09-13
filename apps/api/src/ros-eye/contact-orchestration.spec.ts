@@ -197,6 +197,8 @@ test('operator takeover completes while provider is hung and invalidates later a
 
 test('PostgreSQL contracts use composite claims, short token reservations, and deadline-fenced finalization', () => {
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueSessions, /FOR UPDATE SKIP LOCKED/); assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueOutbox, /FOR UPDATE SKIP LOCKED/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.claimDueOutbox, /parent\.status <> 'CLOSED'/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery, /delivery_token = \$7/); assert.doesNotMatch(POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery, /FOR UPDATE/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.reserveOutboxDelivery, /parent\.status <> 'CLOSED'/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /delivery_token = \$6/); assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxDelivered, /delivery_deadline_at >= clock_timestamp\(\)/); assert.match(POSTGRES_CONTACT_RUNTIME_SQL.markOutboxRetry, /cancelled_at IS NULL/);
 });

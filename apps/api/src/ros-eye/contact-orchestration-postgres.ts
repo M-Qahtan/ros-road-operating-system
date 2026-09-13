@@ -74,18 +74,24 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
       AND lease_owner = $4`,
   claimDueOutbox: `WITH due AS (
-      SELECT tenant_id, case_id, session_id, message_id
-      FROM ros_eye_contact_outbox
-      WHERE delivered_at IS NULL
-        AND cancelled_at IS NULL
-        AND available_at <= $2::timestamptz
+      SELECT message.tenant_id, message.case_id, message.session_id, message.message_id
+      FROM ros_eye_contact_outbox AS message
+      WHERE message.delivered_at IS NULL
+        AND message.cancelled_at IS NULL
+        AND message.available_at <= $2::timestamptz
         AND (
-          lease_expires_at IS NULL
-          OR lease_expires_at <= $2::timestamptz
-          OR delivery_deadline_at <= $2::timestamptz
+          message.lease_expires_at IS NULL
+          OR message.lease_expires_at <= $2::timestamptz
+          OR message.delivery_deadline_at <= $2::timestamptz
         )
-        AND (delivery_token IS NULL OR delivery_deadline_at <= $2::timestamptz)
-      ORDER BY available_at, tenant_id, case_id, session_id, message_id
+        AND (message.delivery_token IS NULL OR message.delivery_deadline_at <= $2::timestamptz)
+        AND EXISTS (
+          SELECT 1 FROM road_events AS parent
+          WHERE parent.tenant_id = message.tenant_id
+            AND parent.id::text = message.case_id
+            AND parent.status <> 'CLOSED'
+        )
+      ORDER BY message.available_at, message.tenant_id, message.case_id, message.session_id, message.message_id
       FOR UPDATE SKIP LOCKED
       LIMIT $4
     )
@@ -110,6 +116,12 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
       AND lease_expires_at > $6::timestamptz
       AND delivered_at IS NULL AND cancelled_at IS NULL
       AND (delivery_token IS NULL OR delivery_deadline_at <= $6::timestamptz)
+      AND EXISTS (
+        SELECT 1 FROM road_events AS parent
+        WHERE parent.tenant_id = message.tenant_id
+          AND parent.id::text = message.case_id
+          AND parent.status <> 'CLOSED'
+      )
     RETURNING message.*`,
   markOutboxDelivered: `UPDATE ros_eye_contact_outbox
     SET delivered_at = clock_timestamp(),
@@ -136,10 +148,14 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
       AND message_id = $4 AND lease_owner = $5
       AND delivery_token = $6
       AND delivered_at IS NULL AND cancelled_at IS NULL`,
-  readOutboxStatus: `SELECT delivered_at, cancelled_at, delivery_token
-    FROM ros_eye_contact_outbox
-    WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
-      AND message_id = $4`,
+  readOutboxStatus: `SELECT message.delivered_at, message.cancelled_at, message.delivery_token,
+      parent.status AS parent_status
+    FROM ros_eye_contact_outbox AS message
+    LEFT JOIN road_events AS parent
+      ON parent.tenant_id = message.tenant_id
+      AND parent.id::text = message.case_id
+    WHERE message.tenant_id = $1 AND message.case_id = $2 AND message.session_id = $3
+      AND message.message_id = $4`,
   releaseOutboxLease: `UPDATE ros_eye_contact_outbox
     SET lease_owner = NULL, lease_expires_at = NULL
     WHERE tenant_id = $1 AND case_id = $2 AND session_id = $3
@@ -436,6 +452,7 @@ async function readDispositionWithConnection(
   ]);
   const row = status.rows[0];
   if (row === undefined) return 'CONFLICT';
+  if (row.parent_status === 'CLOSED') return 'CANCELLED';
   if (row.cancelled_at !== null && row.cancelled_at !== undefined) return 'CANCELLED';
   if (row.delivered_at !== null && row.delivered_at !== undefined) return 'DELIVERED';
   return 'CONFLICT';
