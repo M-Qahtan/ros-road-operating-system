@@ -331,6 +331,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CONTACT MESSAGE CANNOT BE NEWLY CLAIMED OR RESERVED AFTER THE WORKER OBSERVES ITS PARENT INCIDENT AS CLOSED.** |
 | Next handoff | Add the closed-parent outbox claim/reservation path to the disposable PostgreSQL journey, including proof that the provider callback is never entered, and bind it to the next engine receipt. |
 
+### Engine-bound closed-parent Contact delivery proof
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `5311a9b1f2ccbcfc751d1a733b3b355877477918`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch fifty commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping build or journey process was active. |
+| Added behavior | The disposable journey now submits the production-shaped claim against the closure-winner's pending Contact row and requires `NOT_CLAIMED`. It then creates a transaction-local pre-closure lease, exercises the reservation fence, and requires `NOT_RESERVED / PROVIDER_NOT_ENTERED`; rollback must restore one pending row with neither lease nor delivery token. |
+| Durable acceptance | Receipt schema v17 adds the exact claim, reservation, provider-boundary, and `1 / unleased 1 / untokened 1` state results. The receipt remains impossible until migrations, both concurrency orderings, rollback, forward recovery, two database restarts, scope/version/terminal checks, and this delivery fence all pass on the same clean candidate. |
+| Safety limits | The checked-in journey and focused harness are locally verified, but this executor has no Docker or Podman, so PostgreSQL has not executed the new statements and no v17 engine receipt exists. The proof does not authorize a provider, external dispatch, or activation, and a local receipt would not replace REL-013 archival. |
+| Result | **THE CLOSED-PARENT OUTBOX FENCE IS PART OF THE CANDIDATE-BOUND ENGINE JOURNEY AND CANNOT REPORT PASS IF THE PROVIDER BOUNDARY IS CROSSED.** |
+| Next handoff | Execute the clean v17 journey on Docker or Podman and correct the first real claim, reservation, or rollback discrepancy. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
