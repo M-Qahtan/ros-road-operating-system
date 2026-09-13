@@ -397,6 +397,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AMBIGUOUS PROVIDER SUCCESS NOW SURVIVES WORKER RESTART AS APPEND-ONLY CONTACT AUDIT BEFORE HUMAN REVIEW IS REPORTED.** |
 | Next handoff | Add the immutable ambiguity audit to the disposable PostgreSQL journey and require exact idempotent replay. |
 
+### PostgreSQL proof for durable ambiguous Contact delivery
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `0996b3ab50e3892a688dd61b2113821bcbfef5a7`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch fifty-six commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping test or journey process was active. |
+| Added behavior | The disposable PostgreSQL journey now commits the exact `DELIVERY_RESULT_AMBIGUOUS` audit after the delivery/retry fence, then replays the same deterministic event through a new client process. |
+| Durable acceptance | Receipt schema v20 requires one exact immutable event after both attempts, the same event identity on replay, the provider-success disposition `HUMAN_REVIEW`, and explicit exclusion of the delivery token from the audit fields. |
+| Safety limits | The declared provider result remains synthetic. The audit records uncertainty and does not claim delivery, schedule retry, reverse an external effect, or grant activation authority. Docker/Podman execution and REL-013 external archival remain open. |
+| Result | **HUMAN REVIEW CANNOT PASS THE JOURNEY WITHOUT ONE DURABLE, IDEMPOTENT, TOKEN-FREE AMBIGUITY EVENT.** |
+| Next handoff | Execute the clean v20 journey on Docker or Podman and correct the first real audit uniqueness, persistence, or replay discrepancy. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

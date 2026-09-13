@@ -93,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v19/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v20/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -173,7 +173,7 @@ test('forward retry after rollback commits once and duplicate retry is rejected'
   assert.match(contactClosureRace, /DUPLICATE_RETRY REJECTED/);
 });
 
-test('v19 receipt consumes contact races, rollback and exact forward retry proof', () => {
+test('v20 receipt consumes contact races, rollback and exact forward retry proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
@@ -187,7 +187,7 @@ test('v19 receipt consumes contact races, rollback and exact forward retry proof
   assert.match(localHarness, /contactAtomicRollback/);
   assert.match(localHarness, /contactForwardRetry/);
   assert.match(localHarness, /contactDuplicateRetry/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v19/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v20/);
 });
 
 test('forward contact recovery survives a second PostgreSQL restart exactly', () => {
@@ -296,9 +296,26 @@ test('provider-reported success with closed-parent zero writes binds human revie
   assert.match(localHarness, /closed_parent_provider_result='SENT'/);
   assert.match(localHarness, /closed_parent_provider_disposition='CONFLICT'/);
   assert.match(localHarness, /closed_parent_provider_disposition='HUMAN_REVIEW'/);
-  assert.match(localHarness, /Ambiguous closed-parent provider success did not escalate to human review/);
+  assert.match(localHarness, /Durably audited ambiguous provider success did not escalate to human review/);
   assert.match(localHarness, /contactClosedParentProviderResult/);
   assert.match(localHarness, /contactClosedParentProviderDisposition/);
+});
+
+test('ambiguous provider success is append-only, idempotent and token-free before human review', () => {
+  assert.match(localHarness, /record_closed_parent_ambiguity\(\)/);
+  assert.match(localHarness, /DELIVERY_RESULT_AMBIGUOUS/);
+  assert.match(localHarness, /delivery-result-ambiguous-pending-contact-action/);
+  assert.match(localHarness, /provider_sent_after_delivery_fence/);
+  assert.match(localHarness, /ON CONFLICT DO NOTHING/);
+  assert.match(localHarness, /closed_parent_ambiguity_audit_replay/);
+  assert.match(localHarness, /1\|1\|TOKEN_EXCLUDED/);
+  assert.match(localHarness, /contactAmbiguityAuditFirst/);
+  assert.match(localHarness, /contactAmbiguityAuditReplay/);
+  assert.match(localHarness, /contactAmbiguityAuditState/);
+  assert.ok(
+    localHarness.indexOf('closed_parent_ambiguity_audit_first') <
+      localHarness.indexOf("closed_parent_provider_disposition='HUMAN_REVIEW'"),
+  );
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {

@@ -556,23 +556,88 @@ if [[ "$closed_parent_outbox_finalization_result" != 'DELIVERY_NOT_RECORDED|RETR
   exit 2
 fi
 
-readonly closed_parent_provider_result='SENT'
-closed_parent_provider_disposition='CONFLICT'
-if [[ "$closed_parent_provider_result" == 'SENT' \
-  && "$closed_parent_outbox_finalization_result" == 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|PARENT_CLOSED|RESERVATION_UNCHANGED' ]]; then
-  closed_parent_provider_disposition='HUMAN_REVIEW'
-fi
-readonly closed_parent_provider_disposition
-if [[ "$closed_parent_provider_disposition" != 'HUMAN_REVIEW' ]]; then
-  echo "Ambiguous closed-parent provider success did not escalate to human review" >&2
-  exit 2
-fi
-
 readonly closed_parent_outbox_state_after_finalization="$(
   psql "$DATABASE_URL" -Atqc "SELECT count(*)::text || '|' || count(*) FILTER (WHERE lease_owner IS NULL)::text || '|' || count(*) FILTER (WHERE delivery_token IS NULL)::text FROM ros_eye_contact_outbox WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004' AND session_id='contact-race-closure-wins' AND message_id='pending-contact-action' AND delivered_at IS NULL AND cancelled_at IS NULL"
 )"
 if [[ "$closed_parent_outbox_state_after_finalization" != '1|1|1' ]]; then
   echo "Closed-parent finalization proof escaped rollback: $closed_parent_outbox_state_after_finalization" >&2
+  exit 2
+fi
+
+readonly closed_parent_provider_result='SENT'
+record_closed_parent_ambiguity() {
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+WITH candidate AS (
+  SELECT session.state, session.version
+  FROM ros_eye_contact_outbox AS message
+  JOIN ros_eye_contact_sessions AS session
+    ON session.tenant_id=message.tenant_id
+    AND session.case_id=message.case_id
+    AND session.session_id=message.session_id
+  LEFT JOIN road_events AS parent
+    ON parent.tenant_id=message.tenant_id AND parent.id::text=message.case_id
+  WHERE message.tenant_id='riyadh-pilot'
+    AND message.case_id='10000000-0000-4000-8000-000000000004'
+    AND message.session_id='contact-race-closure-wins'
+    AND message.message_id='pending-contact-action'
+    AND (message.cancelled_at IS NOT NULL OR parent.status='CLOSED')
+), inserted AS (
+  INSERT INTO ros_eye_contact_audit (
+    tenant_id, case_id, session_id, event_id, event_type, state, session_version,
+    actor_type, actor_id, authorized_by_role, authority_policy_version,
+    reason_code, occurred_at, trace_id, runtime_policy_version
+  )
+  SELECT 'riyadh-pilot', '10000000-0000-4000-8000-000000000004',
+    'contact-race-closure-wins', 'delivery-result-ambiguous-pending-contact-action',
+    'DELIVERY_RESULT_AMBIGUOUS', candidate.state, candidate.version,
+    'SYSTEM', 'pre-closure-finalization-worker', 'SYSTEM',
+    'ros-eye.contact-authority.v1', 'provider_sent_after_delivery_fence',
+    clock_timestamp(), 'pending-contact-action', 'ros-eye.contact-runtime.v6'
+  FROM candidate
+  ON CONFLICT DO NOTHING
+  RETURNING event_id
+)
+SELECT event_id FROM inserted
+UNION ALL
+SELECT event_id FROM ros_eye_contact_audit
+WHERE tenant_id='riyadh-pilot'
+  AND case_id='10000000-0000-4000-8000-000000000004'
+  AND session_id='contact-race-closure-wins'
+  AND event_id='delivery-result-ambiguous-pending-contact-action'
+LIMIT 1;
+SQL
+}
+
+readonly closed_parent_ambiguity_audit_first="$(record_closed_parent_ambiguity)"
+if [[ "$closed_parent_ambiguity_audit_first" != 'delivery-result-ambiguous-pending-contact-action' ]]; then
+  echo "Ambiguous provider result was not durably audited before human review" >&2
+  exit 2
+fi
+
+# A second psql process represents a restarted worker replaying the exact result.
+readonly closed_parent_ambiguity_audit_replay="$(record_closed_parent_ambiguity)"
+if [[ "$closed_parent_ambiguity_audit_replay" != "$closed_parent_ambiguity_audit_first" ]]; then
+  echo "Ambiguous provider audit replay was not exact and idempotent" >&2
+  exit 2
+fi
+
+readonly closed_parent_ambiguity_audit_state="$(
+  psql "$DATABASE_URL" -Atqc "SELECT count(*)::text || '|' || count(*) FILTER (WHERE event_id='delivery-result-ambiguous-pending-contact-action' AND reason_code='provider_sent_after_delivery_fence' AND trace_id='pending-contact-action')::text || '|' || CASE WHEN bool_and(position('closed-parent-finalization-token' in concat_ws('|', event_id, event_type, actor_id, reason_code, trace_id, authority_policy_version, runtime_policy_version))=0) THEN 'TOKEN_EXCLUDED' ELSE 'TOKEN_EXPOSED' END FROM ros_eye_contact_audit WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004' AND session_id='contact-race-closure-wins' AND event_type='DELIVERY_RESULT_AMBIGUOUS'"
+)"
+if [[ "$closed_parent_ambiguity_audit_state" != '1|1|TOKEN_EXCLUDED' ]]; then
+  echo "Ambiguous provider audit was duplicated, incomplete, or exposed its delivery token: $closed_parent_ambiguity_audit_state" >&2
+  exit 2
+fi
+
+closed_parent_provider_disposition='CONFLICT'
+if [[ "$closed_parent_provider_result" == 'SENT' \
+  && "$closed_parent_outbox_finalization_result" == 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|PARENT_CLOSED|RESERVATION_UNCHANGED' \
+  && "$closed_parent_ambiguity_audit_state" == '1|1|TOKEN_EXCLUDED' ]]; then
+  closed_parent_provider_disposition='HUMAN_REVIEW'
+fi
+readonly closed_parent_provider_disposition
+if [[ "$closed_parent_provider_disposition" != 'HUMAN_REVIEW' ]]; then
+  echo "Durably audited ambiguous provider success did not escalate to human review" >&2
   exit 2
 fi
 
@@ -641,9 +706,12 @@ ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE="$closed_parent_outbox_state" \
 ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE_AFTER_FINALIZATION="$closed_parent_outbox_state_after_finalization" \
 ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_RESULT="$closed_parent_provider_result" \
 ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_DISPOSITION="$closed_parent_provider_disposition" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_FIRST="$closed_parent_ambiguity_audit_first" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_REPLAY="$closed_parent_ambiguity_audit_replay" \
+ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_STATE="$closed_parent_ambiguity_audit_state" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v19",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v20",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -707,6 +775,12 @@ node -e '
       process.env.ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_RESULT,
     contactClosedParentProviderDisposition:
       process.env.ROS_RECEIPT_CONTACT_CLOSED_PARENT_PROVIDER_DISPOSITION,
+    contactAmbiguityAuditFirst:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_FIRST,
+    contactAmbiguityAuditReplay:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_REPLAY,
+    contactAmbiguityAuditState:
+      process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_AUDIT_STATE,
     result: "PASS",
     externalArchiveReceipt: null,
   };
