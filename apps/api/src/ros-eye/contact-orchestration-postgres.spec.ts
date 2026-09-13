@@ -87,7 +87,7 @@ class TrackingPool implements ContactSqlPoolPort, ContactSqlConnectionPort {
       return { rowCount: 1, rows: [] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus) {
-      const rows = [{ delivered_at: this.delivered ? input.now : null, cancelled_at: this.cancelled ? input.now : null, delivery_token: this.cancelled ? null : input.deliveryToken, parent_status: this.parentClosed ? 'CLOSED' : 'RESPONSE_COORDINATION' }];
+      const rows = [{ delivered_at: this.delivered ? input.now : null, cancelled_at: this.cancelled ? input.now : null, delivery_token: this.cancelled ? null : input.deliveryToken, parent_status: this.parentClosed ? 'CLOSED' : 'RESPONSE_COORDINATION', ambiguity_recorded: this.ambiguityRecorded }];
       return { rowCount: 1, rows: rows as unknown as Row[] };
     }
     if (text === POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult) {
@@ -177,6 +177,21 @@ test('unpersisted provider success ambiguity fails closed instead of emitting ep
   });
   assert.equal(result, 'CONFLICT'); assert.equal(pool.delivered, false); assert.equal(pool.retried, false);
   assert.equal(pool.ambiguityRecorded, false); assert.equal(pool.activeTransactions, 0);
+});
+
+test('restart recovery reads durable ambiguity without reinvoking the provider', async () => {
+  const pool = new TrackingPool(); const repository = new PostgresContactRuntimeRepository(pool);
+  assert.equal(await repository.processClaimedOutbox(input, async () => {
+    pool.parentClosed = true;
+    return 'SENT';
+  }), 'HUMAN_REVIEW');
+  let providerInvoked = false;
+  const recovered = await repository.processClaimedOutbox(input, async () => {
+    providerInvoked = true;
+    return 'SENT';
+  });
+  assert.equal(recovered, 'HUMAN_REVIEW'); assert.equal(providerInvoked, false);
+  assert.equal(pool.delivered, false); assert.equal(pool.retried, false); assert.equal(pool.ambiguityRecorded, true);
 });
 
 test('closure after an unavailable provider remains cancelled without false delivery ambiguity', async () => {

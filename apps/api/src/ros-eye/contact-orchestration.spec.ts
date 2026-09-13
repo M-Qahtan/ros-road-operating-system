@@ -205,4 +205,10 @@ test('PostgreSQL contracts use composite claims, short token reservations, and d
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult, /DELIVERY_RESULT_AMBIGUOUS/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult, /provider_sent_after_delivery_fence/);
   assert.match(POSTGRES_CONTACT_RUNTIME_SQL.recordAmbiguousProviderResult, /ON CONFLICT DO NOTHING/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus, /ambiguity_recorded/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus, /'delivery-result-ambiguous-' \|\| message\.message_id/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus, /audit\.tenant_id = message\.tenant_id/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus, /audit\.case_id = message\.case_id/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus, /audit\.session_id = message\.session_id/);
+  assert.match(POSTGRES_CONTACT_RUNTIME_SQL.readOutboxStatus, /audit\.event_type = 'DELIVERY_RESULT_AMBIGUOUS'/);
 });

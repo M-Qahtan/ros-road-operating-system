@@ -408,6 +408,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **HUMAN REVIEW CANNOT PASS THE JOURNEY WITHOUT ONE DURABLE, IDEMPOTENT, TOKEN-FREE AMBIGUITY EVENT.** |
 | Next handoff | Execute the clean v20 journey on Docker or Podman and correct the first real audit uniqueness, persistence, or replay discrepancy. |
 
+### Recovery of ambiguous Contact delivery disposition
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `8fd6bd1cf9eee5a1ea08d38a5a71c0f7277102ad`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch fifty-seven commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping test or journey process was active. |
+| Added behavior | A worker that cannot reserve the message now reads the exact message-scoped `DELIVERY_RESULT_AMBIGUOUS` event and restores `HUMAN_REVIEW` after restart without invoking the provider again. |
+| Isolation acceptance | The lookup is constrained by Contact-owned `Tenant + Case + Session + deterministic Message event`, and requires the exact ambiguity event type. Missing or mismatched audit evidence cannot produce human review. |
+| Safety limits | Recovery performs no send, delivery acknowledgement, retry, cancellation, incident transition, or activation. It only restores the previously persisted uncertainty disposition. Live PostgreSQL proof and REL-013 external archival remain open. |
+| Result | **A RESTARTED CONTACT WORKER CAN RECOVER DURABLE DELIVERY UNCERTAINTY WITHOUT REPEATING THE EXTERNAL SIDE EFFECT.** |
+| Next handoff | Add the no-provider recovery read to the disposable PostgreSQL journey and bind it to receipt v21. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

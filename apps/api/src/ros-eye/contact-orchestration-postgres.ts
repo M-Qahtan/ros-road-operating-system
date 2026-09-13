@@ -165,7 +165,15 @@ export const POSTGRES_CONTACT_RUNTIME_SQL = Object.freeze({
           AND parent.status <> 'CLOSED'
       )`,
   readOutboxStatus: `SELECT message.delivered_at, message.cancelled_at, message.delivery_token,
-      parent.status AS parent_status
+      parent.status AS parent_status,
+      EXISTS (
+        SELECT 1 FROM ros_eye_contact_audit AS audit
+        WHERE audit.tenant_id = message.tenant_id
+          AND audit.case_id = message.case_id
+          AND audit.session_id = message.session_id
+          AND audit.event_id = 'delivery-result-ambiguous-' || message.message_id
+          AND audit.event_type = 'DELIVERY_RESULT_AMBIGUOUS'
+      ) AS ambiguity_recorded
     FROM ros_eye_contact_outbox AS message
     LEFT JOIN road_events AS parent
       ON parent.tenant_id = message.tenant_id
@@ -516,6 +524,7 @@ async function readDispositionWithConnection(
   ]);
   const row = status.rows[0];
   if (row === undefined) return 'CONFLICT';
+  if (row.ambiguity_recorded === true) return 'HUMAN_REVIEW';
   if (row.parent_status === 'CLOSED') return providerReportedSent ? 'HUMAN_REVIEW' : 'CANCELLED';
   if (row.cancelled_at !== null && row.cancelled_at !== undefined) {
     return providerReportedSent ? 'HUMAN_REVIEW' : 'CANCELLED';
