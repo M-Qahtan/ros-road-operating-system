@@ -309,6 +309,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CURRENT CONTACT VERSION CANNOT BE MUTATED THROUGH A STALE ROAD EVENT PARENT VERSION, INCLUDING AFTER DATABASE RESTART.** |
 | Next handoff | Execute the clean v15 journey on Docker or Podman and correct the first live parent-version or persistence discrepancy it reveals. |
 
+### Post-restart closed-incident Contact terminality
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `d695d7fb56b1bb85d19c61bf94fde0b4fef172ad`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty-eight commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | After the verified Contact/closure race and a PostgreSQL restart, the journey locks the closure-winner RoadEvent and attempts another Contact transition. Persisted `CLOSED` must reject it before the session update. |
+| Durable acceptance | PostgreSQL must return `POST_RESTART_INCIDENT_CLOSED`, and the closed case must remain exactly `CLOSED / event 3 / session 1 / contact 1 / audit 0 / cancelled 0 / pending 1`. Receipt schema v16 records the rejection and unchanged state. |
+| Safety limits | The check proves terminality only for the defined local command journey. It sends no provider message, reopens no incident, grants no authority, and cannot replace live engine evidence or the REL-013 external immutable archive. |
+| Result | **A DATABASE RESTART CANNOT TURN A CLOSED INCIDENT BACK INTO AN ACCEPTING CONTACT COMMAND SURFACE.** |
+| Next handoff | Execute the clean v16 journey on Docker or Podman and correct the first live terminal-state or persistence discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
