@@ -265,6 +265,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **CONTACT IDEMPOTENCY MUST REMAIN DURABLE ACROSS A DATABASE RESTART, NOT ONLY INSIDE THE ORIGINAL POSTMASTER.** |
 | Next handoff | Execute the clean v11 journey on Docker or Podman and correct the first live version-boundary or persistence discrepancy it reveals. |
 
+### Post-restart Contact purpose isolation
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `377fd0403539b302a3814a920ac9b0ef7801f58b`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the branch forty-four commits ahead and zero behind, with no branch PR or workflow run. |
+| Added behavior | After recovery and restart, the journey submits a Contact mutation with the correct tenant and case but a foreign purpose. The exact parent lookup must reject the command before the Contact session can advance. |
+| Durable acceptance | PostgreSQL must return `POST_RESTART_PARENT_SCOPE_MISMATCH`, and the full primary state must remain exactly `RECOVERY / event 2 / session 2 / contact 2 / audit 1 / cancelled 1 / pending 0`. Receipt schema v12 records the rejection and unchanged state. |
+| Safety limits | This local assertion proves only the database scope boundary. It sends no Contact action, grants no authority, and cannot replace a live engine run or the REL-013 external immutable archive. |
+| Result | **A CONTACT COMMAND CANNOT BORROW A VALID CASE ID FROM ANOTHER PURPOSE, INCLUDING AFTER DATABASE RESTART.** |
+| Next handoff | Execute the clean v12 journey on Docker or Podman and correct the first live purpose-isolation or persistence discrepancy it reveals. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

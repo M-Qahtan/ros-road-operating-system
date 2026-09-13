@@ -165,6 +165,21 @@ test('guarded session correction rejects a closed or stale parent before contact
   }
 });
 
+test('guarded session correction rejects a missing exact-purpose parent before contact access', async () => {
+  const sql = new FakeSql((text) => text.includes('SELECT status, version FROM road_events')
+    ? { rows: [], rowCount: 0 }
+    : { rows: [], rowCount: 1 });
+  const result = await new PostgresContactRuntimeRepository(sql).transaction((tx) =>
+    tx.updateSession(session(2, 'HUMAN_REVIEW'), 1, {
+      purpose: 'foreign-purpose', expectedCaseVersion: 7
+    })
+  );
+  assert.equal(result, 'CONFLICT');
+  assert.deepEqual(sql.queries[0]?.values, [SCOPE.tenantId, 'foreign-purpose', CASE_ID]);
+  assert.equal(sql.queries.some((query) => query.text.includes('FROM ros_eye_contact_sessions')), false);
+  assert.equal(sql.queries.some((query) => query.text.includes('ros_eye_contact_revision_ledger')), false);
+});
+
 test('missing or drifted prior contact receipt blocks a session mutation', async () => {
   for (const ledgerRows of [[], [{ revision: 1, digest: 'f'.repeat(64) }]]) {
     const sql = new FakeSql((text) => {
