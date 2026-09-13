@@ -466,6 +466,101 @@ if [[ "$closed_parent_outbox_state" != '1|1|1' ]]; then
   exit 2
 fi
 
+readonly closed_parent_outbox_finalization_result="$(
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+\set QUIET 1
+BEGIN;
+UPDATE ros_eye_contact_outbox
+SET lease_owner='pre-closure-finalization-worker',
+    lease_expires_at=clock_timestamp() + interval '30 seconds',
+    delivery_token='closed-parent-finalization-token',
+    delivery_started_at=clock_timestamp(),
+    delivery_deadline_at=clock_timestamp() + interval '5 seconds'
+WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004'
+  AND session_id='contact-race-closure-wins' AND message_id='pending-contact-action';
+CREATE TEMP TABLE closed_parent_finalization_proof (
+  delivered_count bigint NOT NULL,
+  retry_count bigint NOT NULL DEFAULT 0
+) ON COMMIT DROP;
+WITH delivered AS (
+  UPDATE ros_eye_contact_outbox AS message
+  SET delivered_at=clock_timestamp(), lease_owner=NULL, lease_expires_at=NULL,
+      delivery_token=NULL, delivery_started_at=NULL, delivery_deadline_at=NULL,
+      last_error=NULL, last_error_code=NULL
+  WHERE message.tenant_id='riyadh-pilot'
+    AND message.case_id='10000000-0000-4000-8000-000000000004'
+    AND message.session_id='contact-race-closure-wins'
+    AND message.message_id='pending-contact-action'
+    AND message.lease_owner='pre-closure-finalization-worker'
+    AND message.delivery_token='closed-parent-finalization-token'
+    AND message.delivery_deadline_at >= clock_timestamp()
+    AND message.delivered_at IS NULL AND message.cancelled_at IS NULL
+    AND EXISTS (
+      SELECT 1 FROM road_events AS parent
+      WHERE parent.tenant_id=message.tenant_id AND parent.id::text=message.case_id
+        AND parent.status <> 'CLOSED'
+    )
+  RETURNING 1
+)
+INSERT INTO closed_parent_finalization_proof (delivered_count)
+SELECT count(*) FROM delivered;
+WITH retried AS (
+  UPDATE ros_eye_contact_outbox AS message
+  SET attempt_count=message.attempt_count + 1,
+      available_at=clock_timestamp() + interval '15 seconds',
+      lease_owner=NULL, lease_expires_at=NULL,
+      delivery_token=NULL, delivery_started_at=NULL, delivery_deadline_at=NULL,
+      last_error='closed-parent-finalization-proof', last_error_code='PROVIDER_FAILURE'
+  WHERE message.tenant_id='riyadh-pilot'
+    AND message.case_id='10000000-0000-4000-8000-000000000004'
+    AND message.session_id='contact-race-closure-wins'
+    AND message.message_id='pending-contact-action'
+    AND message.lease_owner='pre-closure-finalization-worker'
+    AND message.delivery_token='closed-parent-finalization-token'
+    AND message.delivery_deadline_at >= clock_timestamp()
+    AND message.delivered_at IS NULL AND message.cancelled_at IS NULL
+    AND EXISTS (
+      SELECT 1 FROM road_events AS parent
+      WHERE parent.tenant_id=message.tenant_id AND parent.id::text=message.case_id
+        AND parent.status <> 'CLOSED'
+    )
+  RETURNING 1
+)
+UPDATE closed_parent_finalization_proof
+SET retry_count=(SELECT count(*) FROM retried);
+\set QUIET 0
+SELECT CASE
+  WHEN proof.delivered_count=0 AND proof.retry_count=0
+    AND message.lease_owner='pre-closure-finalization-worker'
+    AND message.delivery_token='closed-parent-finalization-token'
+    AND message.delivered_at IS NULL AND message.cancelled_at IS NULL
+    AND message.last_error IS NULL AND message.last_error_code IS NULL
+  THEN 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|RESERVATION_UNCHANGED'
+  ELSE 'UNSAFE_FINALIZATION_RESULT'
+END
+FROM closed_parent_finalization_proof AS proof
+JOIN ros_eye_contact_outbox AS message
+  ON message.tenant_id='riyadh-pilot'
+  AND message.case_id='10000000-0000-4000-8000-000000000004'
+  AND message.session_id='contact-race-closure-wins'
+  AND message.message_id='pending-contact-action';
+\set QUIET 1
+ROLLBACK;
+SQL
+)"
+if [[ "$closed_parent_outbox_finalization_result" != 'DELIVERY_NOT_RECORDED|RETRY_NOT_RECORDED|RESERVATION_UNCHANGED' ]]; then
+  echo "Closed-parent Contact result crossed its durable finalization fence: $closed_parent_outbox_finalization_result" >&2
+  exit 2
+fi
+
+readonly closed_parent_outbox_state_after_finalization="$(
+  psql "$DATABASE_URL" -Atqc "SELECT count(*)::text || '|' || count(*) FILTER (WHERE lease_owner IS NULL)::text || '|' || count(*) FILTER (WHERE delivery_token IS NULL)::text FROM ros_eye_contact_outbox WHERE tenant_id='riyadh-pilot' AND case_id='10000000-0000-4000-8000-000000000004' AND session_id='contact-race-closure-wins' AND message_id='pending-contact-action' AND delivered_at IS NULL AND cancelled_at IS NULL"
+)"
+if [[ "$closed_parent_outbox_state_after_finalization" != '1|1|1' ]]; then
+  echo "Closed-parent finalization proof escaped rollback: $closed_parent_outbox_state_after_finalization" >&2
+  exit 2
+fi
+
 image_id="$("$container_engine" inspect --format '{{.Image}}' "$container_name")"
 if [[ "$image_id" =~ ^[a-f0-9]{64}$ ]]; then image_id="sha256:${image_id}"; fi
 readonly image_id
@@ -528,9 +623,10 @@ ROS_RECEIPT_CONTACT_WRONG_CASE_STATE="$post_restart_wrong_case_state" \
 ROS_RECEIPT_CONTACT_STALE_PARENT_STATE="$post_restart_stale_parent_state" \
 ROS_RECEIPT_CONTACT_CLOSED_PARENT_STATE="$post_restart_closed_parent_state" \
 ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE="$closed_parent_outbox_state" \
+ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE_AFTER_FINALIZATION="$closed_parent_outbox_state_after_finalization" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v17",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v18",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -585,6 +681,11 @@ node -e '
     contactClosedParentProviderCallback: "NOT_ENTERED",
     contactClosedParentOutboxState:
       process.env.ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE,
+    contactClosedParentDeliveredFinalization: "NOT_RECORDED",
+    contactClosedParentRetryFinalization: "NOT_RECORDED",
+    contactClosedParentReservationAfterFinalization: "UNCHANGED",
+    contactClosedParentOutboxStateAfterFinalization:
+      process.env.ROS_RECEIPT_CONTACT_CLOSED_PARENT_OUTBOX_STATE_AFTER_FINALIZATION,
     result: "PASS",
     externalArchiveReceipt: null,
   };

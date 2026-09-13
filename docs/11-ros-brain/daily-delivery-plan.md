@@ -353,6 +353,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A PROVIDER RESULT RETURNING AFTER INCIDENT CLOSURE CANNOT BECOME A DURABLE CONTACT DELIVERY OR RETRY.** |
 | Next handoff | Add the closure-during-provider finalization ordering to the disposable PostgreSQL journey and bind the zero-write result to the next receipt schema. |
 
+### PostgreSQL proof for finalization after concurrent closure
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `88816bcd0056aefeb936b4218ce55122818e7a06`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch fifty-two commits ahead and zero behind. The worktree was clean and no overlapping build or journey process was active. |
+| Added behavior | The disposable journey creates a transaction-local delivery reservation for the closure-winner's pending Contact message, then submits production-shaped delivered and retry finalization statements. Both must update zero rows because the exact tenant/case RoadEvent is already `CLOSED`; the reservation must remain unchanged until the proof transaction rolls back. |
+| Durable acceptance | Receipt schema v18 adds `NOT_RECORDED` for delivered and retry finalization, `UNCHANGED` for the reservation, and the post-rollback `1 / unleased 1 / untokened 1` state. Any accepted finalization or escaped test reservation prevents a receipt. |
+| Safety limits | Static and focused local tests verify the fail-closed journey contract, but Docker/Podman is unavailable, so PostgreSQL has not executed these statements and no v18 engine receipt exists. This is an acknowledgement/retry fence after a provider returns; it neither invokes nor retracts an external provider action and does not replace REL-013 archival. |
+| Result | **A V18 ENGINE RECEIPT CANNOT PASS IF A RESULT RETURNING AFTER INCIDENT CLOSURE IS RECORDED AS DELIVERY OR RETRY.** |
+| Next handoff | Execute the clean v18 journey on Docker or Podman and correct the first real finalization or rollback discrepancy. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

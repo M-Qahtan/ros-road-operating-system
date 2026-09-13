@@ -93,7 +93,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v17/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v18/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -173,7 +173,7 @@ test('forward retry after rollback commits once and duplicate retry is rejected'
   assert.match(contactClosureRace, /DUPLICATE_RETRY REJECTED/);
 });
 
-test('v17 receipt consumes contact races, rollback and exact forward retry proof', () => {
+test('v18 receipt consumes contact races, rollback and exact forward retry proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
@@ -187,7 +187,7 @@ test('v17 receipt consumes contact races, rollback and exact forward retry proof
   assert.match(localHarness, /contactAtomicRollback/);
   assert.match(localHarness, /contactForwardRetry/);
   assert.match(localHarness, /contactDuplicateRetry/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v17/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v18/);
 });
 
 test('forward contact recovery survives a second PostgreSQL restart exactly', () => {
@@ -277,6 +277,19 @@ test('closed parent cannot claim or reserve pending Contact delivery after resta
   assert.match(localHarness, /contactClosedParentDeliveryReservation: "NOT_RESERVED"/);
   assert.match(localHarness, /contactClosedParentProviderCallback: "NOT_ENTERED"/);
   assert.match(localHarness, /contactClosedParentOutboxState/);
+});
+
+test('closed parent rejects delivery and retry finalization after provider return', () => {
+  assert.match(localHarness, /closed_parent_outbox_finalization_result/);
+  assert.match(localHarness, /delivery_token='closed-parent-finalization-token'/);
+  assert.match(localHarness, /SET delivered_at=clock_timestamp\(\)/);
+  assert.match(localHarness, /SET attempt_count=message\.attempt_count \+ 1/);
+  assert.match(localHarness, /DELIVERY_NOT_RECORDED\|RETRY_NOT_RECORDED\|RESERVATION_UNCHANGED/);
+  assert.match(localHarness, /closed_parent_outbox_state_after_finalization" != '1\|1\|1'/);
+  assert.match(localHarness, /contactClosedParentDeliveredFinalization: "NOT_RECORDED"/);
+  assert.match(localHarness, /contactClosedParentRetryFinalization: "NOT_RECORDED"/);
+  assert.match(localHarness, /contactClosedParentReservationAfterFinalization: "UNCHANGED"/);
+  assert.match(localHarness, /contactClosedParentOutboxStateAfterFinalization/);
 });
 
 test('live receipt consumes the exact validated before-and-after restart proof', () => {
