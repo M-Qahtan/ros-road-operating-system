@@ -108,6 +108,33 @@ test('Arabic command-center rendering exposes urgency privacy explainability and
   assert.match(html, /محجوبة: لا توجد لقطة مصادر حالية موثقة/);
 });
 
+test('Arabic command-center keeps a closed ambiguous delivery visibly in human review', async () => {
+  const now = new Date('2026-07-31T04:00:00.000Z');
+  const cases = seedCommandCenterCases(now);
+  const ambiguous = {
+    ...cases[0]!,
+    safetyCase: { ...cases[0]!.safetyCase, state: 'HUMAN_REVIEW' as const, nextDeadlineAt: null },
+    audit: [...cases[0]!.audit, {
+      eventId: 'delivery-result-ambiguous-message-001', action: 'DELIVERY_RESULT_AMBIGUOUS',
+      actorId: 'contact-outbox-worker', actorRole: 'SYSTEM' as const,
+      reason: 'provider_sent_after_delivery_fence', reasonCode: 'provider_sent_after_delivery_fence',
+      traceId: 'trace-ambiguous-delivery-001', occurredAt: now.toISOString(),
+      caseVersion: cases[0]!.contactSession?.version ?? 1, immutable: true as const
+    }]
+  };
+  const controller = new HumanSafetyCommandCenterController(
+    new SimulatedHumanSafetyCommandCenterGateway([ambiguous]),
+    { actorId: 'supervisor-1', roles: ['SUPERVISOR'] }, () => now
+  );
+  await controller.load();
+  await controller.select(ambiguous.safetyCase.id);
+
+  const html = renderHumanSafetyCommandCenter(controller.state, controller, now);
+  assert.match(html, /مراجعة بشرية/);
+  assert.match(html, /DELIVERY_RESULT_AMBIGUOUS/);
+  assert.match(html, /provider_sent_after_delivery_fence/);
+});
+
 test('Arabic command-center renders only verified governed source revisions as authoritative', async () => {
   const now = new Date('2026-07-31T04:00:00.000Z');
   const cases = seedCommandCenterCases(now).map((item, index) => index !== 0 ? item : ({

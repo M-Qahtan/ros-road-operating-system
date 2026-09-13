@@ -394,7 +394,14 @@ function primaryHumanRole(actor: AuthenticatedActor): 'OPERATOR' | 'SUPERVISOR' 
   throw new HumanSafetyHttpError(403, 'FORBIDDEN', 'Operational Human Safety authority is required');
 }
 
-function stateOf(event: RoadEventReadModel, contact: ContactSessionRecord | null): HumanSafetyCaseContract['state'] {
+function stateOf(
+  event: RoadEventReadModel,
+  contact: ContactSessionRecord | null,
+  audit: readonly HumanSafetyAuditEntry[]
+): HumanSafetyCaseContract['state'] {
+  // A closed RoadEvent remains terminal, but a provider success that could not
+  // be durably acknowledged still needs an operator-visible disposition.
+  if (audit.some((entry) => entry.action === 'DELIVERY_RESULT_AMBIGUOUS')) return 'HUMAN_REVIEW';
   if (event.status === 'CLOSED') return 'RESOLVED';
   if (event.closureAuthorization !== null) return 'RESOLVED';
   if (contact === null) return event.severity.requiresHumanReview ? 'HUMAN_REVIEW' : 'UNKNOWN';
@@ -424,7 +431,7 @@ function view(
   const current: Omit<HumanSafetyCaseView, 'nextEvidenceAdvice'> = {
     tenantId: actor.tenantId,
     safetyCase: {
-      id: event.id, roadEventId: event.id, state: stateOf(event, contact),
+      id: event.id, roadEventId: event.id, state: stateOf(event, contact, backing.audit),
       severity: event.severity.level as HumanSafetyCaseContract['severity'], version: event.version,
       severityAssessmentVersion: verifiedVersions?.severityRevision ?? 0,
       evidenceRevision: verifiedVersions?.evidenceRevision ?? 0,

@@ -430,6 +430,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE ENGINE RECEIPT CANNOT CLAIM RECOVERY IF THE PROVIDER IS RE-ENTERED OR THE CONTACT OUTBOX CHANGES.** |
 | Next handoff | Execute the clean v21 journey on Docker or Podman and correct the first real recovery-read or persistence discrepancy. |
 
+### Operator visibility for ambiguous delivery after closure
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `bb4ee3886db125243dfe040113bf76c8eca8b59c`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch fifty-nine commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean and no overlapping test or journey process was active. |
+| Added behavior | A durable `DELIVERY_RESULT_AMBIGUOUS` Contact audit now makes the Human Safety API expose the case as `HUMAN_REVIEW`, even when the parent RoadEvent is already closed. The RoadEvent remains terminal, current recommendations remain withheld, and the immutable event remains visible in the operator timeline. |
+| Local acceptance | API coverage closes the RoadEvent, injects the exact durable ambiguity event, and requires `HUMAN_REVIEW` without a mutation or recommendation revival. Dashboard coverage requires the Arabic human-review label plus the immutable event and reason in the rendered timeline. |
+| Safety limits | This is visibility only: it does not reopen the incident, acknowledge delivery, schedule retry, invoke a provider, authorize activation, or resolve the ambiguity. PostgreSQL engine execution and REL-013 external archival remain open. |
+| Result | **A CLOSED INCIDENT WITH AN UNRESOLVED AMBIGUOUS CONTACT RESULT CAN NO LONGER APPEAR OPERATIONALLY RESOLVED.** |
+| Next handoff | Bind the committed ambiguity event to the Human Safety read disposition in the disposable PostgreSQL journey and receipt v22. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

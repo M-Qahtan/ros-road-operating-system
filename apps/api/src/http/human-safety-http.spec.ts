@@ -277,6 +277,42 @@ test('closed case withholds current recommendation while preserving governed jou
   assert.equal(current.store.mutations, 0);
 });
 
+test('closed case surfaces durable ambiguous delivery for human review without reopening the incident', async () => {
+  const current = await fixture(SUPERVISOR, currentGovernedReader(), HEALTHY_RUNTIME, 'S1');
+  current.store.audit = [{
+    eventId: 'delivery-result-ambiguous-message-001', action: 'DELIVERY_RESULT_AMBIGUOUS',
+    actorId: 'contact-outbox-worker', actorRole: 'SYSTEM', reason: 'provider_sent_after_delivery_fence',
+    reasonCode: 'provider_sent_after_delivery_fence', traceId: TRACE_ID,
+    occurredAt: '2026-08-21T00:01:00.000Z', caseVersion: current.store.current.version, immutable: true
+  }];
+  let event = await current.application.getById(CASE_ID, SUPERVISOR);
+  for (const nextStatus of [
+    RoadEventStatus.Validating,
+    RoadEventStatus.Confirmed,
+    RoadEventStatus.SafetyAssessment,
+    RoadEventStatus.ResponseCoordination,
+    RoadEventStatus.RoadClearance,
+    RoadEventStatus.Recovery,
+    RoadEventStatus.Closed
+  ]) {
+    event = await current.application.transition({
+      roadEventId: CASE_ID, expectedVersion: event.version, nextStatus, reason: `advance to ${nextStatus}`
+    }, {
+      actor: SUPERVISOR, traceId: TRACE_ID, idempotencyKey: `closed-ambiguous-delivery-${nextStatus}`
+    });
+  }
+
+  const response = await current.handler(request('GET', `/api/v1/human-safety/cases/${CASE_ID}`));
+  const item = (response!.body as { data: HumanSafetyCaseView }).data;
+  assert.equal(response?.status, 200);
+  assert.equal(event.status, RoadEventStatus.Closed);
+  assert.equal(item.safetyCase.state, 'HUMAN_REVIEW');
+  assert.equal(item.audit[0]?.action, 'DELIVERY_RESULT_AMBIGUOUS');
+  assert.equal(item.recommendation, null);
+  assert.equal(item.recommendationState.status, 'WITHHELD');
+  assert.equal(current.store.mutations, 0);
+});
+
 test('closed case rejects every Human Safety command before contact storage access', async () => {
   const current = await fixture(SUPERVISOR, currentGovernedReader(), HEALTHY_RUNTIME, 'S1');
   let event = await current.application.getById(CASE_ID, SUPERVISOR);
