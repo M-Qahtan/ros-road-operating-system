@@ -114,6 +114,12 @@ test('Arabic command-center keeps a closed ambiguous delivery visibly in human r
   const ambiguous = {
     ...cases[0]!,
     safetyCase: { ...cases[0]!.safetyCase, state: 'HUMAN_REVIEW' as const, nextDeadlineAt: null },
+    recommendation: null,
+    recommendationState: {
+      source: 'GOVERNED_JOURNAL' as const, status: 'WITHHELD' as const,
+      humanReviewStatus: 'PENDING' as const, snapshotReason: 'CASE_CLOSED',
+      mode: 'SHADOW_ONLY' as const, activationAuthorized: false as const
+    },
     audit: [...cases[0]!.audit, {
       eventId: 'delivery-result-ambiguous-message-001', action: 'DELIVERY_RESULT_AMBIGUOUS',
       actorId: 'contact-outbox-worker', actorRole: 'SYSTEM' as const,
@@ -133,6 +139,12 @@ test('Arabic command-center keeps a closed ambiguous delivery visibly in human r
   assert.match(html, /مراجعة بشرية/);
   assert.match(html, /DELIVERY_RESULT_AMBIGUOUS/);
   assert.match(html, /provider_sent_after_delivery_fence/);
+  assert.equal(controller.canTakeover(), false);
+  assert.equal(controller.canEscalate(), false);
+  assert.equal(controller.canReassign(), false);
+  assert.match(html, /id="takeover-form"[\s\S]*?<button type="submit" class="primary" disabled>/);
+  assert.match(html, /id="escalate-form"[\s\S]*?<button type="submit" disabled>/);
+  assert.match(html, /id="reassign-form"[\s\S]*?<button type="submit" disabled>/);
 });
 
 test('Arabic command-center renders only verified governed source revisions as authoritative', async () => {

@@ -452,6 +452,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE ENGINE RECEIPT CANNOT PASS IF A DURABLE AMBIGUOUS CONTACT RESULT IS HIDDEN BEHIND THE CLOSED-PARENT LABEL.** |
 | Next handoff | Execute the clean v22 journey on Docker or Podman and correct the first real state-precedence or read-only persistence discrepancy. |
 
+### Closed-incident command fence for operator-visible ambiguity
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `aa6b527f2de480c81c2d5d48203ba0fad61e5fd6`; live comparison kept `main` at `8096312169dc7f769a45b419d5678b5bd5f461ad`, the review branch sixty-one commits ahead and zero behind, with no branch PR or workflow run. The worktree was clean. No Docker, Podman, or local PostgreSQL server binary was available to execute v22. |
+| Added behavior | The Operations command center now treats the trusted `CASE_CLOSED` response marker as a command fence even when unresolved delivery ambiguity intentionally presents the safety case as `HUMAN_REVIEW`. Takeover, escalation, and reassignment controls remain disabled. |
+| Local acceptance | Dashboard coverage renders the immutable ambiguity timeline and Arabic human-review state while requiring all three command predicates to be false and their submit controls disabled. |
+| Safety limits | The operator can observe uncertainty but cannot mutate the closed Contact or RoadEvent through ordinary Human Safety commands. No acknowledgement, resolution, dispatch, provider call, activation, or cloud action was added. |
+| Result | **OPERATOR VISIBILITY OF A CLOSED-INCIDENT AMBIGUITY NO LONGER IMPLIES FALSE COMMAND AUTHORITY.** |
+| Next handoff | Keep closed ambiguous delivery cases pinned in the operator queue regardless of personal or assignment filters, without enabling commands. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

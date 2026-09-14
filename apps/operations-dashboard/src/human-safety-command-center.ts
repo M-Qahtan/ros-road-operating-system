@@ -101,19 +101,20 @@ export class HumanSafetyCommandCenterController {
   canTakeover(): boolean {
     const selected = this.current.selected;
     return selected !== null && this.fresh() && roleAllowed(this.session.roles, ['OPERATOR', 'SUPERVISOR', 'SAFETY_LEAD'])
-      && selected.safetyCase.state !== 'RESOLVED' && selected.dependencyHealth !== 'UNAVAILABLE' && selected.connectivity !== 'LOST';
+      && !isClosedCase(selected) && selected.safetyCase.state !== 'RESOLVED'
+      && selected.dependencyHealth !== 'UNAVAILABLE' && selected.connectivity !== 'LOST';
   }
 
   canEscalate(): boolean {
     const selected = this.current.selected;
     return selected !== null && this.fresh() && roleAllowed(this.session.roles, ['OPERATOR', 'SUPERVISOR', 'SAFETY_LEAD'])
-      && selected.safetyCase.state !== 'RESOLVED' && selected.dependencyHealth !== 'UNAVAILABLE';
+      && !isClosedCase(selected) && selected.safetyCase.state !== 'RESOLVED' && selected.dependencyHealth !== 'UNAVAILABLE';
   }
 
   canReassign(): boolean {
     const selected = this.current.selected;
     return selected !== null && this.fresh() && roleAllowed(this.session.roles, ['SUPERVISOR', 'SAFETY_LEAD'])
-      && selected.safetyCase.state !== 'RESOLVED' && selected.dependencyHealth !== 'UNAVAILABLE';
+      && !isClosedCase(selected) && selected.safetyCase.state !== 'RESOLVED' && selected.dependencyHealth !== 'UNAVAILABLE';
   }
 
   canAuthorizeResolution(): boolean {
@@ -231,6 +232,7 @@ export function commandCenterMetrics(items: readonly CommandCenterCaseView[], no
 
 function replaceCase(items: readonly CommandCenterCaseView[], updated: CommandCenterCaseView): readonly CommandCenterCaseView[] { return items.map((item) => item.safetyCase.id === updated.safetyCase.id ? updated : item); }
 function uniqueCases(items: readonly CommandCenterCaseView[]): readonly CommandCenterCaseView[] { const seen = new Set<string>(); return items.filter((item) => seen.has(item.safetyCase.id) ? false : (seen.add(item.safetyCase.id), true)); }
+function isClosedCase(item: CommandCenterCaseView): boolean { return item.recommendationState?.snapshotReason === 'CASE_CLOSED'; }
 function roleAllowed(actual: readonly HumanSafetyActorRole[], allowed: readonly HumanSafetyActorRole[]): boolean { return actual.some((role) => allowed.includes(role)); }
 function requireReason(reason: string): string { const normalized = reason.trim(); if (normalized.length < 3 || normalized.length > 500) throw new Error('يجب إدخال سبب واضح من 3 إلى 500 حرف'); return normalized; }
 function requireId(value: string, label: string): string { const normalized = value.trim(); if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(normalized)) throw new Error(`${label} غير صالح`); return normalized; }
