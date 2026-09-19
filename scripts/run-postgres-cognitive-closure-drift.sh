@@ -283,6 +283,25 @@ COMMIT;
 SELECT unnest(ARRAY[
   'COGNITIVE_CLOSURE_DRIFT', 'REJECTED',
   'ROAD_EVENT_AUDIT_OUTBOX', 'UNCHANGED',
-  'AUTHORIZATION_HISTORY', 'UNCHANGED'
+  'AUTHORIZATION_HISTORY', 'UNCHANGED',
+  'COGNITIVE_CLOSURE_STATE',
+  (SELECT event.status::text || '|' || event.version::text || '|' ||
+    event.closure_source_input_version::text || '|' ||
+    event.closure_cognitive_revision::text || '|' ||
+    latest.input_version::text || '|' || latest.cognitive_revision::text || '|' ||
+    (SELECT count(*)::text FROM audit_logs audit
+      WHERE audit.resource_type='RoadEvent' AND audit.resource_id=event.id) || '|' ||
+    (SELECT count(*)::text FROM outbox_events outbox
+      WHERE outbox.aggregate_type='RoadEvent' AND outbox.aggregate_id=event.id)
+   FROM road_events event
+   JOIN LATERAL (
+     SELECT cognitive.input_version, cognitive.cognitive_revision
+     FROM ros_eye_cognitive_input_snapshot_bindings cognitive
+     WHERE cognitive.tenant_id=event.tenant_id AND cognitive.purpose=event.purpose
+       AND cognitive.case_id=event.id
+     ORDER BY cognitive.input_version DESC LIMIT 1
+   ) latest ON true
+   WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response'
+     AND event.id='10000000-0000-4000-8000-000000000007')
 ]);
 SQL
