@@ -485,6 +485,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE ROS BRAIN CANDIDATE AND CURRENT SENSOR-AGNOSTIC MAIN BASE NOW HAVE ONE LOCALLY VERIFIED, NON-DESTRUCTIVE REVIEW TREE.** |
 | Next handoff | Bind the sensor-agnostic cognitive road-state output to an owner-versioned ROS Brain input snapshot adapter while preserving abstention, Tenant + Purpose isolation, and recommendation-only authority. |
 
+### Cognitive Road State snapshot ownership adapter
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `019d5f737dcf19a47684d7d86cf27d51adbf545f` was sixty-four commits ahead of current `main` at `cfecaae07ef9673d80054ea11bd26ee2305e69e9` and zero behind, with no branch PR or workflow run. The local tree exactly matched the candidate tree and no overlapping execution was found. |
+| Added behavior | A read-only adapter now accepts Cognitive Road State only through a `COGNITIVE_STATE_LEDGER` owner port and emits the versioned `ros-eye.cognitive-input-binding.v1` seam. It requires exact Tenant + Purpose + Case scope, positive revision, matching owner/state digest, and a state validity window containing the snapshot time. |
+| Local acceptance | Coverage proves exact binding without exposing entities or observation identifiers, propagation of material contradiction as mandatory abstention, explicit absence without an invented revision, cross-purpose rejection, and fail-closed digest/time drift. |
+| Safety limits | The adapter exports only revision, digest, validity times, and abstention posture. It does not collect sensor data, persist the state, change severity, issue a recommendation, activate a command, or alter the existing durable snapshot v1 schema. |
+| Result | **COGNITIVE ROAD STATE CAN CROSS INTO THE ROS BRAIN SNAPSHOT BOUNDARY ONLY AS AN EXACT, OWNER-VERSIONED, SCOPE-BOUND, NON-EXECUTABLE RECEIPT.** |
+| Next handoff | Add the cognitive binding as a required column set in a new append-only durable input-snapshot policy/migration, with old v1 rows remaining readable but never promoted as cognitive-bound evidence. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
