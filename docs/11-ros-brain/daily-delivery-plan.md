@@ -508,6 +508,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A SNAPSHOT CAN CLAIM THE COGNITIVE V2 POLICY ONLY THROUGH A COMPLETE, IMMUTABLE, OWNER-VERSIONED BINDING TO ITS EXACT V1 BASE.** |
 | Next handoff | Compose the owner adapter, v1 snapshot append, and required v2 binding in one repeatable-read capture transaction, then prove rollback leaves neither a partial base nor a promoted v2 receipt. |
 
+### Atomic cognitive input-snapshot capture
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-19, GitHub candidate `cd02a592f4f7dfe004f8a5922a3bebcf75e6c767` was sixty-seven commits ahead of current `main` at `cfecaae07ef9673d80054ea11bd26ee2305e69e9` and zero behind, with no branch PR or pull-request-triggered workflow run. The worktree was clean and no overlapping execution was found. |
+| Added behavior | A dedicated capture service now reads the five existing source-ledger receipts and Cognitive Road State through the same SQL connection, then appends the v1 base and required v2 binding under one `REPEATABLE READ, READ WRITE` transaction. The production composition accepts a transaction-bound cognitive owner port, and runtime readiness now requires the v2 relation and its safety-critical columns. |
+| Atomic acceptance | Missing cognitive owner state returns `SOURCE_UNAVAILABLE` before either insert. An exact replay is idempotent. A fail-closed result or persistence exception after the v1 insert forces rollback, leaving neither a partial v1 base nor a v2 receipt; the original persistence error remains visible. |
+| Local evidence | The combined candidate passed 623 API, 33 dashboard, 36 mobile, and 8 domain tests, plus fifteen perception contract/benchmark checks, all five project builds and no-emit checks, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks. The focused atomic/cognitive/base and production-composition suite passed 17 of 17. |
+| Safety limits | The transaction reads owner receipts and writes version bindings only. It copies no Cognitive Road State payload, grants no collection, recommendation, risk reduction, incident mutation, dispatch, activation, or execution authority, and preserves `SHADOW_ONLY`. Docker/Podman execution and REL-013 external archival remain open. |
+| Result | **A COGNITIVE V2 RECEIPT CAN NO LONGER COMMIT WITHOUT ITS EXACT V1 BASE, AND A NEW V1 BASE CANNOT SURVIVE FAILURE OF ITS REQUIRED V2 BINDING.** |
+| Next handoff | Require the governed recommendation journal to verify the exact v2 cognitive receipt and propagate `requiresAbstention` before accepting a shadow recommendation, while retaining v1 history as non-cognitive legacy evidence. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

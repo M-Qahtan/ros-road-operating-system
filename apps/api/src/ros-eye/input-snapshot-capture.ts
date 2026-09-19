@@ -60,27 +60,8 @@ export class AuthoritativeInputSnapshotCaptureService {
     validateCaptureRequest(request);
     return this.pool.transaction(async (connection) => {
       await connection.query(AUTHORITATIVE_SNAPSHOT_TRANSACTION_SQL);
-      // Sequential reads are deliberate: one PostgreSQL connection must not run
-      // overlapping queries, and all receipts share its transaction snapshot.
-      const caseReceipt = await this.sources.case.load(connection, request);
-      if (!validReceipt(caseReceipt)) return 'SOURCE_UNAVAILABLE';
-      const severityReceipt = await this.sources.severity.load(connection, request);
-      if (!validReceipt(severityReceipt)) return 'SOURCE_UNAVAILABLE';
-      const contactReceipt = await this.sources.contact.load(connection, request);
-      if (!validContactReceipt(contactReceipt)) return 'SOURCE_UNAVAILABLE';
-      const evidenceReceipt = await this.sources.evidence.load(connection, request);
-      if (!validReceipt(evidenceReceipt)) return 'SOURCE_UNAVAILABLE';
-      const indicatorReceipt = await this.sources.indicators.load(connection, request);
-      if (!validReceipt(indicatorReceipt)) return 'SOURCE_UNAVAILABLE';
-
-      const snapshot = createSnapshot(request, {
-        case: stripAuthority(caseReceipt),
-        severity: stripAuthority(severityReceipt),
-        contact: contactReceipt.status === 'ABSENT' ? null : stripAuthority(contactReceipt.binding),
-        evidence: stripAuthority(evidenceReceipt),
-        indicators: stripAuthority(indicatorReceipt)
-      });
-
+      const snapshot = await this.buildWithin(connection, request);
+      if (snapshot === null) return 'SOURCE_UNAVAILABLE';
       return this.repository.captureWithin(connection, {
         tenantId: request.tenantId,
         purpose: request.purpose,
@@ -88,6 +69,34 @@ export class AuthoritativeInputSnapshotCaptureService {
         expectedPreviousInputVersion: request.expectedPreviousInputVersion,
         snapshot
       });
+    });
+  }
+
+  /** Builds but does not persist the v1 base so a stricter policy can append atomically with it. */
+  async buildWithin(
+    connection: ContactSqlConnectionPort,
+    request: CaptureAuthoritativeInputSnapshotRequest
+  ): Promise<SafetyFusionInputSnapshot | null> {
+    validateCaptureRequest(request);
+    // Sequential reads are deliberate: one PostgreSQL connection must not run
+    // overlapping queries, and all receipts share its transaction snapshot.
+    const caseReceipt = await this.sources.case.load(connection, request);
+    if (!validReceipt(caseReceipt)) return null;
+    const severityReceipt = await this.sources.severity.load(connection, request);
+    if (!validReceipt(severityReceipt)) return null;
+    const contactReceipt = await this.sources.contact.load(connection, request);
+    if (!validContactReceipt(contactReceipt)) return null;
+    const evidenceReceipt = await this.sources.evidence.load(connection, request);
+    if (!validReceipt(evidenceReceipt)) return null;
+    const indicatorReceipt = await this.sources.indicators.load(connection, request);
+    if (!validReceipt(indicatorReceipt)) return null;
+
+    return createSnapshot(request, {
+      case: stripAuthority(caseReceipt),
+      severity: stripAuthority(severityReceipt),
+      contact: contactReceipt.status === 'ABSENT' ? null : stripAuthority(contactReceipt.binding),
+      evidence: stripAuthority(evidenceReceipt),
+      indicators: stripAuthority(indicatorReceipt)
     });
   }
 }

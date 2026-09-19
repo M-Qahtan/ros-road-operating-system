@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  COGNITIVE_ROAD_STATE_SCHEMA,
   SAFETY_FUSION_INPUT_SNAPSHOT_POLICY_VERSION,
   assessRecommendationSnapshotBinding,
   type RecommendationSnapshotBinding,
@@ -12,7 +13,11 @@ import type { EvidenceRecord } from '../evidence/evidence-types.js';
 import type { ContactSqlConnectionPort, ContactSqlPoolPort, ContactSqlQueryResult, ContactSqlRow } from './contact-orchestration-postgres.js';
 import { indicatorRevisionDigest, type RecordedSafetyIndicator } from './human-safety-indicator-revision.js';
 import { POSTGRES_INPUT_SNAPSHOT_SQL, PostgresInputSnapshotRepository } from './input-snapshot-postgres.js';
-import { createPostgresAuthoritativeInputSnapshotCaptureService } from './postgres-authoritative-input-snapshot-capture.js';
+import { POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL, PostgresCognitiveInputSnapshotRepository } from './cognitive-input-snapshot-postgres.js';
+import {
+  createPostgresAuthoritativeInputSnapshotCaptureService,
+  createPostgresCognitiveAuthoritativeInputSnapshotCaptureService
+} from './postgres-authoritative-input-snapshot-capture.js';
 
 const CASE_ID = '11111111-1111-4111-8111-111111111111';
 const SCOPE = { tenantId: 'tenant-riyadh', purpose: 'road-safety-response', caseId: CASE_ID } as const;
@@ -55,6 +60,7 @@ const correction: RecordedSafetyIndicator = {
 class IntegratedPool implements ContactSqlPoolPort {
   readonly calls: string[] = [];
   private readonly snapshots = new Map<number, ContactSqlRow>();
+  private readonly cognitiveBindings = new Map<number, ContactSqlRow>();
   private readonly evidenceRecord = evidence();
   indicatorRevision = 1;
   indicators: readonly RecordedSafetyIndicator[] = [firstIndicator];
@@ -79,6 +85,19 @@ class IntegratedPool implements ContactSqlPoolPort {
     }
     if (text === POSTGRES_INPUT_SNAPSHOT_SQL.insert) {
       this.snapshots.set(Number(values[3]), snapshotRow(values));
+      return { rows: [], rowCount: 1 };
+    }
+    if (text === POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.readExact) {
+      const value = this.cognitiveBindings.get(Number(values[3]));
+      return value === undefined ? rows([]) : rows([value]);
+    }
+    if (text === POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.readBase) {
+      const base = this.snapshots.get(Number(values[3]));
+      return base !== undefined && base.snapshot_digest === values[4] && base.captured_at === values[5]
+        ? rows([{ present: 1 }]) : rows([]);
+    }
+    if (text === POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.insert) {
+      this.cognitiveBindings.set(Number(values[3]), cognitiveBindingRow(values));
       return { rows: [], rowCount: 1 };
     }
     if (text.includes('FROM road_event_revision_ledger')) {
@@ -125,6 +144,37 @@ test('concrete PostgreSQL composition captures all five owners and a correction 
   assert.equal(pool.calls.some((sql) => /INSERT INTO .*recommendation/i.test(sql)), false);
 });
 
+test('production cognitive composition appends the exact v1 base and v2 owner binding together', async () => {
+  const pool = new IntegratedPool();
+  const capture = createPostgresCognitiveAuthoritativeInputSnapshotCaptureService(pool, {
+    async load(connection, scope) {
+      assert.equal(connection, pool);
+      return {
+        ...scope, authority: 'COGNITIVE_STATE_LEDGER', revision: 11, digest: digest('f'),
+        state: {
+          schema: COGNITIVE_ROAD_STATE_SCHEMA, crsId: 'crs-1', zoneId: 'RUH-Z41',
+          stateTime: '2026-09-08T13:02:00.000Z', validUntil: '2026-09-08T13:04:00.000Z',
+          stateDigest: digest('f'), sensorHealthDigest: digest('0'), entities: [], hazards: [], trafficState: {},
+          environment: {}, signalState: {}, infrastructureState: {}, evidenceObservationIds: [], contradictions: [],
+          epistemicSummary: { known: [], uncertain: [], unknown: [] }
+        }
+      };
+    }
+  });
+  assert.equal(await capture.capture({
+    ...SCOPE, inputVersion: 1, expectedPreviousInputVersion: 0, capturedAt: '2026-09-08T13:03:00.000Z'
+  }), 'CREATED');
+
+  const base = await new PostgresInputSnapshotRepository(pool).read(SCOPE, 1);
+  const cognitive = await new PostgresCognitiveInputSnapshotRepository(pool).read(SCOPE, 1);
+  assert.ok(base);
+  assert.equal(cognitive?.baseSnapshotDigest, base.snapshotDigest);
+  assert.equal(cognitive?.cognitive.revision, 11);
+  assert.equal(cognitive?.cognitive.digest, digest('f'));
+  assert.equal(cognitive?.cognitive.requiresAbstention, false);
+  assert.ok(pool.calls.includes(POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.insert));
+});
+
 function recommendationFor(snapshot: SafetyFusionInputSnapshot): SafetyFusionRecommendation {
   return {
     tenantId: snapshot.tenantId, caseId: snapshot.caseId, inputVersion: snapshot.inputVersion,
@@ -160,5 +210,14 @@ function snapshotRow(value: readonly unknown[]): ContactSqlRow {
     captured_at: value[5], case_revision: value[6], case_digest: value[7], severity_revision: value[8],
     severity_digest: value[9], contact_revision: value[10], contact_digest: value[11], evidence_revision: value[12],
     evidence_digest: value[13], indicator_revision: value[14], indicator_digest: value[15], snapshot_digest: value[16]
+  };
+}
+
+function cognitiveBindingRow(value: readonly unknown[]): ContactSqlRow {
+  return {
+    tenant_id: value[0], purpose: value[1], case_id: value[2], input_version: value[3], policy_version: value[4],
+    base_snapshot_digest: value[5], captured_at: value[6], binding_policy_version: value[7],
+    cognitive_authority: value[8], cognitive_revision: value[9], cognitive_digest: value[10],
+    cognitive_state_time: value[11], cognitive_valid_until: value[12], cognitive_requires_abstention: value[13]
   };
 }
