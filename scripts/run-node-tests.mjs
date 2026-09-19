@@ -1,6 +1,9 @@
 import { readdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 async function findSpecs(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -23,7 +26,7 @@ const specs = (await Promise.all(roots.map((root) => findSpecs(resolve(root)))))
 if (specs.length === 0) throw new Error(`No compiled *.spec.js files found under: ${roots.join(', ')}`);
 
 const child = spawn(process.execPath, ['--test', ...specs], {
-  cwd: process.cwd(), env: process.env, shell: false, stdio: 'inherit'
+  cwd: repositoryRoot, env: process.env, shell: false, stdio: 'inherit'
 });
 
 const exitCode = await new Promise((resolveExit, reject) => {
