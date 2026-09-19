@@ -86,7 +86,7 @@ jobs:
             -p 9000:9000 \
             -e MINIO_ROOT_USER="$OBJECT_STORAGE_ACCESS_KEY" \
             -e MINIO_ROOT_PASSWORD="$OBJECT_STORAGE_SECRET_KEY" \
-            minio/minio:RELEASE.2025-07-23T15-54-02Z \
+            quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z \
             server /data
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:9000/minio/health/ready >/dev/null; then
@@ -104,7 +104,7 @@ jobs:
             --entrypoint /bin/sh \
             -e MINIO_ROOT_USER="$OBJECT_STORAGE_ACCESS_KEY" \
             -e MINIO_ROOT_PASSWORD="$OBJECT_STORAGE_SECRET_KEY" \
-            minio/mc:RELEASE.2025-07-21T05-28-08Z \
+            quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z \
             -c 'mc alias set ros-ci http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc mb --ignore-existing ros-ci/ros-evidence'
       - name: Build API and dependencies
         run: pnpm --filter @ros/api... build
