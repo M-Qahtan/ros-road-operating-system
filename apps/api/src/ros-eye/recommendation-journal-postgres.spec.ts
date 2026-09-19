@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { RecommendationSnapshotBinding, SafetyFusionInputSnapshot, SafetyFusionRecommendation, SafetyFusionRegistryPort } from '@ros/contracts';
 import type { ContactSqlPoolPort, ContactSqlQueryResult, ContactSqlRow } from './contact-orchestration-postgres.js';
 import { POSTGRES_INPUT_SNAPSHOT_SQL } from './input-snapshot-postgres.js';
+import { POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL } from './cognitive-input-snapshot-postgres.js';
 import { ACTIVE_SAFETY_FUSION_RULE_SET } from './safety-fusion.js';
 import { POSTGRES_RECOMMENDATION_JOURNAL_SQL, PostgresRecommendationJournal } from './recommendation-journal-postgres.js';
 
@@ -54,15 +55,34 @@ function snapshotRow(): ContactSqlRow {
   };
 }
 
+function cognitiveRow(requiresAbstention = false): ContactSqlRow {
+  const value = snapshot();
+  return {
+    tenant_id: value.tenantId, purpose: SCOPE.purpose, case_id: value.caseId, input_version: value.inputVersion,
+    policy_version: 'ros-eye.input-snapshot.v2', base_snapshot_digest: value.snapshotDigest,
+    captured_at: value.capturedAt, binding_policy_version: 'ros-eye.cognitive-input-binding.v1',
+    cognitive_authority: 'SOURCE_LEDGER', cognitive_revision: 11, cognitive_digest: digest('f'),
+    cognitive_state_time: '2026-09-08T13:59:59.000Z', cognitive_valid_until: '2026-09-08T14:00:05.000Z',
+    cognitive_requires_abstention: requiresAbstention
+  };
+}
+
 class JournalPool implements ContactSqlPoolPort {
   readonly calls: Array<{ text: string; values: readonly unknown[] }> = [];
   stored: ContactSqlRow | null = null;
   hasSnapshot = true;
+  hasCognitiveSnapshot = true;
+  cognitiveRequiresAbstention = false;
+  cognitiveBaseDigest = digest('1');
   loseInsertRace = false;
   async transaction<T>(work: (connection: JournalPool) => Promise<T>): Promise<T> { return work(this); }
   async query<Row extends ContactSqlRow = ContactSqlRow>(text: string, values: readonly unknown[] = []): Promise<ContactSqlQueryResult<Row>> {
     this.calls.push({ text, values });
     if (text === POSTGRES_INPUT_SNAPSHOT_SQL.readExact) return rows(this.hasSnapshot ? [snapshotRow()] : []) as ContactSqlQueryResult<Row>;
+    if (text === POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.readExact) {
+      const value = cognitiveRow(this.cognitiveRequiresAbstention);
+      return rows(this.hasCognitiveSnapshot ? [{ ...value, base_snapshot_digest: this.cognitiveBaseDigest }] : []) as ContactSqlQueryResult<Row>;
+    }
     if (text === POSTGRES_RECOMMENDATION_JOURNAL_SQL.readExact) return rows(this.stored === null ? [] : [this.stored]) as ContactSqlQueryResult<Row>;
     if (text === POSTGRES_RECOMMENDATION_JOURNAL_SQL.insert) {
       const row = journalRow(values);
@@ -92,6 +112,7 @@ test('appends only a governed snapshot-bound shadow recommendation pending human
   assert.ok(insert);
   assert.match(insert.text, /'RECOMMENDATION_ONLY', 'SHADOW_ONLY', false, 'PENDING'/);
   assert.deepEqual(insert.values.slice(0, 5), [SCOPE.tenantId, SCOPE.purpose, CASE_ID, 1, digest('1')]);
+  assert.deepEqual(insert.values.slice(9, 13), ['ros-eye.input-snapshot.v2', 11, digest('f'), false]);
 });
 
 test('database migration independently guards active governance, payload binding and append-only history', () => {
@@ -101,6 +122,27 @@ test('database migration independently guards active governance, payload binding
   assert.match(migration, /recommendation->>'requiresHumanReview' <> 'true'/);
   assert.match(migration, /binding->>'recommendationFingerprint' <> NEW\.deterministic_fingerprint/);
   assert.match(migration, /BEFORE UPDATE OR DELETE ON ros_eye_safety_fusion_recommendation_journal/);
+  const cognitiveMigration = readFileSync('database/migrations/0024_recommendation_cognitive_snapshot_binding.sql', 'utf8');
+  assert.match(cognitiveMigration, /FROM ros_eye_cognitive_input_snapshot_bindings/);
+  assert.match(cognitiveMigration, /cognitive_row\.base_snapshot_digest <> NEW\.source_snapshot_digest/);
+  assert.match(cognitiveMigration, /cognitive_row\.cognitive_requires_abstention/);
+  assert.match(cognitiveMigration, /Null only for immutable legacy v1 history/);
+});
+
+test('missing, mismatched or abstaining cognitive v2 receipt rejects before journal insert', async () => {
+  const pool = new JournalPool();
+  const journal = new PostgresRecommendationJournal(pool, new Registry());
+  const value = recommendation();
+  const request = { ...SCOPE, recommendation: value, binding: binding(value) };
+  pool.hasCognitiveSnapshot = false;
+  assert.equal((await journal.append(request)).reason, 'COGNITIVE_SNAPSHOT_NOT_FOUND');
+  pool.hasCognitiveSnapshot = true;
+  pool.cognitiveBaseDigest = digest('9');
+  assert.equal((await journal.append(request)).reason, 'COGNITIVE_BINDING_INVALID');
+  pool.cognitiveBaseDigest = digest('1');
+  pool.cognitiveRequiresAbstention = true;
+  assert.equal((await journal.append(request)).reason, 'COGNITIVE_ABSTENTION_REQUIRED');
+  assert.equal(pool.calls.some((call) => call.text === POSTGRES_RECOMMENDATION_JOURNAL_SQL.insert), false);
 });
 
 test('exact retry is idempotent and a different recommendation for the same input conflicts', async () => {
@@ -149,5 +191,10 @@ test('a concurrent non-identical winner never becomes an idempotent success', as
 
 function rows(values: readonly ContactSqlRow[]): ContactSqlQueryResult { return { rows: values, rowCount: values.length }; }
 function journalRow(values: readonly unknown[]): ContactSqlRow {
-  return { deterministic_fingerprint: values[8], source_snapshot_digest: values[4], recommendation: values[11], binding: values[12] };
+  return {
+    deterministic_fingerprint: values[8], source_snapshot_digest: values[4],
+    cognitive_snapshot_policy_version: values[9], cognitive_revision: values[10],
+    cognitive_digest: values[11], cognitive_requires_abstention: values[12],
+    recommendation: values[15], binding: values[16]
+  };
 }

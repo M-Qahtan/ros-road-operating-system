@@ -10,6 +10,7 @@ import { GOVERNED_RECOMMENDATION_TRANSACTION_SQL } from './governed-recommendati
 import { createPostgresGovernedRecommendationRuntime } from './governed-recommendation-runtime.js';
 import { indicatorRevisionDigest, type RecordedSafetyIndicator } from './human-safety-indicator-revision.js';
 import { POSTGRES_INPUT_SNAPSHOT_SQL } from './input-snapshot-postgres.js';
+import { POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL } from './cognitive-input-snapshot-postgres.js';
 import { POSTGRES_AUTHORITATIVE_FUSION_INPUT_SQL } from './postgres-authoritative-safety-fusion-input.js';
 import { POSTGRES_RECOMMENDATION_JOURNAL_SQL } from './recommendation-journal-postgres.js';
 
@@ -61,6 +62,7 @@ class RuntimePool implements ContactSqlPoolPort {
     if (text === POSTGRES_GOVERNED_RECOMMENDATION_AUTHORIZATION_SQL) return rows([{ case_id: CASE_ID }]) as ContactSqlQueryResult<Row>;
     if (text === GOVERNED_RECOMMENDATION_TRANSACTION_SQL) return rows([]) as ContactSqlQueryResult<Row>;
     if (text === POSTGRES_INPUT_SNAPSHOT_SQL.readExact) return rows([snapshotRow()]) as ContactSqlQueryResult<Row>;
+    if (text === POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.readExact) return rows([cognitiveRow()]) as ContactSqlQueryResult<Row>;
     if (text.includes('FROM road_event_revision_ledger')) return rows([{
       revision: values[3] === 'CASE' ? 7 : 4, digest: values[3] === 'CASE' ? digest('a') : digest('b')
     }]) as ContactSqlQueryResult<Row>;
@@ -116,6 +118,16 @@ function snapshotRow(): ContactSqlRow {
     contact_revision: null, contact_digest: null, evidence_revision: SNAPSHOT.evidence.revision,
     evidence_digest: SNAPSHOT.evidence.digest, indicator_revision: SNAPSHOT.indicators.revision,
     indicator_digest: SNAPSHOT.indicators.digest, snapshot_digest: SNAPSHOT.snapshotDigest
+  };
+}
+function cognitiveRow(): ContactSqlRow {
+  return {
+    tenant_id: SNAPSHOT.tenantId, purpose: SCOPE.purpose, case_id: SNAPSHOT.caseId, input_version: SNAPSHOT.inputVersion,
+    policy_version: 'ros-eye.input-snapshot.v2', base_snapshot_digest: SNAPSHOT.snapshotDigest,
+    captured_at: SNAPSHOT.capturedAt, binding_policy_version: 'ros-eye.cognitive-input-binding.v1',
+    cognitive_authority: 'SOURCE_LEDGER', cognitive_revision: 12, cognitive_digest: digest('f'),
+    cognitive_state_time: '2026-09-08T18:00:01.000Z', cognitive_valid_until: '2026-09-08T18:00:05.000Z',
+    cognitive_requires_abstention: false
   };
 }
 function rows(values: readonly ContactSqlRow[]): ContactSqlQueryResult { return { rows: values, rowCount: values.length }; }

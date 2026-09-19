@@ -16,6 +16,7 @@ import {
   type SafetyFusionEvidenceAuthorityReceipt
 } from './governed-safety-fusion.js';
 import { POSTGRES_INPUT_SNAPSHOT_SQL } from './input-snapshot-postgres.js';
+import { POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL } from './cognitive-input-snapshot-postgres.js';
 import { POSTGRES_RECOMMENDATION_JOURNAL_SQL, PostgresRecommendationJournal } from './recommendation-journal-postgres.js';
 import {
   ACTIVE_SAFETY_FUSION_RULE_SET,
@@ -56,14 +57,21 @@ class EvaluationPool implements ContactSqlPoolPort {
   readonly calls: string[] = [];
   transactions = 0;
   stored: ContactSqlRow | null = null;
+  cognitiveRequiresAbstention = false;
   async transaction<T>(work: (connection: EvaluationPool) => Promise<T>): Promise<T> { this.transactions += 1; return work(this); }
   async query<Row extends ContactSqlRow = ContactSqlRow>(text: string, values: readonly unknown[] = []): Promise<ContactSqlQueryResult<Row>> {
     this.calls.push(text);
     if (text === GOVERNED_RECOMMENDATION_TRANSACTION_SQL) return rows([]) as ContactSqlQueryResult<Row>;
     if (text === POSTGRES_INPUT_SNAPSHOT_SQL.readExact) return rows([snapshotRow()]) as ContactSqlQueryResult<Row>;
+    if (text === POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.readExact) return rows([cognitiveRow(this.cognitiveRequiresAbstention)]) as ContactSqlQueryResult<Row>;
     if (text === POSTGRES_RECOMMENDATION_JOURNAL_SQL.readExact) return rows(this.stored === null ? [] : [this.stored]) as ContactSqlQueryResult<Row>;
     if (text === POSTGRES_RECOMMENDATION_JOURNAL_SQL.insert) {
-      this.stored = { deterministic_fingerprint: values[8], source_snapshot_digest: values[4], recommendation: values[11], binding: values[12] };
+      this.stored = {
+        deterministic_fingerprint: values[8], source_snapshot_digest: values[4],
+        cognitive_snapshot_policy_version: values[9], cognitive_revision: values[10],
+        cognitive_digest: values[11], cognitive_requires_abstention: values[12],
+        recommendation: values[15], binding: values[16]
+      };
       return { rows: [], rowCount: 1 };
     }
     throw new Error(`unexpected SQL: ${text}`);
@@ -202,6 +210,16 @@ test('blocked governed evaluation remains visible for human review but is not pe
   assert.equal(pool.calls.some((sql) => sql === POSTGRES_RECOMMENDATION_JOURNAL_SQL.insert), false);
 });
 
+test('cognitive abstention is propagated as an evaluation block before journal persistence', async () => {
+  const pool = new EvaluationPool();
+  pool.cognitiveRequiresAbstention = true;
+  const result = await useCase(pool).service.execute(request);
+  assert.equal(result.status, 'REJECTED');
+  assert.equal(result.reason, 'EVALUATION_BLOCKED');
+  assert.equal(result.recommendation?.authority, 'RECOMMENDATION_ONLY');
+  assert.equal(pool.calls.some((sql) => sql === POSTGRES_RECOMMENDATION_JOURNAL_SQL.insert), false);
+});
+
 function snapshotRow(): ContactSqlRow {
   const value = snapshot();
   return {
@@ -211,6 +229,17 @@ function snapshotRow(): ContactSqlRow {
     contact_revision: value.contact?.revision, contact_digest: value.contact?.digest, evidence_revision: value.evidence.revision,
     evidence_digest: value.evidence.digest, indicator_revision: value.indicators.revision,
     indicator_digest: value.indicators.digest, snapshot_digest: value.snapshotDigest
+  };
+}
+function cognitiveRow(requiresAbstention: boolean): ContactSqlRow {
+  const value = snapshot();
+  return {
+    tenant_id: value.tenantId, purpose: SCOPE.purpose, case_id: value.caseId, input_version: value.inputVersion,
+    policy_version: 'ros-eye.input-snapshot.v2', base_snapshot_digest: value.snapshotDigest,
+    captured_at: value.capturedAt, binding_policy_version: 'ros-eye.cognitive-input-binding.v1',
+    cognitive_authority: 'SOURCE_LEDGER', cognitive_revision: 11, cognitive_digest: digest('f'),
+    cognitive_state_time: '2026-09-08T13:59:59.000Z', cognitive_valid_until: '2026-09-08T14:00:05.000Z',
+    cognitive_requires_abstention: requiresAbstention
   };
 }
 function rows(values: readonly ContactSqlRow[]): ContactSqlQueryResult { return { rows: values, rowCount: values.length }; }

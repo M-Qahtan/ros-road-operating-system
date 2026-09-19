@@ -120,6 +120,7 @@ function mapJournal(value: RecommendationJournalResult, recommendation: SafetyFu
   if (value.disposition === 'CREATED') return output('RECORDED', 'STORED', recommendation);
   if (value.disposition === 'IDEMPOTENT') return output('IDEMPOTENT', 'EXACT_REPLAY', recommendation);
   if (value.disposition === 'CONFLICT') return output('CONFLICT', 'DUPLICATE_INPUT', recommendation);
+  if (value.reason === 'COGNITIVE_ABSTENTION_REQUIRED') return output('REJECTED', 'EVALUATION_BLOCKED', recommendation);
   return output('REJECTED', 'JOURNAL_REJECTED', recommendation);
 }
 function output(status: GovernedRecommendationUseCaseResult['status'], reason: GovernedRecommendationUseCaseReason, recommendation: SafetyFusionRecommendation | null): GovernedRecommendationUseCaseResult {

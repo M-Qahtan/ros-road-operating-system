@@ -520,6 +520,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A COGNITIVE V2 RECEIPT CAN NO LONGER COMMIT WITHOUT ITS EXACT V1 BASE, AND A NEW V1 BASE CANNOT SURVIVE FAILURE OF ITS REQUIRED V2 BINDING.** |
 | Next handoff | Require the governed recommendation journal to verify the exact v2 cognitive receipt and propagate `requiresAbstention` before accepting a shadow recommendation, while retaining v1 history as non-cognitive legacy evidence. |
 
+### Cognitive-bound governed recommendation journal
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-19, GitHub candidate `234614af0e8ac20854438c12f57cfb9d165010f3` was sixty-eight commits ahead of current `main` at `cfecaae07ef9673d80054ea11bd26ee2305e69e9` and zero behind, with no branch PR or pull-request-triggered workflow run. No overlapping local test or build process was active. |
+| Added behavior | Before any shadow journal INSERT, the governed writer now loads the exact cognitive `v2` receipt inside the existing `REPEATABLE READ` transaction and requires its Tenant + Purpose + Case + input version, base digest, and capture time to match the verified `v1` snapshot. A missing or mismatched receipt fails closed. |
+| Abstention boundary | `cognitive_requires_abstention=true` is propagated as `EVALUATION_BLOCKED`; the recommendation remains visible to the caller for human review but is not persisted. The new migration independently checks the exact cognitive receipt and prohibits an abstaining recommendation insert. Existing immutable journal rows remain nullable legacy `v1` history and are not promoted to cognitive evidence. |
+| Local evidence | The cognitive/journal/use-case/runtime and atomic-snapshot suite passed 33 of 33. The combined candidate passed 625 API, 33 dashboard, 36 mobile, and 8 domain tests (702 total), plus fifteen perception contract/benchmark checks. TypeScript build and no-emit checks passed for all five projects, along with repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks. |
+| Safety limits | The change verifies receipts and writes immutable recommendation metadata only. It grants no collection, severity mutation, incident closure, dispatch, provider call, activation, or execution authority; every stored row remains `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, `activationAuthorized=false`, and pending human review. The PostgreSQL migration remains unexecuted on a live engine without Docker/Podman, and REL-013 external immutable archival remains open. |
+| Result | **A SHADOW RECOMMENDATION CANNOT ENTER THE GOVERNED JOURNAL WITHOUT ITS EXACT NON-ABSTAINING COGNITIVE V2 RECEIPT.** |
+| Next handoff | Bind the recommendation fingerprint and journal row to the cognitive receipt identity in the public read model, then prove a later cognitive revision withholds the prior recommendation without rewriting either history. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
