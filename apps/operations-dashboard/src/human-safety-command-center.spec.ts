@@ -113,7 +113,10 @@ test('Arabic command-center keeps a closed ambiguous delivery visibly in human r
   const cases = seedCommandCenterCases(now);
   const ambiguous = {
     ...cases[0]!,
-    safetyCase: { ...cases[0]!.safetyCase, state: 'HUMAN_REVIEW' as const, nextDeadlineAt: null },
+    safetyCase: {
+      ...cases[0]!.safetyCase, state: 'HUMAN_REVIEW' as const, severity: 'S2' as const,
+      nextDeadlineAt: null, assignedActorId: 'operator-7'
+    },
     recommendation: null,
     recommendationState: {
       source: 'GOVERNED_JOURNAL' as const, status: 'WITHHELD' as const,
@@ -133,6 +136,8 @@ test('Arabic command-center keeps a closed ambiguous delivery visibly in human r
     { actorId: 'supervisor-1', roles: ['SUPERVISOR'] }, () => now
   );
   await controller.load();
+  controller.setFilter('MY_CASES');
+  assert.equal(controller.visibleItems()[0]?.safetyCase.id, ambiguous.safetyCase.id);
   await controller.select(ambiguous.safetyCase.id);
 
   const html = renderHumanSafetyCommandCenter(controller.state, controller, now);

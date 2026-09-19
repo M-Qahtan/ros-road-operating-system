@@ -463,6 +463,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **OPERATOR VISIBILITY OF A CLOSED-INCIDENT AMBIGUITY NO LONGER IMPLIES FALSE COMMAND AUTHORITY.** |
 | Next handoff | Keep closed ambiguous delivery cases pinned in the operator queue regardless of personal or assignment filters, without enabling commands. |
 
+### Closed-delivery ambiguity queue pin
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-19, GitHub showed candidate `0443bba8a842dd6142707b3411a35341abecfabb`; current `main` at `cfecaae07ef9673d80054ea11bd26ee2305e69e9`, with the review branch sixty-two commits ahead and thirty-six behind. No branch PR or workflow run existed, the worktree was clean, and the thirty-six newer `main` commits did not touch the Operations dashboard files changed here. |
+| Added behavior | A case carrying both the trusted `CASE_CLOSED` marker and immutable `DELIVERY_RESULT_AMBIGUOUS` audit is now part of the urgent safety queue. It remains visible under personal and assignment filters even when low-severity, deadline-free, and assigned to another operator. Its queue priority is below overdue/imminent deadlines and above ordinary cases. |
+| Local acceptance | Dashboard coverage uses a low-severity, deadline-free ambiguity assigned to another operator, selects `MY_CASES`, and requires the case to remain first and visible. Existing coverage still requires takeover, escalation, and reassignment predicates and controls to stay disabled. |
+| Safety limits | Pinning changes visibility and ordering only. It grants no command authority, acknowledgement, resolution, dispatch, provider call, activation, collection, or cloud action. The branch has not yet been reconciled with the thirty-six newer `main` commits. |
+| Result | **A CLOSED CONTACT DELIVERY AMBIGUITY CANNOT BE FILTERED OUT OF THE OPERATOR SAFETY QUEUE OR USED TO ENABLE COMMANDS.** |
+| Next handoff | Reconcile and test the review candidate against the thirty-six newer `main` commits without merging into `main` or triggering paid evidence workflows. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

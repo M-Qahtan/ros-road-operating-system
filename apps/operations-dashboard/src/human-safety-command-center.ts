@@ -212,12 +212,14 @@ export function deadlineRemainingSeconds(item: CommandCenterCaseView, now: Date)
 
 export function isUrgent(item: CommandCenterCaseView, now: Date): boolean {
   return deadlineState(item, now) === 'OVERDUE' || deadlineState(item, now) === 'IMMINENT'
-    || item.safetyCase.severity === 'S4' || item.safetyCase.state === 'NO_RESPONSE' || item.safetyCase.state === 'UNREACHABLE';
+    || isClosedDeliveryAmbiguity(item) || item.safetyCase.severity === 'S4'
+    || item.safetyCase.state === 'NO_RESPONSE' || item.safetyCase.state === 'UNREACHABLE';
 }
 
 export function commandCenterPriority(item: CommandCenterCaseView, now: Date): number {
   const deadline = deadlineState(item, now);
   return (deadline === 'OVERDUE' ? 10_000 : deadline === 'IMMINENT' ? 8_000 : 0)
+    + (isClosedDeliveryAmbiguity(item) ? 7_000 : 0)
     + (item.safetyCase.severity === 'S4' ? 4_000 : item.safetyCase.severity === 'S3' ? 2_000 : 0)
     + (item.safetyCase.state === 'NO_RESPONSE' || item.safetyCase.state === 'UNREACHABLE' ? 3_000 : 0)
     + (item.safetyCase.assignedActorId === null ? 1_000 : 0);
@@ -233,6 +235,9 @@ export function commandCenterMetrics(items: readonly CommandCenterCaseView[], no
 function replaceCase(items: readonly CommandCenterCaseView[], updated: CommandCenterCaseView): readonly CommandCenterCaseView[] { return items.map((item) => item.safetyCase.id === updated.safetyCase.id ? updated : item); }
 function uniqueCases(items: readonly CommandCenterCaseView[]): readonly CommandCenterCaseView[] { const seen = new Set<string>(); return items.filter((item) => seen.has(item.safetyCase.id) ? false : (seen.add(item.safetyCase.id), true)); }
 function isClosedCase(item: CommandCenterCaseView): boolean { return item.recommendationState?.snapshotReason === 'CASE_CLOSED'; }
+function isClosedDeliveryAmbiguity(item: CommandCenterCaseView): boolean {
+  return isClosedCase(item) && item.audit.some((entry) => entry.action === 'DELIVERY_RESULT_AMBIGUOUS');
+}
 function roleAllowed(actual: readonly HumanSafetyActorRole[], allowed: readonly HumanSafetyActorRole[]): boolean { return actual.some((role) => allowed.includes(role)); }
 function requireReason(reason: string): string { const normalized = reason.trim(); if (normalized.length < 3 || normalized.length > 500) throw new Error('يجب إدخال سبب واضح من 3 إلى 500 حرف'); return normalized; }
 function requireId(value: string, label: string): string { const normalized = value.trim(); if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(normalized)) throw new Error(`${label} غير صالح`); return normalized; }
