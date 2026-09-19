@@ -496,6 +496,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **COGNITIVE ROAD STATE CAN CROSS INTO THE ROS BRAIN SNAPSHOT BOUNDARY ONLY AS AN EXACT, OWNER-VERSIONED, SCOPE-BOUND, NON-EXECUTABLE RECEIPT.** |
 | Next handoff | Add the cognitive binding as a required column set in a new append-only durable input-snapshot policy/migration, with old v1 rows remaining readable but never promoted as cognitive-bound evidence. |
 
+### Durable Cognitive Road State input-snapshot policy
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-19, GitHub candidate `24a59357405c51cb67a27a5941f8a2f3279dcc83` was sixty-five commits ahead of current `main` at `cfecaae07ef9673d80054ea11bd26ee2305e69e9` and zero behind, with no branch PR or pull-request-triggered workflow run. The local tree matched the candidate tree and no overlapping execution was found. |
+| Added behavior | Policy `ros-eye.input-snapshot.v2` is now represented by a required append-only Cognitive Road State binding. It can exist only for the exact Tenant + Purpose + Case + input version + v1 snapshot digest + capture time, and stores the owner revision/digest, validity window, abstention posture, source-ledger authority, and binding-policy version. |
+| Durable acceptance | The repository fails closed when the exact v1 base is absent, treats only an exact replay as idempotent, rejects scope or validity drift before SQL, and returns a v2 receipt only when the extension row exists. The migration enforces the exact composite foreign key, non-null column set, version/authority checks, validity window, and rejection of UPDATE or DELETE. |
+| Legacy boundary | Existing v1 rows remain readable through their existing repository. They are never backfilled, rewritten, or returned as v2 cognitive evidence without the required extension row. The Cognitive Road State payload, entities, and observations remain under their source module's ownership. |
+| Safety limits | The binding grants no sensor collection, recommendation, risk reduction, incident mutation, dispatch, provider call, activation, or execution authority. A live PostgreSQL migration remains unverified without Docker/Podman, and local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A SNAPSHOT CAN CLAIM THE COGNITIVE V2 POLICY ONLY THROUGH A COMPLETE, IMMUTABLE, OWNER-VERSIONED BINDING TO ITS EXACT V1 BASE.** |
+| Next handoff | Compose the owner adapter, v1 snapshot append, and required v2 binding in one repeatable-read capture transaction, then prove rollback leaves neither a partial base nor a promoted v2 receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
