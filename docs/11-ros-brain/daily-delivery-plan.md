@@ -544,6 +544,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A PRIOR SHADOW RECOMMENDATION CAN NO LONGER APPEAR CURRENT AFTER ITS COGNITIVE SOURCE RECEIPT CHANGES.** |
 | Next handoff | Bind high-risk resolution authorization to the same cognitive receipt identity and reject its use after cognitive revision drift without rewriting authorization history. |
 
+### Cognitive-bound high-risk closure authorization
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-19, GitHub candidate `a461a469503f44577c0f0613627557bbb3eb96b0` was seventy commits ahead of current `main` at `cfecaae07ef9673d80054ea11bd26ee2305e69e9` and zero behind, with no branch PR or workflow run. No overlapping local build or journey process was active. |
+| Added behavior | Every newly issued high-risk closure authorization now copies the exact cognitive `v2` policy, revision, and digest from the governed snapshot. The serializable close transaction requires that exact non-abstaining receipt and also requires it to remain the latest scoped cognitive receipt before changing the RoadEvent, audit log, or outbox. |
+| Legacy and invalidation boundary | Historical authorizations without cognitive identity remain readable but cannot execute a high-risk close. A newer cognitive revision or digest invalidates use of the prior authorization without updating or deleting its history. The migration adds an all-or-none `v2` column set and exact composite foreign key to the append-only cognitive receipt. |
+| Local evidence | The focused domain, application, Human Safety HTTP, and PostgreSQL repository suites passed 49 of 49. The combined candidate passed 628 API, 33 dashboard, 36 mobile, and 8 domain tests (705 total), plus fifteen perception contract/benchmark checks. TypeScript build and no-emit checks passed for all five projects, along with repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks. |
+| Safety limits | Closure still requires an explicit human supervisor and never derives authority from the recommendation or cognitive receipt. The change grants no collection, severity reduction, dispatch, provider call, activation, or autonomous execution; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. PostgreSQL execution remains unverified without Docker/Podman, and local evidence is not REL-013 external immutable archival. |
+| Result | **A HIGH-RISK CLOSURE AUTHORIZATION CAN NO LONGER BE USED AFTER ITS COGNITIVE SOURCE RECEIPT CHANGES, AND ITS ORIGINAL HISTORY REMAINS IMMUTABLE.** |
+| Next handoff | Add this cognitive authorization binding and drift rejection to the disposable PostgreSQL journey and its next receipt, proving commit and rollback on a real engine without weakening REL-013. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

@@ -94,6 +94,9 @@ export interface RoadEventReadModel {
     readonly sourceSnapshot?: {
       readonly inputVersion: number;
       readonly sourceSnapshotDigest: string;
+      readonly cognitiveSnapshotPolicyVersion?: 'ros-eye.input-snapshot.v2';
+      readonly cognitiveRevision?: number;
+      readonly cognitiveDigest?: string;
     };
   } | null;
 }

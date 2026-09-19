@@ -18,6 +18,9 @@ export interface ClosureAuthorization {
 export interface ClosureAuthorizationSourceSnapshot {
   readonly inputVersion: number;
   readonly sourceSnapshotDigest: string;
+  readonly cognitiveSnapshotPolicyVersion?: 'ros-eye.input-snapshot.v2';
+  readonly cognitiveRevision?: number;
+  readonly cognitiveDigest?: string;
 }
 
 export interface RoadEventProps {
@@ -67,11 +70,18 @@ function copyAuthorization(authorization: ClosureAuthorization): ClosureAuthoriz
 }
 
 function copySourceSnapshot(snapshot: ClosureAuthorizationSourceSnapshot): ClosureAuthorizationSourceSnapshot {
+  const cognitiveAbsent = snapshot.cognitiveSnapshotPolicyVersion === undefined &&
+    snapshot.cognitiveRevision === undefined && snapshot.cognitiveDigest === undefined;
   if (!Number.isSafeInteger(snapshot.inputVersion) || snapshot.inputVersion < 1 ||
-      !/^[a-f0-9]{64}$/.test(snapshot.sourceSnapshotDigest)) {
+      !/^[a-f0-9]{64}$/.test(snapshot.sourceSnapshotDigest) ||
+      (!cognitiveAbsent && (snapshot.cognitiveSnapshotPolicyVersion !== 'ros-eye.input-snapshot.v2' ||
+        !Number.isSafeInteger(snapshot.cognitiveRevision) || snapshot.cognitiveRevision! < 1 ||
+        !/^[a-f0-9]{64}$/.test(snapshot.cognitiveDigest ?? '')))) {
     throw new InvalidRoadEventError('Closure authorization source snapshot is invalid');
   }
-  return Object.freeze({ inputVersion: snapshot.inputVersion, sourceSnapshotDigest: snapshot.sourceSnapshotDigest });
+  return Object.freeze({ inputVersion: snapshot.inputVersion, sourceSnapshotDigest: snapshot.sourceSnapshotDigest,
+    ...(cognitiveAbsent ? {} : { cognitiveSnapshotPolicyVersion: snapshot.cognitiveSnapshotPolicyVersion,
+      cognitiveRevision: snapshot.cognitiveRevision, cognitiveDigest: snapshot.cognitiveDigest }) });
 }
 
 export class RoadEvent {

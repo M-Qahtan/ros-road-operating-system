@@ -468,7 +468,10 @@ test('healthy observed dependencies permit supervisor authorization without clos
   assert.notEqual(authorized.closureAuthorization, null);
   assert.deepEqual(authorized.closureAuthorization?.sourceSnapshot, {
     inputVersion: 37,
-    sourceSnapshotDigest: 'd'.repeat(64)
+    sourceSnapshotDigest: 'd'.repeat(64),
+    cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2',
+    cognitiveRevision: 16,
+    cognitiveDigest: 'e'.repeat(64)
   });
   assert.notEqual(authorized.status, 'CLOSED');
 });

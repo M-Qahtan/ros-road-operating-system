@@ -85,7 +85,10 @@ function row(version = 1) {
     closure_authorized_at: null,
     closure_authorization_reason: null,
     closure_source_input_version: null,
-    closure_source_snapshot_digest: null
+    closure_source_snapshot_digest: null,
+    closure_cognitive_policy_version: null,
+    closure_cognitive_revision: null,
+    closure_cognitive_digest: null
   };
 }
 
@@ -105,7 +108,9 @@ function authorizedRecovery(): RoadEvent {
       actorId: ACTOR_ID,
       reason: 'verified current source snapshot',
       authorizedAt: new Date('2026-07-25T03:00:00.000Z'),
-      sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: SNAPSHOT_DIGEST }
+      sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: SNAPSHOT_DIGEST,
+        cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16,
+        cognitiveDigest: 'e'.repeat(64) }
     }
   });
 }
@@ -122,7 +127,10 @@ function authorizedRow() {
     closure_authorized_at: '2026-07-25T03:00:00.000Z',
     closure_authorization_reason: 'verified current source snapshot',
     closure_source_input_version: 37,
-    closure_source_snapshot_digest: SNAPSHOT_DIGEST
+    closure_source_snapshot_digest: SNAPSHOT_DIGEST,
+    closure_cognitive_policy_version: 'ros-eye.input-snapshot.v2',
+    closure_cognitive_revision: 16,
+    closure_cognitive_digest: 'e'.repeat(64)
   };
 }
 
@@ -139,7 +147,9 @@ test('create persists the governed source snapshot bound to closure authorizatio
       actorId: ACTOR_ID,
       reason: 'verified source snapshot',
       authorizedAt: new Date('2026-07-25T03:00:00.000Z'),
-      sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64) }
+      sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64),
+        cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16,
+        cognitiveDigest: 'e'.repeat(64) }
     }
   });
 
@@ -288,6 +298,9 @@ test('high-risk closure validates the persisted snapshot inside a serializable u
   const verificationIndex = client.queries.findIndex((query) => query.text.includes('closure_snapshot_current'));
   const updateIndex = client.queries.findIndex((query) => query.text.includes('UPDATE road_events'));
   assert.ok(verificationIndex > 0 && updateIndex > verificationIndex);
+  assert.match(client.queries[verificationIndex]!.text, /cognitive_latest\.cognitive_revision=\$7/);
+  assert.match(client.queries[verificationIndex]!.text, /cognitive_latest\.cognitive_digest=\$8/);
+  assert.deepEqual(client.queries[verificationIndex]!.values.slice(-2), [16, 'e'.repeat(64)]);
   assert.equal(client.queries.at(-1)?.text, 'COMMIT');
 });
 
@@ -308,6 +321,25 @@ test('source drift rejects high-risk closure before event audit or outbox writes
   assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO audit_logs')), false);
   assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO outbox_events')), false);
   assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
+});
+
+test('legacy snapshot authorization remains readable but cannot execute high-risk closure without cognitive v2', async () => {
+  const legacy = new RoadEvent({
+    id: EVENT_ID, occurredAt: new Date('2026-07-25T02:55:00.000Z'), latitude: 24.7136, longitude: 46.6753,
+    status: RoadEventStatus.Recovery, version: 2,
+    severity: { level: SeverityLevel.High, score: 82, confidence: 0.91,
+      reasonCodes: ['verified_impact'], requiresHumanReview: true },
+    closureAuthorization: { actorId: ACTOR_ID, reason: 'legacy v1 authorization history',
+      authorizedAt: new Date('2026-07-25T03:00:00.000Z'),
+      sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: SNAPSHOT_DIGEST } }
+  });
+  legacy.transitionTo(RoadEventStatus.Closed);
+  const client = new FakeClient(() => ({ rows: [], rowCount: 0 }));
+  await assert.rejects(
+    () => new PostgresRoadEventRepository(new FakePool(client)).update(legacy, 2, context),
+    (error: unknown) => error instanceof RoadEventClosureSourceSnapshotChangedError && /cognitive v2/.test(error.message)
+  );
+  assert.equal(client.queries.length, 0);
 });
 
 test('serializable race loser maps to source-snapshot conflict and rolls back', async () => {
@@ -374,7 +406,9 @@ test('findById restores the governed source snapshot bound to closure authorizat
       closure_authorized_at: '2026-07-25T03:00:00.000Z',
       closure_authorization_reason: 'verified source snapshot',
       closure_source_input_version: '37',
-      closure_source_snapshot_digest: 'd'.repeat(64)
+      closure_source_snapshot_digest: 'd'.repeat(64),
+      closure_cognitive_policy_version: 'ros-eye.input-snapshot.v2',
+      closure_cognitive_revision: '16', closure_cognitive_digest: 'e'.repeat(64)
     }],
     rowCount: 1
   }));
@@ -383,7 +417,8 @@ test('findById restores the governed source snapshot bound to closure authorizat
 
   assert.deepEqual(restored?.closureAuthorization?.sourceSnapshot, {
     inputVersion: 37,
-    sourceSnapshotDigest: 'd'.repeat(64)
+    sourceSnapshotDigest: 'd'.repeat(64), cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2',
+    cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64)
   });
 });
 
@@ -395,6 +430,16 @@ test('closure snapshot migration enforces complete scoped binding without rewrit
   assert.match(migration, /REFERENCES ros_eye_safety_fusion_input_snapshots\(\s*tenant_id, purpose, case_id, input_version, snapshot_digest\s*\)/);
   assert.match(migration, /closure_source_input_version IS NULL AND closure_source_snapshot_digest IS NULL/);
   assert.match(migration, /closure_authorized_by IS NOT NULL\s+AND closure_source_input_version IS NOT NULL/);
+});
+
+test('closure cognitive migration binds authorization to the exact immutable v2 receipt', () => {
+  const migration = readFileSync('database/migrations/0025_closure_cognitive_snapshot_binding.sql', 'utf8');
+  assert.match(migration, /closure_cognitive_policy_version text/);
+  assert.match(migration, /closure_cognitive_revision integer/);
+  assert.match(migration, /closure_cognitive_digest text/);
+  assert.match(migration, /FOREIGN KEY \(\s*tenant_id, purpose, id, closure_source_input_version/);
+  assert.match(migration, /REFERENCES ros_eye_cognitive_input_snapshot_bindings/);
+  assert.match(migration, /closure_cognitive_policy_version = 'ros-eye\.input-snapshot\.v2'/);
 });
 
 test('list scopes in SQL before filters, pagination and total count', async () => {

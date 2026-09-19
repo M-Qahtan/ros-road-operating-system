@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  type ClosureAuthorizationSourceSnapshot,
   RoadEvent,
   RoadEventAccessScope,
   RoadEventAlreadyExistsError,
@@ -39,6 +40,9 @@ interface RoadEventRow {
   readonly closure_authorization_reason: string | null;
   readonly closure_source_input_version: number | string | null;
   readonly closure_source_snapshot_digest: string | null;
+  readonly closure_cognitive_policy_version: string | null;
+  readonly closure_cognitive_revision: number | string | null;
+  readonly closure_cognitive_digest: string | null;
   readonly total_count?: number | string;
 }
 
@@ -87,15 +91,24 @@ function asDate(value: Date | string, field: string): Date {
   return date;
 }
 
-function mapClosureSourceSnapshot(row: RoadEventRow): { readonly inputVersion: number; readonly sourceSnapshotDigest: string } | undefined {
+function mapClosureSourceSnapshot(row: RoadEventRow): ClosureAuthorizationSourceSnapshot | undefined {
   const rawVersion = row.closure_source_input_version;
   const digest = row.closure_source_snapshot_digest;
-  if (rawVersion === null && digest === null) return undefined;
+  const policy = row.closure_cognitive_policy_version;
+  const rawCognitiveRevision = row.closure_cognitive_revision;
+  const cognitiveDigest = row.closure_cognitive_digest;
+  if (rawVersion === null && digest === null && policy === null && rawCognitiveRevision === null && cognitiveDigest === null) return undefined;
   const inputVersion = Number(rawVersion);
-  if (rawVersion === null || digest === null || !Number.isSafeInteger(inputVersion) || inputVersion < 1 || !/^[a-f0-9]{64}$/.test(digest)) {
+  const cognitiveAbsent = policy === null && rawCognitiveRevision === null && cognitiveDigest === null;
+  const cognitiveRevision = Number(rawCognitiveRevision);
+  if (rawVersion === null || digest === null || !Number.isSafeInteger(inputVersion) || inputVersion < 1 ||
+      !/^[a-f0-9]{64}$/.test(digest) || (!cognitiveAbsent && (policy !== 'ros-eye.input-snapshot.v2' ||
+        rawCognitiveRevision === null || cognitiveDigest === null || !Number.isSafeInteger(cognitiveRevision) ||
+        cognitiveRevision < 1 || !/^[a-f0-9]{64}$/.test(cognitiveDigest)))) {
     throw new TypeError('closure authorization source snapshot is incomplete or invalid');
   }
-  return Object.freeze({ inputVersion, sourceSnapshotDigest: digest });
+  return Object.freeze({ inputVersion, sourceSnapshotDigest: digest,
+    ...(cognitiveAbsent ? {} : { cognitiveSnapshotPolicyVersion: policy!, cognitiveRevision, cognitiveDigest: cognitiveDigest! }) });
 }
 
 function mapRoadEvent(row: RoadEventRow): RoadEvent {
@@ -226,7 +239,10 @@ const ROAD_EVENT_SELECT = `
     closure_authorized_at,
     closure_authorization_reason,
     closure_source_input_version,
-    closure_source_snapshot_digest
+    closure_source_snapshot_digest,
+    closure_cognitive_policy_version,
+    closure_cognitive_revision,
+    closure_cognitive_digest
   FROM road_events`;
 
 const CLOSURE_SNAPSHOT_CURRENT_SQL = `
@@ -271,6 +287,23 @@ const CLOSURE_SNAPSHOT_CURRENT_SQL = `
       FROM human_safety_indicator_revision_ledger i
       WHERE i.tenant_id=s.tenant_id AND i.purpose=s.purpose AND i.case_id=s.case_id
       ORDER BY i.revision DESC LIMIT 1), false)
+    AND EXISTS (
+      SELECT 1 FROM ros_eye_cognitive_input_snapshot_bindings cognitive_exact
+      WHERE cognitive_exact.tenant_id=s.tenant_id AND cognitive_exact.purpose=s.purpose
+        AND cognitive_exact.case_id=s.case_id AND cognitive_exact.input_version=s.input_version
+        AND cognitive_exact.policy_version='ros-eye.input-snapshot.v2'
+        AND cognitive_exact.base_snapshot_digest=s.snapshot_digest
+        AND cognitive_exact.cognitive_revision=$7 AND cognitive_exact.cognitive_digest=$8
+        AND cognitive_exact.cognitive_requires_abstention=false
+    )
+    AND COALESCE((
+      SELECT cognitive_latest.cognitive_revision=$7 AND cognitive_latest.cognitive_digest=$8
+        AND cognitive_latest.cognitive_requires_abstention=false
+      FROM ros_eye_cognitive_input_snapshot_bindings cognitive_latest
+      WHERE cognitive_latest.tenant_id=s.tenant_id AND cognitive_latest.purpose=s.purpose
+        AND cognitive_latest.case_id=s.case_id
+      ORDER BY cognitive_latest.input_version DESC LIMIT 1
+    ), false)
   ) AS closure_snapshot_current
   FROM ros_eye_safety_fusion_input_snapshots s
   WHERE s.tenant_id=$1 AND s.purpose=$2 AND s.case_id=$3::uuid
@@ -300,11 +333,12 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
             id, tenant_id, purpose, status, severity, severity_score, confidence, reason_codes,
             severity_requires_human_review, location, occurred_at, version,
             closure_authorized_by, closure_authorized_at, closure_authorization_reason,
-            closure_source_input_version, closure_source_snapshot_digest, reporter_actor_id
+            closure_source_input_version, closure_source_snapshot_digest,
+            closure_cognitive_policy_version, closure_cognitive_revision, closure_cognitive_digest, reporter_actor_id
           ) VALUES (
             $1::uuid, $2, $3, $4::road_event_status, $5::severity_level, $6, $7, $8::text[],
             $9, ST_SetSRID(ST_MakePoint($10, $11), 4326)::geography, $12, $13,
-            $14::uuid, $15, $16, $17, $18, $19::uuid
+            $14::uuid, $15, $16, $17, $18, $19, $20, $21, $22::uuid
           )`,
           [
             event.id,
@@ -325,6 +359,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
             authorization?.reason ?? null,
             authorization?.sourceSnapshot?.inputVersion ?? null,
             authorization?.sourceSnapshot?.sourceSnapshotDigest ?? null,
+            authorization?.sourceSnapshot?.cognitiveSnapshotPolicyVersion ?? null,
+            authorization?.sourceSnapshot?.cognitiveRevision ?? null,
+            authorization?.sourceSnapshot?.cognitiveDigest ?? null,
             trustedReporterActorId
           ]
         );
@@ -353,6 +390,10 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         closureSnapshot === undefined) {
       throw new RoadEventClosureSourceSnapshotChangedError('High-risk closure requires a persisted governed source snapshot');
     }
+    if (closureSnapshot !== undefined && (closureSnapshot.cognitiveSnapshotPolicyVersion !== 'ros-eye.input-snapshot.v2' ||
+        closureSnapshot.cognitiveRevision === undefined || closureSnapshot.cognitiveDigest === undefined)) {
+      throw new RoadEventClosureSourceSnapshotChangedError('High-risk closure requires a cognitive v2 source binding');
+    }
 
     try {
       await this.withTransaction(async (client) => {
@@ -376,7 +417,8 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         }
         const verification = await client.query<ClosureSnapshotVerificationRow>(CLOSURE_SNAPSHOT_CURRENT_SQL, [
           scope.tenantId, scope.purpose, event.id, closureSnapshot.inputVersion,
-          closureSnapshot.sourceSnapshotDigest, roadEventRevisionDigest(before, scope, 'CASE')
+          closureSnapshot.sourceSnapshotDigest, roadEventRevisionDigest(before, scope, 'CASE'),
+          closureSnapshot.cognitiveRevision, closureSnapshot.cognitiveDigest
         ]);
         if (verification.rowCount !== 1 || verification.rows[0]?.closure_snapshot_current !== true) {
           throw new RoadEventClosureSourceSnapshotChangedError('Closure source snapshot is no longer current');
@@ -400,7 +442,10 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
           closure_authorized_at = $16,
           closure_authorization_reason = $17,
           closure_source_input_version = $18,
-          closure_source_snapshot_digest = $19
+          closure_source_snapshot_digest = $19,
+          closure_cognitive_policy_version = $20,
+          closure_cognitive_revision = $21,
+          closure_cognitive_digest = $22
         WHERE id = $1::uuid AND version = $2 AND tenant_id = $3 AND purpose = $4
         RETURNING version`,
         [
@@ -423,6 +468,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
           authorization?.reason ?? null,
           authorization?.sourceSnapshot?.inputVersion ?? null,
           authorization?.sourceSnapshot?.sourceSnapshotDigest ?? null
+          , authorization?.sourceSnapshot?.cognitiveSnapshotPolicyVersion ?? null
+          , authorization?.sourceSnapshot?.cognitiveRevision ?? null
+          , authorization?.sourceSnapshot?.cognitiveDigest ?? null
         ]
       );
       if (updated.rowCount !== 1) throw new RoadEventConcurrencyError(`RoadEvent ${event.id} changed during update`);

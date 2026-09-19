@@ -679,7 +679,10 @@ export function createHumanSafetyHttpHandler(
             roadEventId: caseId, expectedVersion: event.version, reason, authorizedAt: now().toISOString(),
             sourceSnapshot: {
               inputVersion: governed!.sourceVersions!.inputVersion,
-              sourceSnapshotDigest: governed!.sourceVersions!.sourceSnapshotDigest
+              sourceSnapshotDigest: governed!.sourceVersions!.sourceSnapshotDigest,
+              cognitiveSnapshotPolicyVersion: governed!.sourceVersions!.cognitiveSnapshotPolicyVersion,
+              cognitiveRevision: governed!.sourceVersions!.cognitiveRevision,
+              cognitiveDigest: governed!.sourceVersions!.cognitiveDigest
             }
           }, { actor, traceId: request.traceId, idempotencyKey: key });
         } else {

@@ -101,18 +101,21 @@ test('closure authorization preserves a validated governed source snapshot bindi
     actorId: 'operator-1',
     reason: 'Verified current source snapshot',
     authorizedAt: new Date('2026-07-24T12:30:00.000Z'),
-    sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64) }
+    sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64),
+      cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64) }
   });
 
   assert.deepEqual(event.closureAuthorization?.sourceSnapshot, {
     inputVersion: 37,
-    sourceSnapshotDigest: 'd'.repeat(64)
+    sourceSnapshotDigest: 'd'.repeat(64), cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2',
+    cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64)
   });
   assert.throws(() => new RoadEvent({
     ...baseProps,
     closureAuthorization: {
       actorId: 'operator-1', reason: 'invalid binding', authorizedAt: new Date('2026-07-24T12:30:00.000Z'),
-      sourceSnapshot: { inputVersion: 0, sourceSnapshotDigest: 'not-a-digest' }
+      sourceSnapshot: { inputVersion: 0, sourceSnapshotDigest: 'not-a-digest',
+        cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 0, cognitiveDigest: 'bad' }
     }
   }), InvalidRoadEventError);
 });

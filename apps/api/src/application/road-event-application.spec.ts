@@ -198,12 +198,14 @@ test('S3 closure remains blocked until supervisor authorization is persisted', a
     expectedVersion: 1,
     reason: 'scene verified safe',
     authorizedAt: '2026-07-25T03:10:00.000Z',
-    sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64) }
+    sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64),
+      cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64) }
   }, context('authorize-0002', supervisor));
   assert.equal(authorized.version, 2);
   assert.deepEqual(authorized.closureAuthorization?.sourceSnapshot, {
     inputVersion: 37,
-    sourceSnapshotDigest: 'd'.repeat(64)
+    sourceSnapshotDigest: 'd'.repeat(64), cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2',
+    cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64)
   });
 
   const closed = await service.transition({
