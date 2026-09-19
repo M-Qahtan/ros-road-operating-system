@@ -125,7 +125,9 @@ function currentGovernedReader(): GovernedRecommendationReader {
     snapshot: { status: 'VERIFIED', reason: 'VERIFIED', sourceSnapshotDigest: 'd'.repeat(64) },
     recommendation, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false,
     sourceVersions: { inputVersion: recommendation.inputVersion, sourceSnapshotDigest: 'd'.repeat(64),
-      caseRevision: 11, severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15 }
+      caseRevision: 11, severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15,
+      cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16,
+      cognitiveDigest: 'e'.repeat(64), cognitiveRequiresAbstention: false }
   });
 }
 
@@ -217,7 +219,9 @@ test('current governed recommendation replaces legacy compatibility only for the
     snapshot: { status: 'VERIFIED', reason: 'VERIFIED', sourceSnapshotDigest: 'd'.repeat(64) },
     recommendation, humanReviewStatus: 'PENDING', mode: 'SHADOW_ONLY', activationAuthorized: false,
     sourceVersions: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64), caseRevision: 11,
-      severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15 }
+      severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15,
+      cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16,
+      cognitiveDigest: 'e'.repeat(64), cognitiveRequiresAbstention: false }
   });
   const { handler, store } = await fixture(OPERATOR, governed);
   store.recommendation = fusionRecommendation();
@@ -231,7 +235,9 @@ test('current governed recommendation replaces legacy compatibility only for the
   });
   assert.deepEqual(item.sourceVersionState, {
     status: 'VERIFIED', reason: 'VERIFIED', inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64),
-    caseRevision: 11, severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15
+    caseRevision: 11, severityRevision: 12, contactRevision: 13, evidenceRevision: 14, indicatorRevision: 15,
+    cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16,
+    cognitiveDigest: 'e'.repeat(64), cognitiveRequiresAbstention: false
   });
   assert.equal(item.safetyCase.severityAssessmentVersion, 12);
   assert.equal(item.safetyCase.evidenceRevision, 14);
@@ -376,7 +382,9 @@ test('withheld governed recommendation suppresses legacy fallback and preserves 
   assert.equal(item.safetyCase.severity, 'S4');
   assert.deepEqual(item.sourceVersionState, {
     status: 'WITHHELD', reason: 'CURRENT_INPUT_CHANGED', inputVersion: null, sourceSnapshotDigest: null,
-    caseRevision: null, severityRevision: null, contactRevision: null, evidenceRevision: null, indicatorRevision: null
+    caseRevision: null, severityRevision: null, contactRevision: null, evidenceRevision: null, indicatorRevision: null,
+    cognitiveSnapshotPolicyVersion: null, cognitiveRevision: null, cognitiveDigest: null,
+    cognitiveRequiresAbstention: null
   });
   assert.equal(item.safetyCase.severityAssessmentVersion, 0);
   assert.equal(item.safetyCase.evidenceRevision, 0);

@@ -72,6 +72,10 @@ export interface HumanSafetySourceVersionState {
   readonly contactRevision: number | null;
   readonly evidenceRevision: number | null;
   readonly indicatorRevision: number | null;
+  readonly cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2' | null;
+  readonly cognitiveRevision: number | null;
+  readonly cognitiveDigest: string | null;
+  readonly cognitiveRequiresAbstention: false | null;
 }
 
 export interface HumanSafetyRecommendationState {
@@ -476,7 +480,9 @@ function authoritativeSourceVersions(governed: GovernedRecommendationQueryResult
   return Object.freeze({
     status, reason: governed?.snapshot?.reason ?? null,
     inputVersion: null, sourceSnapshotDigest: null, caseRevision: null, severityRevision: null,
-    contactRevision: null, evidenceRevision: null, indicatorRevision: null
+    contactRevision: null, evidenceRevision: null, indicatorRevision: null,
+    cognitiveSnapshotPolicyVersion: null, cognitiveRevision: null, cognitiveDigest: null,
+    cognitiveRequiresAbstention: null
   });
 }
 

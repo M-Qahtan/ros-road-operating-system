@@ -92,7 +92,7 @@ function renderSourceVersions(item: CommandCenterCaseView): string {
   if (versions?.status !== 'VERIFIED') {
     return '<article class="warning-card"><h3>نسخ مصادر القرار</h3><p>محجوبة: لا توجد لقطة مصادر حالية موثقة.</p></article>';
   }
-  return `<article><h3>نسخ مصادر القرار</h3><dl class="fact-list"><div><dt>الحالة</dt><dd>${versions.caseRevision}</dd></div><div><dt>الخطورة</dt><dd>${versions.severityRevision}</dd></div><div><dt>التواصل</dt><dd>${versions.contactRevision ?? 'غير موجود'}</dd></div><div><dt>الأدلة</dt><dd>${versions.evidenceRevision}</dd></div><div><dt>المؤشرات</dt><dd>${versions.indicatorRevision}</dd></div></dl></article>`;
+  return `<article><h3>نسخ مصادر القرار</h3><dl class="fact-list"><div><dt>الحالة</dt><dd>${versions.caseRevision}</dd></div><div><dt>الخطورة</dt><dd>${versions.severityRevision}</dd></div><div><dt>التواصل</dt><dd>${versions.contactRevision ?? 'غير موجود'}</dd></div><div><dt>الأدلة</dt><dd>${versions.evidenceRevision}</dd></div><div><dt>المؤشرات</dt><dd>${versions.indicatorRevision}</dd></div><div><dt>الحالة المعرفية</dt><dd>${versions.cognitiveRevision}</dd></div></dl></article>`;
 }
 
 function renderRecommendation(item: CommandCenterCaseView): string {

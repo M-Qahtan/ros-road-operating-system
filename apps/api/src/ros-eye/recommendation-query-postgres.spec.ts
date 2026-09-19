@@ -7,6 +7,7 @@ import type {
 } from '@ros/contracts';
 import type { AuthenticatedActor } from '../application/ports.js';
 import type { ContactSqlPoolPort, ContactSqlQueryResult, ContactSqlRow } from './contact-orchestration-postgres.js';
+import { POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL } from './cognitive-input-snapshot-postgres.js';
 import {
   GOVERNED_RECOMMENDATION_QUERY_TRANSACTION_SQL,
   POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL,
@@ -66,6 +67,7 @@ function snapshot(): SafetyFusionInputSnapshot {
 class QueryPool implements ContactSqlPoolPort {
   readonly calls: string[] = [];
   row: ContactSqlRow | null = journalRow();
+  latestCognitiveRow: ContactSqlRow = cognitiveRow();
   async transaction<T>(work: (connection: QueryPool) => Promise<T>): Promise<T> { return work(this); }
   async query<Row extends ContactSqlRow = ContactSqlRow>(text: string): Promise<ContactSqlQueryResult<Row>> {
     this.calls.push(text);
@@ -73,6 +75,8 @@ class QueryPool implements ContactSqlPoolPort {
     if (text === POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL.authorizeCase) return rows([{ case_id: CASE_ID }]) as ContactSqlQueryResult<Row>;
     if (text === POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL.latest) return rows(this.row === null ? [] : [this.row]) as ContactSqlQueryResult<Row>;
     if (text === POSTGRES_INPUT_SNAPSHOT_SQL.readExact) return rows([snapshotRow()]) as ContactSqlQueryResult<Row>;
+    if (text === POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.readExact) return rows([cognitiveRow()]) as ContactSqlQueryResult<Row>;
+    if (text === POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.readLatest) return rows([this.latestCognitiveRow]) as ContactSqlQueryResult<Row>;
     throw new Error(`unexpected SQL: ${text}`);
   }
 }
@@ -98,7 +102,9 @@ test('returns only a current exact-scope recommendation and preserves non-execut
   assert.equal(result.activationAuthorized, false);
   assert.deepEqual(result.sourceVersions, {
     inputVersion: 1, sourceSnapshotDigest: digest('1'), caseRevision: 7, severityRevision: 3,
-    contactRevision: 4, evidenceRevision: 9, indicatorRevision: 2
+    contactRevision: 4, evidenceRevision: 9, indicatorRevision: 2,
+    cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 11,
+    cognitiveDigest: digest('9'), cognitiveRequiresAbstention: false
   });
   assert.equal(GOVERNED_RECOMMENDATION_QUERY_TRANSACTION_SQL.includes('READ ONLY'), true);
   assert.equal(POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL.authorizeCase.includes('FOR SHARE'), false);
@@ -109,6 +115,17 @@ test('a newer module revision withholds the historical recommendation but retain
   const sources = new Sources();
   sources.indicatorRevision = 3;
   const result = await new PostgresGovernedRecommendationQuery(new QueryPool(), sources).read(ACTOR, CASE_ID);
+  assert.equal(result.status, 'WITHHELD');
+  assert.deepEqual(result.snapshot, { status: 'INVALIDATED', reason: 'CURRENT_INPUT_CHANGED', sourceSnapshotDigest: digest('1') });
+  assert.equal(result.recommendation, null);
+  assert.equal(result.humanReviewStatus, 'PENDING');
+  assert.equal(result.sourceVersions, null);
+});
+
+test('a newer cognitive receipt withholds the historical recommendation without rewriting it', async () => {
+  const pool = new QueryPool();
+  pool.latestCognitiveRow = cognitiveRow({ input_version: 2, cognitive_revision: 12, cognitive_digest: digest('8') });
+  const result = await new PostgresGovernedRecommendationQuery(pool, new Sources()).read(ACTOR, CASE_ID);
   assert.equal(result.status, 'WITHHELD');
   assert.deepEqual(result.snapshot, { status: 'INVALIDATED', reason: 'CURRENT_INPUT_CHANGED', sourceSnapshotDigest: digest('1') });
   assert.equal(result.recommendation, null);
@@ -153,7 +170,19 @@ function journalRow(): ContactSqlRow {
   return {
     input_version: 1, deterministic_fingerprint: fingerprint('f'), source_snapshot_digest: digest('1'),
     authority: 'RECOMMENDATION_ONLY', mode: 'SHADOW_ONLY', activation_authorized: false,
-    human_review_status: 'PENDING', recommendation: recommendation(), binding: binding()
+    human_review_status: 'PENDING', recommendation: recommendation(), binding: binding(),
+    cognitive_snapshot_policy_version: 'ros-eye.input-snapshot.v2', cognitive_revision: 11,
+    cognitive_digest: digest('9'), cognitive_requires_abstention: false
+  };
+}
+function cognitiveRow(overrides: ContactSqlRow = {}): ContactSqlRow {
+  return {
+    tenant_id: SCOPE.tenantId, purpose: SCOPE.purpose, case_id: CASE_ID, input_version: 1,
+    policy_version: 'ros-eye.input-snapshot.v2', base_snapshot_digest: digest('1'),
+    captured_at: '2026-09-08T18:00:00.000Z', binding_policy_version: 'ros-eye.cognitive-input-binding.v1',
+    cognitive_authority: 'SOURCE_LEDGER', cognitive_revision: 11, cognitive_digest: digest('9'),
+    cognitive_state_time: '2026-09-08T17:59:59.000Z', cognitive_valid_until: '2026-09-08T18:01:00.000Z',
+    cognitive_requires_abstention: false, ...overrides
   };
 }
 function snapshotRow(): ContactSqlRow {

@@ -532,6 +532,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A SHADOW RECOMMENDATION CANNOT ENTER THE GOVERNED JOURNAL WITHOUT ITS EXACT NON-ABSTAINING COGNITIVE V2 RECEIPT.** |
 | Next handoff | Bind the recommendation fingerprint and journal row to the cognitive receipt identity in the public read model, then prove a later cognitive revision withholds the prior recommendation without rewriting either history. |
 
+### Cognitive receipt identity in the public recommendation read model
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-19, GitHub candidate `01ca0e952ccdc545b200885cff3589ed321ac4dd` was sixty-nine commits ahead of current `main` at `cfecaae07ef9673d80054ea11bd26ee2305e69e9` and zero behind, with no branch PR or workflow run. No overlapping local build or journey process was active. |
+| Added behavior | The governed read now verifies the journal's cognitive policy, revision, digest, and non-abstention flag against the exact durable `v2` receipt, then compares that receipt with the latest scoped cognitive receipt inside the same read-only `REPEATABLE READ` transaction. Only a current match is exposed through the Human Safety API and Arabic operator view. |
+| Invalidation acceptance | A later cognitive revision/digest returns `WITHHELD / CURRENT_INPUT_CHANGED`, removes the prior recommendation from the live view, retains pending human review, and leaves the append-only recommendation and receipt histories unchanged. Missing, malformed, mismatched, or abstaining receipts fail closed. |
+| Local evidence | The focused governed-read, Human Safety HTTP, and dashboard suites passed 32 of 32. The combined candidate passed 626 API, 33 dashboard, 36 mobile, and 8 domain tests (703 total), plus fifteen perception contract/benchmark checks. TypeScript build and no-emit checks passed for all five projects, along with repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks. |
+| Safety limits | This is a read-model and visibility change only. It grants no collection, severity mutation, incident closure, dispatch, provider call, activation, or execution authority; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, `activationAuthorized=false`, and human review remain mandatory. PostgreSQL execution remains unverified without Docker/Podman, and local evidence is not REL-013 external immutable archival. |
+| Result | **A PRIOR SHADOW RECOMMENDATION CAN NO LONGER APPEAR CURRENT AFTER ITS COGNITIVE SOURCE RECEIPT CHANGES.** |
+| Next handoff | Bind high-risk resolution authorization to the same cognitive receipt identity and reject its use after cognitive revision drift without rewriting authorization history. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

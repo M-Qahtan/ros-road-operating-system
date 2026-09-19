@@ -8,6 +8,11 @@ import {
 import type { AuthenticatedActor } from '../application/ports.js';
 import { PostgresEvidenceRevisionSource } from '../evidence/evidence-revision-source-postgres.js';
 import type { ContactSqlConnectionPort, ContactSqlPoolPort, ContactSqlRow } from './contact-orchestration-postgres.js';
+import {
+  COGNITIVE_INPUT_SNAPSHOT_POLICY_VERSION,
+  PostgresCognitiveInputSnapshotRepository,
+  type CognitiveInputSnapshotReceipt
+} from './cognitive-input-snapshot-postgres.js';
 import { PostgresContactRevisionSource } from './contact-revision-source-postgres.js';
 import { PostgresHumanSafetyIndicatorSource } from './human-safety-indicator-source-postgres.js';
 import type { AuthoritativeInputSnapshotSources, AuthoritativeRevisionReceipt } from './input-snapshot-capture.js';
@@ -25,6 +30,10 @@ interface RecommendationQueryRow extends ContactSqlRow {
   readonly human_review_status: string;
   readonly recommendation: unknown;
   readonly binding: unknown;
+  readonly cognitive_snapshot_policy_version: string;
+  readonly cognitive_revision: number | string;
+  readonly cognitive_digest: string;
+  readonly cognitive_requires_abstention: boolean;
 }
 
 export const GOVERNED_RECOMMENDATION_QUERY_TRANSACTION_SQL =
@@ -33,7 +42,9 @@ export const POSTGRES_GOVERNED_RECOMMENDATION_QUERY_SQL = Object.freeze({
   authorizeCase: `SELECT id::text AS case_id FROM road_events
     WHERE tenant_id=$1 AND purpose=$2 AND id=$3::uuid`,
   latest: `SELECT input_version, deterministic_fingerprint, source_snapshot_digest,
-      authority, mode, activation_authorized, human_review_status, recommendation, binding
+      authority, mode, activation_authorized, human_review_status, recommendation, binding,
+      cognitive_snapshot_policy_version, cognitive_revision, cognitive_digest,
+      cognitive_requires_abstention
     FROM ros_eye_safety_fusion_recommendation_journal
     WHERE tenant_id=$1 AND purpose=$2 AND case_id=$3::uuid
     ORDER BY input_version DESC LIMIT 1`
@@ -57,6 +68,10 @@ export type GovernedRecommendationSourceVersions = Readonly<{
   contactRevision: number | null;
   evidenceRevision: number;
   indicatorRevision: number;
+  cognitiveSnapshotPolicyVersion: typeof COGNITIVE_INPUT_SNAPSHOT_POLICY_VERSION;
+  cognitiveRevision: number;
+  cognitiveDigest: string;
+  cognitiveRequiresAbstention: false;
 }>;
 
 /**
@@ -65,11 +80,15 @@ export type GovernedRecommendationSourceVersions = Readonly<{
  */
 export class PostgresGovernedRecommendationQuery {
   private readonly snapshots: PostgresInputSnapshotRepository;
+  private readonly cognitiveSnapshots: PostgresCognitiveInputSnapshotRepository;
 
   constructor(
     private readonly pool: ContactSqlPoolPort,
     private readonly sources: AuthoritativeInputSnapshotSources
-  ) { this.snapshots = new PostgresInputSnapshotRepository(pool); }
+  ) {
+    this.snapshots = new PostgresInputSnapshotRepository(pool);
+    this.cognitiveSnapshots = new PostgresCognitiveInputSnapshotRepository(pool);
+  }
 
   async read(actor: AuthenticatedActor, caseId: string): Promise<GovernedRecommendationQueryResult> {
     if (!authorizedActor(actor) || !validCaseId(caseId)) return result('FORBIDDEN', null, null, null, null, null);
@@ -98,10 +117,19 @@ export class PostgresGovernedRecommendationQuery {
           !isValidRecommendationJournalEntry({ ...scope, recommendation, binding })) return withheld('INVALID_BINDING', 'PENDING');
 
       const snapshot = await this.snapshots.readWithin(connection, scope, inputVersion);
+      const cognitive = await this.cognitiveSnapshots.readWithin(connection, scope, inputVersion);
+      if (!validCognitiveReceipt(row, cognitive, snapshot)) return withheld('INVALID_BINDING', 'PENDING');
+      const latestCognitive = await this.cognitiveSnapshots.readLatestWithin(connection, scope);
+      if (latestCognitive === null) return withheld('MISSING_BINDING', 'PENDING');
+      if (latestCognitive.cognitive.revision !== cognitive.cognitive.revision ||
+          latestCognitive.cognitive.digest !== cognitive.cognitive.digest) {
+        return result('WITHHELD', Object.freeze({ status: 'INVALIDATED', reason: 'CURRENT_INPUT_CHANGED',
+          sourceSnapshotDigest: snapshot!.snapshotDigest }), null, 'PENDING', 'SHADOW_ONLY', null);
+      }
       const current = await currentRevisions(connection, scope, this.sources);
       const assessment = assessRecommendationSnapshotBinding(recommendation, snapshot, binding, current);
       return assessment.status === 'VERIFIED'
-        ? result('AVAILABLE', assessment, recommendation, 'PENDING', 'SHADOW_ONLY', sourceVersions(snapshot!))
+        ? result('AVAILABLE', assessment, recommendation, 'PENDING', 'SHADOW_ONLY', sourceVersions(snapshot!, cognitive))
         : result('WITHHELD', assessment, null, 'PENDING', 'SHADOW_ONLY', null);
     }).catch(() => withheld('MISSING_BINDING'));
   }
@@ -149,6 +177,18 @@ function fixedSafetyColumns(row: RecommendationQueryRow): boolean {
     row.activation_authorized === false && row.human_review_status === 'PENDING' &&
     /^sha256:[a-f0-9]{64}$/.test(row.deterministic_fingerprint) && /^[a-f0-9]{64}$/.test(row.source_snapshot_digest);
 }
+function validCognitiveReceipt(
+  row: RecommendationQueryRow,
+  receipt: CognitiveInputSnapshotReceipt | null,
+  snapshot: NonNullable<Awaited<ReturnType<PostgresInputSnapshotRepository['read']>>> | null
+): receipt is CognitiveInputSnapshotReceipt {
+  return receipt !== null && snapshot !== null &&
+    row.cognitive_snapshot_policy_version === COGNITIVE_INPUT_SNAPSHOT_POLICY_VERSION &&
+    positiveInteger(row.cognitive_revision) === receipt.cognitive.revision &&
+    row.cognitive_digest === receipt.cognitive.digest && row.cognitive_requires_abstention === false &&
+    receipt.cognitive.requiresAbstention === false && receipt.baseSnapshotDigest === snapshot.snapshotDigest &&
+    receipt.capturedAt === snapshot.capturedAt;
+}
 function parseObject<T>(value: unknown): T | null {
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
@@ -178,7 +218,10 @@ function result(
   return Object.freeze({ status, snapshot, recommendation, humanReviewStatus, mode, activationAuthorized: false, sourceVersions });
 }
 
-function sourceVersions(snapshot: NonNullable<Awaited<ReturnType<PostgresInputSnapshotRepository['read']>>>): GovernedRecommendationSourceVersions {
+function sourceVersions(
+  snapshot: NonNullable<Awaited<ReturnType<PostgresInputSnapshotRepository['read']>>>,
+  cognitive: CognitiveInputSnapshotReceipt
+): GovernedRecommendationSourceVersions {
   return Object.freeze({
     inputVersion: snapshot.inputVersion,
     sourceSnapshotDigest: snapshot.snapshotDigest,
@@ -186,6 +229,10 @@ function sourceVersions(snapshot: NonNullable<Awaited<ReturnType<PostgresInputSn
     severityRevision: snapshot.severity.revision,
     contactRevision: snapshot.contact?.revision ?? null,
     evidenceRevision: snapshot.evidence.revision,
-    indicatorRevision: snapshot.indicators.revision
+    indicatorRevision: snapshot.indicators.revision,
+    cognitiveSnapshotPolicyVersion: cognitive.policyVersion,
+    cognitiveRevision: cognitive.cognitive.revision,
+    cognitiveDigest: cognitive.cognitive.digest,
+    cognitiveRequiresAbstention: false
   });
 }

@@ -35,6 +35,13 @@ export const POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL = Object.freeze({
       cognitive_valid_until, cognitive_requires_abstention
     FROM ros_eye_cognitive_input_snapshot_bindings
     WHERE tenant_id = $1 AND purpose = $2 AND case_id = $3::uuid AND input_version = $4`,
+  readLatest: `SELECT tenant_id, purpose, case_id, input_version, policy_version,
+      base_snapshot_digest, captured_at, binding_policy_version, cognitive_authority,
+      cognitive_revision, cognitive_digest, cognitive_state_time,
+      cognitive_valid_until, cognitive_requires_abstention
+    FROM ros_eye_cognitive_input_snapshot_bindings
+    WHERE tenant_id = $1 AND purpose = $2 AND case_id = $3::uuid
+    ORDER BY input_version DESC LIMIT 1`,
   insert: `INSERT INTO ros_eye_cognitive_input_snapshot_bindings (
       tenant_id, purpose, case_id, input_version, policy_version,
       base_snapshot_digest, captured_at, binding_policy_version, cognitive_authority,
@@ -90,6 +97,16 @@ export class PostgresCognitiveInputSnapshotRepository {
     validateScope(scope);
     if (!positive(inputVersion)) throw new TypeError('inputVersion must be a positive integer');
     return this.readWith(connection, [scope.tenantId, scope.purpose, scope.caseId, inputVersion]);
+  }
+
+  async readLatestWithin(
+    connection: ContactSqlConnectionPort,
+    scope: InputSnapshotScope
+  ): Promise<CognitiveInputSnapshotReceipt | null> {
+    validateScope(scope);
+    const result = await connection.query(POSTGRES_COGNITIVE_INPUT_SNAPSHOT_SQL.readLatest,
+      [scope.tenantId, scope.purpose, scope.caseId]);
+    return result.rows[0] === undefined ? null : mapReceipt(result.rows[0]);
   }
 
   private async readWith(

@@ -158,7 +158,9 @@ test('Arabic command-center renders only verified governed source revisions as a
     ...item,
     sourceVersionState: {
       status: 'VERIFIED' as const, reason: 'VERIFIED', inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64),
-      caseRevision: 11, severityRevision: 12, contactRevision: null, evidenceRevision: 14, indicatorRevision: 15
+      caseRevision: 11, severityRevision: 12, contactRevision: null, evidenceRevision: 14, indicatorRevision: 15,
+      cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2' as const, cognitiveRevision: 16,
+      cognitiveDigest: 'e'.repeat(64), cognitiveRequiresAbstention: false as const
     }
   }));
   const controller = new HumanSafetyCommandCenterController(
@@ -173,6 +175,7 @@ test('Arabic command-center renders only verified governed source revisions as a
   assert.match(html, /<dt>التواصل<\/dt><dd>غير موجود<\/dd>/);
   assert.match(html, /<dt>الأدلة<\/dt><dd>14<\/dd>/);
   assert.match(html, /<dt>المؤشرات<\/dt><dd>15<\/dd>/);
+  assert.match(html, /<dt>الحالة المعرفية<\/dt><dd>16<\/dd>/);
 });
 
 test('closed case renders the governed recommendation as historical and unavailable', async () => {

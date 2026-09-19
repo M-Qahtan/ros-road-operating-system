@@ -52,6 +52,8 @@ export interface CommandCenterCaseView {
     inputVersion: number | null; sourceSnapshotDigest: string | null;
     caseRevision: number | null; severityRevision: number | null; contactRevision: number | null;
     evidenceRevision: number | null; indicatorRevision: number | null;
+    cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2' | null;
+    cognitiveRevision: number | null; cognitiveDigest: string | null; cognitiveRequiresAbstention: false | null;
   }>;
   /** Optional while older API responses remain supported. Never synthesized by the live client. */
   readonly nextEvidenceAdvice?: NextEvidenceAdvice;
