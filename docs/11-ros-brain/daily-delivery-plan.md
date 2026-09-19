@@ -556,6 +556,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A HIGH-RISK CLOSURE AUTHORIZATION CAN NO LONGER BE USED AFTER ITS COGNITIVE SOURCE RECEIPT CHANGES, AND ITS ORIGINAL HISTORY REMAINS IMMUTABLE.** |
 | Next handoff | Add this cognitive authorization binding and drift rejection to the disposable PostgreSQL journey and its next receipt, proving commit and rollback on a real engine without weakening REL-013. |
 
+### PostgreSQL cognitive-closure drift receipt
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `38cfe80bbe3590291d05ce3959625142556c192b` was seventy-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. |
+| Added behavior | The disposable PostgreSQL journey now creates an exact cognitive `v2` closure authorization, appends a newer scoped cognitive receipt, and exercises the same latest-receipt rejection predicates before any high-risk close write. Receipt `v23` is withheld unless the drift is rejected and the RoadEvent, audit, outbox, and original authorization identity remain unchanged. |
+| Local evidence | Shell syntax and the focused PostgreSQL harness contract passed. The harness has thirty-two passing assertions, including the new six-field proof-file contract and `v23` receipt binding. The live journey still exits before execution because neither Docker nor Podman is installed; therefore no PostgreSQL `v23` receipt is claimed. |
+| Safety limits | The fixture is isolated to a disposable local database and grants no collection, severity reduction, dispatch, provider call, activation, or autonomous closure authority. Human authorization remains required; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` are unchanged. A local receipt would still not satisfy REL-013 external immutable archival. |
+| Result | **THE NEXT LIVE POSTGRESQL RECEIPT IS NOW CONTRACTUALLY BLOCKED UNLESS COGNITIVE DRIFT REJECTS CLOSURE WITH A ZERO-WRITE DURABLE RESULT.** |
+| Next handoff | Run the clean `v23` journey on Docker or Podman and fix the first actual database-semantic difference before accepting the receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

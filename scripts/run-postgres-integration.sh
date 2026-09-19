@@ -118,4 +118,8 @@ if [[ -n "${ROS_POSTGRES_CONTACT_CLOSURE_RACE_PROOF_FILE:-}" ]]; then
   bash scripts/run-postgres-contact-closure-race.sh
 fi
 
+if [[ -n "${ROS_POSTGRES_COGNITIVE_CLOSURE_PROOF_FILE:-}" ]]; then
+  bash scripts/run-postgres-cognitive-closure-drift.sh
+fi
+
 echo "PostgreSQL/PostGIS integration checks passed"

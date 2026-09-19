@@ -34,6 +34,7 @@ readonly journey_manifest_sha256="$(
     scripts/run-postgres-integration.sh \
     scripts/run-postgres-closure-race.sh \
     scripts/run-postgres-contact-closure-race.sh \
+    scripts/run-postgres-cognitive-closure-drift.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -45,6 +46,7 @@ readonly postgres_password="ros-local-integration-only"
 readonly restart_proof_file="$(mktemp)"
 readonly closure_race_proof_file="$(mktemp)"
 readonly contact_closure_race_proof_file="$(mktemp)"
+readonly cognitive_closure_proof_file="$(mktemp)"
 readonly post_restart_duplicate_log="$(mktemp)"
 readonly post_restart_wrong_purpose_log="$(mktemp)"
 readonly post_restart_wrong_tenant_log="$(mktemp)"
@@ -57,6 +59,7 @@ cleanup() {
   rm -f "$restart_proof_file"
   rm -f "$closure_race_proof_file"
   rm -f "$contact_closure_race_proof_file"
+  rm -f "$cognitive_closure_proof_file"
   rm -f "$post_restart_duplicate_log"
   rm -f "$post_restart_wrong_purpose_log"
   rm -f "$post_restart_wrong_tenant_log"
@@ -105,6 +108,7 @@ export ROS_POSTGRES_RESTART_BEFORE_TEST="0011_ros_brain_journey_reconnect.sql"
 export ROS_POSTGRES_RESTART_PROOF_FILE="$restart_proof_file"
 export ROS_POSTGRES_CLOSURE_RACE_PROOF_FILE="$closure_race_proof_file"
 export ROS_POSTGRES_CONTACT_CLOSURE_RACE_PROOF_FILE="$contact_closure_race_proof_file"
+export ROS_POSTGRES_COGNITIVE_CLOSURE_PROOF_FILE="$cognitive_closure_proof_file"
 bash scripts/run-postgres-integration.sh
 
 mapfile -t restart_proof < "$restart_proof_file"
@@ -129,6 +133,17 @@ if [[ "${#contact_closure_race_proof[@]}" -ne 14 \
   || "${contact_closure_race_proof[12]}" != "DUPLICATE_RETRY" \
   || "${contact_closure_race_proof[13]}" != "REJECTED" ]]; then
   echo "PostgreSQL journey passed without exact contact/closure winners, atomic rollback, and forward retry proof" >&2
+  exit 2
+fi
+mapfile -t cognitive_closure_proof < "$cognitive_closure_proof_file"
+if [[ "${#cognitive_closure_proof[@]}" -ne 6 \
+  || "${cognitive_closure_proof[0]}" != "COGNITIVE_CLOSURE_DRIFT" \
+  || "${cognitive_closure_proof[1]}" != "REJECTED" \
+  || "${cognitive_closure_proof[2]}" != "ROAD_EVENT_AUDIT_OUTBOX" \
+  || "${cognitive_closure_proof[3]}" != "UNCHANGED" \
+  || "${cognitive_closure_proof[4]}" != "AUTHORIZATION_HISTORY" \
+  || "${cognitive_closure_proof[5]}" != "UNCHANGED" ]]; then
+  echo "Cognitive closure drift proof was incomplete or unsafe: ${cognitive_closure_proof[*]}" >&2
   exit 2
 fi
 readonly system_identifier_before_restart="${restart_proof[0]}"
@@ -756,9 +771,12 @@ ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_BEFORE="$closed_parent_outbox
 ROS_RECEIPT_CONTACT_AMBIGUITY_RECOVERY_OUTBOX_HASH_AFTER="$closed_parent_outbox_hash_after_recovery" \
 ROS_RECEIPT_CONTACT_AMBIGUITY_HUMAN_SAFETY_STATE="$closed_parent_human_safety_state" \
 ROS_RECEIPT_CONTACT_AMBIGUITY_HUMAN_SAFETY_OUTBOX_HASH="$closed_parent_outbox_hash_after_human_safety_read" \
+ROS_RECEIPT_COGNITIVE_CLOSURE_DRIFT="${cognitive_closure_proof[1]}" \
+ROS_RECEIPT_COGNITIVE_CLOSURE_WRITE_SET="${cognitive_closure_proof[3]}" \
+ROS_RECEIPT_COGNITIVE_CLOSURE_AUTHORIZATION_HISTORY="${cognitive_closure_proof[5]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v22",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v23",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -840,6 +858,12 @@ node -e '
       process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_HUMAN_SAFETY_STATE,
     contactAmbiguityHumanSafetyOutboxHash:
       process.env.ROS_RECEIPT_CONTACT_AMBIGUITY_HUMAN_SAFETY_OUTBOX_HASH,
+    cognitiveClosureDrift:
+      process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_DRIFT,
+    cognitiveClosureWriteSet:
+      process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_WRITE_SET,
+    cognitiveClosureAuthorizationHistory:
+      process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_AUTHORIZATION_HISTORY,
     result: "PASS",
     externalArchiveReceipt: null,
   };
