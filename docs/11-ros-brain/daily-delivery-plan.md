@@ -474,6 +474,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CLOSED CONTACT DELIVERY AMBIGUITY CANNOT BE FILTERED OUT OF THE OPERATOR SAFETY QUEUE OR USED TO ENABLE COMMANDS.** |
 | Next handoff | Reconcile and test the review candidate against the thirty-six newer `main` commits without merging into `main` or triggering paid evidence workflows. |
 
+### Current-main integration candidate
+
+| Field | Current record |
+|---|---|
+| Resume point | GitHub candidate `41405f004eab3c88c449f90d755f9c8b7e53b259` was sixty-three commits ahead of and thirty-six behind `main` at `cfecaae07ef9673d80054ea11bd26ee2305e69e9`, with no PR or workflow run. The worktree was clean and no overlapping execution was found. |
+| Integrated behavior | The thirty-six `main` commits are combined with the ROS Brain candidate on the review branch only. The sole shared path, `packages/contracts/src/index.ts`, retains the Brain snapshot/next-evidence exports and adds the sensor-perception, cognitive-road-state, Saudi-safety, benchmark, and assurance exports from `main`; all other `main` paths were non-overlapping. |
+| Local acceptance | TypeScript build and no-emit checks pass for all five projects. The combined tree passes 607 API, 33 dashboard, 36 mobile, and 8 domain tests, plus the new perception benchmark's eleven-case receipt and four invariant tests. Repository, runtime-composition, archive conditional-write, retention, negative-gate, and eight external-evidence policy checks pass. |
+| Safety limits | This is a review-branch integration candidate, not a `main` merge or release. It adds no activation, dispatch, collection, deployment, cloud resource, or spending authority. PostgreSQL v22 remains unexecuted without Docker or Podman, and REL-013 still requires external immutable evidence. |
+| Result | **THE ROS BRAIN CANDIDATE AND CURRENT SENSOR-AGNOSTIC MAIN BASE NOW HAVE ONE LOCALLY VERIFIED, NON-DESTRUCTIVE REVIEW TREE.** |
+| Next handoff | Bind the sensor-agnostic cognitive road-state output to an owner-versioned ROS Brain input snapshot adapter while preserving abstention, Tenant + Purpose isolation, and recommendation-only authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
