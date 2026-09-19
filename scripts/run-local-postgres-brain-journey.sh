@@ -35,6 +35,7 @@ readonly journey_manifest_sha256="$(
     scripts/run-postgres-closure-race.sh \
     scripts/run-postgres-contact-closure-race.sh \
     scripts/run-postgres-cognitive-closure-drift.sh \
+    scripts/run-postgres-cognitive-closure-recovery.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -47,6 +48,7 @@ readonly restart_proof_file="$(mktemp)"
 readonly closure_race_proof_file="$(mktemp)"
 readonly contact_closure_race_proof_file="$(mktemp)"
 readonly cognitive_closure_proof_file="$(mktemp)"
+readonly cognitive_closure_recovery_proof_file="$(mktemp)"
 readonly post_restart_duplicate_log="$(mktemp)"
 readonly post_restart_wrong_purpose_log="$(mktemp)"
 readonly post_restart_wrong_tenant_log="$(mktemp)"
@@ -60,6 +62,7 @@ cleanup() {
   rm -f "$closure_race_proof_file"
   rm -f "$contact_closure_race_proof_file"
   rm -f "$cognitive_closure_proof_file"
+  rm -f "$cognitive_closure_recovery_proof_file"
   rm -f "$post_restart_duplicate_log"
   rm -f "$post_restart_wrong_purpose_log"
   rm -f "$post_restart_wrong_tenant_log"
@@ -187,6 +190,19 @@ readonly cognitive_closure_state_after_restart="$(
 if [[ "$cognitive_closure_state_before_restart" != 'RECOVERY|2|1|1|2|2|0|0' \
   || "$cognitive_closure_state_after_restart" != "$cognitive_closure_state_before_restart" ]]; then
   echo "Cognitive closure rejection did not survive PostgreSQL restart exactly: $cognitive_closure_state_after_restart" >&2
+  exit 2
+fi
+export ROS_POSTGRES_COGNITIVE_CLOSURE_RECOVERY_PROOF_FILE="$cognitive_closure_recovery_proof_file"
+bash scripts/run-postgres-cognitive-closure-recovery.sh
+mapfile -t cognitive_closure_recovery_proof < "$cognitive_closure_recovery_proof_file"
+if [[ "${#cognitive_closure_recovery_proof[@]}" -ne 6 \
+  || "${cognitive_closure_recovery_proof[0]}" != "COGNITIVE_CLOSURE_RECOVERY" \
+  || "${cognitive_closure_recovery_proof[1]}" != "RETRY_REJECTED" \
+  || "${cognitive_closure_recovery_proof[2]}" != "ROAD_EVENT_AUDIT_OUTBOX" \
+  || "${cognitive_closure_recovery_proof[3]}" != "UNCHANGED" \
+  || "${cognitive_closure_recovery_proof[4]}" != "AUTHORIZATION_HISTORY" \
+  || "${cognitive_closure_recovery_proof[5]}" != "UNCHANGED" ]]; then
+  echo "Post-restart cognitive closure retry proof was incomplete or unsafe: ${cognitive_closure_recovery_proof[*]}" >&2
   exit 2
 fi
 readonly contact_recovery_state="$(
@@ -787,9 +803,12 @@ ROS_RECEIPT_COGNITIVE_CLOSURE_WRITE_SET="${cognitive_closure_proof[3]}" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_AUTHORIZATION_HISTORY="${cognitive_closure_proof[5]}" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_STATE_BEFORE_RESTART="$cognitive_closure_state_before_restart" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_STATE_AFTER_RESTART="$cognitive_closure_state_after_restart" \
+ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_RETRY="${cognitive_closure_recovery_proof[1]}" \
+ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_WRITE_SET="${cognitive_closure_recovery_proof[3]}" \
+ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_AUTHORIZATION_HISTORY="${cognitive_closure_recovery_proof[5]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v24",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v25",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -882,6 +901,12 @@ node -e '
       process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_STATE_BEFORE_RESTART,
     cognitiveClosureStateAfterRestart:
       process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_STATE_AFTER_RESTART,
+    cognitiveClosurePostRestartRetry:
+      process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_RETRY,
+    cognitiveClosurePostRestartWriteSet:
+      process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_WRITE_SET,
+    cognitiveClosurePostRestartAuthorizationHistory:
+      process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_AUTHORIZATION_HISTORY,
     result: "PASS",
     externalArchiveReceipt: null,
   };
