@@ -111,8 +111,8 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   ]);
 });
 
-test('authenticated closure conflict disables the stale control without an automatic retry', async () => {
-  const event: RoadEventResponse = {
+test('authenticated closure conflict requires an explicit refresh to a withheld newer revision', async () => {
+  let event: RoadEventResponse = {
     id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     status: 'RECOVERY',
     latitude: 24.72,
@@ -136,6 +136,7 @@ test('authenticated closure conflict disables the stale control without an autom
       transitionRequests += 1;
       const body = JSON.parse(String(init?.body)) as { readonly expectedVersion: number; readonly nextStatus: string };
       assert.deepEqual(body, { expectedVersion: 8, nextStatus: 'CLOSED', reason: 'اكتملت مراجعة الإغلاق' });
+      event = { ...event, version: 9, closureAuthorization: null };
       const envelope: ApiEnvelope<never> = {
         success: false,
         data: null,
@@ -168,11 +169,28 @@ test('authenticated closure conflict disables the stale control without an autom
     canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:01:00.000Z') });
   assert.match(html, /البيانات قديمة/);
   assert.match(html, /<select name="nextStatus" disabled>/);
+
+  await controller.load();
+  await controller.select(event.id);
+  assert.equal(transitionRequests, 1);
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.selected?.version, 9);
+  assert.equal(controller.state.selected?.closureAuthorization, null);
+  assert.equal(controller.canTransition(), true);
+  assert.equal(controller.canTransitionTo('CLOSED'), false);
+  const refreshedHtml = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:01:00.000Z') });
+  assert.match(refreshedHtml, new RegExp(event.id));
+  assert.match(refreshedHtml, /لا يوجد تفويض — الإغلاق غير متاح/);
+  assert.match(refreshedHtml, /<option value="CLOSED" disabled>/);
   assert.deepEqual(paths, [
     'GET /api/v1/road-events',
     `GET /api/v1/road-events/${event.id}`,
     `GET /api/v1/road-events/${event.id}/timeline`,
-    `POST /api/v1/road-events/${event.id}/transition`
+    `POST /api/v1/road-events/${event.id}/transition`,
+    'GET /api/v1/road-events',
+    `GET /api/v1/road-events/${event.id}`,
+    `GET /api/v1/road-events/${event.id}/timeline`
   ]);
 });
 

@@ -688,6 +688,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AN AUTHORIZATION-REVISION CONFLICT NOW FAILS CLOSED IN THE AUTHENTICATED OPERATOR PATH WITHOUT RETRY, INTERNAL-DATA LEAKAGE, OR A REMAINING CLOSURE CONTROL.** |
 | Next handoff | Prove that an explicit operator refresh after the 409 reads the newer revision, keeps the incident reviewable with authorization withheld, and never reuses or retries the stale closure request. |
 
+### Explicit recovery from a stale closure conflict
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `85f818ca88e7dd41ad055f3f96c4cacfc98d1a05` was eighty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | After an authenticated closure request conflicts, only an explicit operator refresh reads the newer revision. The refreshed incident remains visible at revision 9 with `closureAuthorization=null`; ordinary review transitions remain available, while `CLOSED` remains disabled. |
+| Fail-closed acceptance | The stale request is emitted exactly once and is never retried or rebound to revision 9. Refresh performs only authenticated list, detail, and timeline reads, clears the stale transport state, and cannot revive the invalidated authorization. |
+| Local evidence | The focused dashboard suite passed 35 of 35. The full workspace passed 660 API, 35 dashboard, 36 mobile, and 8 domain tests (739 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
+| Safety limits | This validates client recovery over the production HTTP gateway contract with deterministic in-process responses. It does not create a replacement authorization, close an incident, call an external service, dispatch, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **A CONFLICTED CLOSURE REQUEST CANNOT BE REPLAYED OR REVIVED: EXPLICIT REFRESH RECOVERS THE NEWER INCIDENT ONLY WITH AUTHORIZATION WITHHELD.** |
+| Next handoff | Require a new governed supervisor authorization against revision 9 and prove that only its returned revision can re-enable closure; the invalidated revision-8 authorization must remain historical and unusable. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
