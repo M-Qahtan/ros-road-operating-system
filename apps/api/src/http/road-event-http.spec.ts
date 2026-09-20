@@ -135,6 +135,126 @@ test('authenticated list keeps a journal-withheld incident visible without execu
   assert.equal(page.items[0]?.closureAuthorization, null);
 });
 
+test('HTTP conflict recovery requires a new exact-revision closure authorization', async () => {
+  const repository = new MemoryRoadEventRepository();
+  const event = new RoadEvent({
+    ...validCreateBody,
+    occurredAt: new Date(validCreateBody.occurredAt),
+    status: RoadEventStatus.Recovery,
+    version: 7,
+    severity: {
+      level: SeverityLevel.Critical, score: 95, confidence: 0.9,
+      reasonCodes: ['high_impact'], requiresHumanReview: true
+    }
+  });
+  await repository.create(event, {
+    tenantId: TENANT,
+    purpose: PURPOSE,
+    actorType: 'SYSTEM',
+    action: 'fixture.recovery_created',
+    traceId: 'trace-http-recovery-fixture',
+    eventType: 'FixtureRecoveryCreated',
+    correlationId: EVENT_ID
+  });
+  const handle = fixture(repository);
+  const supervisorHeaders = (idempotencyKey: string) => ({
+    ...actorHeaders('SUPERVISOR'),
+    'idempotency-key': idempotencyKey
+  });
+
+  const initialAuthorization = await handle(request({
+    method: 'POST',
+    path: `/api/v1/road-events/${EVENT_ID}/closure-authorization`,
+    headers: supervisorHeaders('authorize-version-7'),
+    body: {
+      expectedVersion: 7,
+      reason: 'initial scene review',
+      authorizedAt: '2026-07-25T03:10:00.000Z'
+    }
+  }));
+  assert.equal(initialAuthorization.status, 200);
+  const initialData = (initialAuthorization.body as {
+    data: { version: number; closureAuthorization: { reason: string } | null };
+  }).data;
+  assert.equal(initialData.version, 8);
+  assert.equal(initialData.closureAuthorization?.reason, 'initial scene review');
+
+  const drift = await handle(request({
+    method: 'POST',
+    path: `/api/v1/road-events/${EVENT_ID}/severity`,
+    headers: supervisorHeaders('severity-version-8'),
+    body: {
+      expectedVersion: 8,
+      assessment: {
+        level: SeverityLevel.Critical, score: 97, confidence: 0.92,
+        reasonCodes: ['new_verified_evidence'], requiresHumanReview: true
+      },
+      reason: 'new evidence invalidates prior authorization'
+    }
+  }));
+  assert.equal(drift.status, 200);
+  const driftData = (drift.body as {
+    data: { version: number; closureAuthorization: unknown };
+  }).data;
+  assert.equal(driftData.version, 9);
+  assert.equal(driftData.closureAuthorization, null);
+
+  const staleClosure = await handle(request({
+    method: 'POST',
+    path: `/api/v1/road-events/${EVENT_ID}/transition`,
+    headers: supervisorHeaders('close-stale-version-8'),
+    body: { expectedVersion: 8, nextStatus: RoadEventStatus.Closed, reason: 'stale close must fail' }
+  }));
+  assert.equal(staleClosure.status, 409);
+  const staleBody = staleClosure.body as {
+    success: boolean; data: unknown; error: { code: string } | null;
+  };
+  assert.equal(staleBody.success, false);
+  assert.equal(staleBody.data, null);
+  assert.equal(staleBody.error?.code, 'CONFLICT');
+
+  const refreshed = await handle(request({
+    method: 'GET',
+    path: `/api/v1/road-events/${EVENT_ID}`,
+    headers: actorHeaders('SUPERVISOR')
+  }));
+  assert.equal(refreshed.status, 200);
+  const refreshedData = (refreshed.body as {
+    data: { version: number; status: RoadEventStatus; closureAuthorization: unknown };
+  }).data;
+  assert.equal(refreshedData.version, 9);
+  assert.equal(refreshedData.status, RoadEventStatus.Recovery);
+  assert.equal(refreshedData.closureAuthorization, null);
+
+  const replacement = await handle(request({
+    method: 'POST',
+    path: `/api/v1/road-events/${EVENT_ID}/closure-authorization`,
+    headers: supervisorHeaders('authorize-version-9'),
+    body: {
+      expectedVersion: 9,
+      reason: 'replacement review for current revision',
+      authorizedAt: '2026-07-25T03:12:00.000Z'
+    }
+  }));
+  assert.equal(replacement.status, 200);
+  const replacementData = (replacement.body as {
+    data: { version: number; closureAuthorization: { reason: string } | null };
+  }).data;
+  assert.equal(replacementData.version, 10);
+  assert.equal(replacementData.closureAuthorization?.reason, 'replacement review for current revision');
+
+  const timelineResponse = await handle(request({
+    method: 'GET',
+    path: `/api/v1/road-events/${EVENT_ID}/timeline`,
+    headers: actorHeaders('SUPERVISOR')
+  }));
+  assert.equal(timelineResponse.status, 200);
+  const authorizationHistory = (timelineResponse.body as {
+    data: Array<{ action: string; afterState: { version?: number } | null }>;
+  }).data.filter((entry) => entry.action === 'road_event.closure_authorized');
+  assert.deepEqual(authorizationHistory.map((entry) => entry.afterState?.version), [8, 10]);
+});
+
 test('HTTP authorization, validation, conflict and not-found errors are explicit', async () => {
   const handle = fixture();
   const forbidden = await handle(request({

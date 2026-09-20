@@ -713,6 +713,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CONFLICT-INVALIDATED AUTHORIZATION REMAINS HISTORICAL AND UNUSABLE; ONLY A NEW SUPERVISOR AUTHORIZATION BOUND TO REVISION 9 RETURNS THE REVISION 10 CONTROL STATE.** |
 | Next handoff | Bind the same conflict-refresh-reauthorize sequence to the in-process API HTTP handler so the real handler, not only the dashboard fetch boundary, proves 409, withheld refresh, and exact replacement authorization envelopes. |
 
+### API-handler proof of conflict recovery and exact reauthorization
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `547d8e1ed066de159edad24ff763baa3b64db64e` was ninety-one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The in-process production RoadEvent HTTP handler now proves the recovery sequence itself: revision 8 is authorized, a governed severity update advances to revision 9 and withholds that authorization, the stale revision-8 closure returns HTTP 409, the detail read remains reviewable with `closureAuthorization=null`, and one replacement supervisor authorization bound to revision 9 returns revision 10. |
+| Fail-closed acceptance | The stale authorization cannot close or rebind the incident. Both authorization records remain append-only in the audit timeline at revisions 8 and 10, while only the replacement authorization appears on the current revision. Tenant, purpose, supervisor authority, expected-version validation, and distinct idempotency identities cross the actual HTTP handler. |
+| Local evidence | The focused RoadEvent HTTP suite passed 6 of 6. The full workspace passed 661 API, 35 dashboard, 36 mobile, and 8 domain tests (740 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
+| Safety limits | This is an in-process handler and memory-repository proof; it executes no external HTTP call, PostgreSQL engine, incident closure, dispatch, activation, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **THE REAL API HANDLER NOW FAILS A STALE CLOSURE WITH 409, RETURNS REVISION 9 WITH AUTHORIZATION WITHHELD, AND ACCEPTS ONLY A NEW REVISION-9 SUPERVISOR AUTHORIZATION TO PRODUCE REVISION 10.** |
+| Next handoff | Drive the same HTTP-handler sequence through the PostgreSQL repository adapter so the 409, withheld refresh, replacement authorization journal, and two-entry audit history are proven in one transaction-backed integration test. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
