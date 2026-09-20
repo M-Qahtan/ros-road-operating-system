@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { RoadEvent, RoadEventStatus, SeverityLevel } from '@ros/domain';
 import { RoadEventApplicationService } from '../application/road-event-application.js';
 import {
   MemoryIdempotencyAdapter,
@@ -14,8 +15,29 @@ const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
 const TENANT = 'riyadh-pilot';
 const PURPOSE = 'road-safety-response';
 
-function fixture() {
-  const repository = new MemoryRoadEventRepository();
+class JournalWithholdingRoadEventRepository extends MemoryRoadEventRepository {
+  override async list(
+    query: Parameters<MemoryRoadEventRepository['list']>[0],
+    scope: Parameters<MemoryRoadEventRepository['list']>[1]
+  ) {
+    const page = await super.list(query, scope);
+    return {
+      ...page,
+      items: page.items.map((event) => new RoadEvent({
+        id: event.id,
+        occurredAt: event.occurredAt,
+        latitude: event.latitude,
+        longitude: event.longitude,
+        status: event.status,
+        reporterActorId: event.reporterActorId,
+        severity: event.severity,
+        version: event.version
+      }))
+    };
+  }
+}
+
+function fixture(repository = new MemoryRoadEventRepository()) {
   const application = new RoadEventApplicationService(
     repository,
     new RoleMatrixAuthorizationAdapter(),
@@ -63,6 +85,54 @@ test('HTTP create and detail endpoints return stable envelopes', async () => {
   const detail = await handle(request({ method: 'GET', path: `/api/v1/road-events/${EVENT_ID}` }));
   assert.equal(detail.status, 200);
   assert.equal(((detail.body as { data: { id: string } }).data).id, EVENT_ID);
+});
+
+test('authenticated list keeps a journal-withheld incident visible without executable closure authorization', async () => {
+  const repository = new JournalWithholdingRoadEventRepository();
+  const event = new RoadEvent({
+    ...validCreateBody,
+    occurredAt: new Date(validCreateBody.occurredAt),
+    status: RoadEventStatus.Recovery,
+    version: 7,
+    severity: {
+      level: SeverityLevel.Critical, score: 95, confidence: 0.9,
+      reasonCodes: ['high_impact'], requiresHumanReview: true
+    }
+  });
+  event.authorizeClosure({
+    actorId: ACTOR_ID,
+    reason: 'scene verified safe',
+    authorizedAt: new Date('2026-07-25T03:10:00.000Z')
+  });
+  await repository.create(event, {
+    tenantId: TENANT,
+    purpose: PURPOSE,
+    actorType: 'SUPERVISOR',
+    actorId: ACTOR_ID,
+    action: 'fixture.authorization_persisted',
+    traceId: 'trace-http-fixture-001',
+    eventType: 'FixtureAuthorizationPersisted',
+    correlationId: EVENT_ID
+  });
+  assert.notEqual((await repository.findById(EVENT_ID, {
+    tenantId: TENANT,
+    purpose: PURPOSE
+  }))?.closureAuthorization, undefined);
+  const handle = fixture(repository);
+
+  const response = await handle(request({
+    method: 'GET',
+    path: '/api/v1/road-events',
+    headers: actorHeaders('OPERATOR')
+  }));
+
+  assert.equal(response.status, 200);
+  const page = (response.body as {
+    data: { items: Array<{ id: string; closureAuthorization: unknown }> };
+  }).data;
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0]?.id, EVENT_ID);
+  assert.equal(page.items[0]?.closureAuthorization, null);
 });
 
 test('HTTP authorization, validation, conflict and not-found errors are explicit', async () => {
