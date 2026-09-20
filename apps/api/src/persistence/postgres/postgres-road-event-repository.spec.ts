@@ -88,7 +88,8 @@ function row(version = 1) {
     closure_source_snapshot_digest: null,
     closure_cognitive_policy_version: null,
     closure_cognitive_revision: null,
-    closure_cognitive_digest: null
+    closure_cognitive_digest: null,
+    closure_authorization_journal_current: false
   };
 }
 
@@ -130,7 +131,8 @@ function authorizedRow() {
     closure_source_snapshot_digest: SNAPSHOT_DIGEST,
     closure_cognitive_policy_version: 'ros-eye.input-snapshot.v2',
     closure_cognitive_revision: 16,
-    closure_cognitive_digest: 'e'.repeat(64)
+    closure_cognitive_digest: 'e'.repeat(64),
+    closure_authorization_journal_current: true
   };
 }
 
@@ -505,7 +507,8 @@ test('findById restores the governed source snapshot bound to closure authorizat
       closure_source_input_version: '37',
       closure_source_snapshot_digest: 'd'.repeat(64),
       closure_cognitive_policy_version: 'ros-eye.input-snapshot.v2',
-      closure_cognitive_revision: '16', closure_cognitive_digest: 'e'.repeat(64)
+      closure_cognitive_revision: '16', closure_cognitive_digest: 'e'.repeat(64),
+      closure_authorization_journal_current: true
     }],
     rowCount: 1
   }));
@@ -517,6 +520,19 @@ test('findById restores the governed source snapshot bound to closure authorizat
     sourceSnapshotDigest: 'd'.repeat(64), cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2',
     cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64)
   });
+  assert.match(client.queries[0]!.text, /road_event_closure_authorization_journal authorization_journal/);
+  assert.match(client.queries[0]!.text, /authorization_journal\.event_version=road_events\.version/);
+});
+
+test('findById withholds closure authorization when its independent journal row is absent', async () => {
+  const client = new FakeClient(() => ({
+    rows: [{ ...authorizedRow(), closure_authorization_journal_current: false }],
+    rowCount: 1
+  }));
+
+  const restored = await new PostgresRoadEventRepository(new FakePool(client)).findById(EVENT_ID, SCOPE);
+
+  assert.equal(restored?.closureAuthorization, undefined);
 });
 
 test('closure snapshot migration enforces complete scoped binding without rewriting legacy rows', () => {

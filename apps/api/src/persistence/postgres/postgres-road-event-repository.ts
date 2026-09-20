@@ -43,6 +43,7 @@ interface RoadEventRow {
   readonly closure_cognitive_policy_version: string | null;
   readonly closure_cognitive_revision: number | string | null;
   readonly closure_cognitive_digest: string | null;
+  readonly closure_authorization_journal_current: boolean;
   readonly total_count?: number | string;
 }
 
@@ -117,7 +118,7 @@ function mapRoadEvent(row: RoadEventRow): RoadEvent {
   if (sourceSnapshot !== undefined && authorizationIncomplete) {
     throw new TypeError('closure authorization source snapshot requires a complete closure authorization');
   }
-  const closureAuthorization = authorizationIncomplete
+  const closureAuthorization = authorizationIncomplete || !row.closure_authorization_journal_current
     ? undefined
     : {
         actorId: row.closure_authorized_by,
@@ -242,7 +243,23 @@ const ROAD_EVENT_SELECT = `
     closure_source_snapshot_digest,
     closure_cognitive_policy_version,
     closure_cognitive_revision,
-    closure_cognitive_digest
+    closure_cognitive_digest,
+    EXISTS (
+      SELECT 1
+      FROM road_event_closure_authorization_journal authorization_journal
+      WHERE authorization_journal.tenant_id=road_events.tenant_id
+        AND authorization_journal.purpose=road_events.purpose
+        AND authorization_journal.case_id=road_events.id
+        AND authorization_journal.event_version=road_events.version
+        AND authorization_journal.authorized_by=road_events.closure_authorized_by
+        AND authorization_journal.authorized_at=road_events.closure_authorized_at
+        AND authorization_journal.authorization_reason=road_events.closure_authorization_reason
+        AND authorization_journal.source_input_version=road_events.closure_source_input_version
+        AND authorization_journal.source_snapshot_digest=road_events.closure_source_snapshot_digest
+        AND authorization_journal.cognitive_policy_version=road_events.closure_cognitive_policy_version
+        AND authorization_journal.cognitive_revision=road_events.closure_cognitive_revision
+        AND authorization_journal.cognitive_digest=road_events.closure_cognitive_digest
+    ) AS closure_authorization_journal_current
   FROM road_events`;
 
 const CLOSURE_SNAPSHOT_CURRENT_SQL = `

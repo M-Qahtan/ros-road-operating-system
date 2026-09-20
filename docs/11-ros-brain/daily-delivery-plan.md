@@ -592,6 +592,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **HIGH-RISK CLOSURE NOW FAILS CLOSED WHEN ITS INDEPENDENT APPEND-ONLY AUTHORIZATION RECORD IS ABSENT OR DOES NOT EXACTLY MATCH THE CURRENT GOVERNED SOURCE.** |
 | Next handoff | Run the clean `v27` journey on Docker or Podman and fix the first actual journal-gate, transaction, or restart-persistence discrepancy before accepting its receipt. |
 
+### Journal-verified closure authorization read model
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `3b04c5d5dc2bd55b98f6b801e54d6360238db2f0` was eighty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | PostgreSQL RoadEvent reads now expose a closure authorization only when an independent journal row exactly matches the current Tenant + Purpose + Case + Version, human actor, authorization time and reason, and complete v1/v2 source identity. If the row is absent or mismatched, the authorization is withheld from the application and operator read model while the underlying append-only history remains untouched. |
+| Fail-closed acceptance | An exact journal match restores the governed authorization. A missing journal row returns no authorization, so a non-closed high-risk case remains in human review instead of appearing resolved. The same scoped query is used by single-case and list reads; no caller can self-assert the journal match. |
+| Local evidence | The focused PostgreSQL repository suite passed 19 of 19 after building all workspace dependencies. The full workspace passed 656 API, 33 dashboard, 36 mobile, and 8 domain tests (733 total). Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live PostgreSQL journey remains unclaimed without Docker or Podman. |
+| Safety limits | This is visibility hardening only. It neither creates authorization nor closes an incident, and grants no collection, severity reduction, dispatch, provider call, activation, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **AN AUTHORIZATION STORED ONLY ON THE ROAD EVENT CAN NO LONGER APPEAR ACTIONABLE TO OPERATORS WITHOUT ITS EXACT INDEPENDENT APPEND-ONLY JOURNAL RECORD.** |
+| Next handoff | Add the journal-match disposition to the disposable PostgreSQL operator-read journey and require it to remain withheld after restart when the journal row is absent or mismatched. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
