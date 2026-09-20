@@ -60,6 +60,21 @@ BEGIN
         AND cognitive_exact.cognitive_digest=event.closure_cognitive_digest
         AND cognitive_exact.cognitive_requires_abstention=false
     )
+    AND EXISTS (
+      SELECT 1 FROM road_event_closure_authorization_journal authorization_journal
+      WHERE authorization_journal.tenant_id=event.tenant_id
+        AND authorization_journal.purpose=event.purpose
+        AND authorization_journal.case_id=event.id
+        AND authorization_journal.event_version=event.version
+        AND authorization_journal.authorized_by=event.closure_authorized_by
+        AND authorization_journal.authorized_at=event.closure_authorized_at
+        AND authorization_journal.authorization_reason=event.closure_authorization_reason
+        AND authorization_journal.source_input_version=event.closure_source_input_version
+        AND authorization_journal.source_snapshot_digest=event.closure_source_snapshot_digest
+        AND authorization_journal.cognitive_policy_version=event.closure_cognitive_policy_version
+        AND authorization_journal.cognitive_revision=event.closure_cognitive_revision
+        AND authorization_journal.cognitive_digest=event.closure_cognitive_digest
+    )
     AND COALESCE((
       SELECT cognitive_latest.input_version=event.closure_source_input_version
         AND cognitive_latest.policy_version=event.closure_cognitive_policy_version

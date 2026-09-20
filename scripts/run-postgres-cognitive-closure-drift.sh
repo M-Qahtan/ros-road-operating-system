@@ -235,6 +235,19 @@ BEGIN
           AND cognitive_exact.cognitive_digest=repeat('6', 64)
           AND cognitive_exact.cognitive_requires_abstention=false
       )
+      AND EXISTS (
+        SELECT 1 FROM road_event_closure_authorization_journal authorization_journal
+        WHERE authorization_journal.tenant_id=s.tenant_id
+          AND authorization_journal.purpose=s.purpose
+          AND authorization_journal.case_id=s.case_id
+          AND authorization_journal.event_version=2
+          AND authorization_journal.authorized_by='20000000-0000-4000-8000-000000000007'
+          AND authorization_journal.source_input_version=s.input_version
+          AND authorization_journal.source_snapshot_digest=s.snapshot_digest
+          AND authorization_journal.cognitive_policy_version='ros-eye.input-snapshot.v2'
+          AND authorization_journal.cognitive_revision=1
+          AND authorization_journal.cognitive_digest=repeat('6', 64)
+      )
       AND COALESCE((
         SELECT cognitive_latest.cognitive_revision=1
           AND cognitive_latest.cognitive_digest=repeat('6', 64)

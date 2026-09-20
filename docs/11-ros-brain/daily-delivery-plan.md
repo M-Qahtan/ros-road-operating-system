@@ -580,6 +580,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE NEXT LIVE RECEIPT IS BLOCKED UNLESS POSTGRESQL ENFORCES THE JOURNAL'S APPEND-ONLY TRIGGER AND PRESERVES THE EXACT SOURCE-BOUND ROW ACROSS RESTART.** |
 | Next handoff | Run the clean `v26` journey on Docker or Podman and fix the first actual migration, trigger, or restart-persistence discrepancy before accepting its receipt. |
 
+### Journal-bound high-risk closure gate
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `f497731cd5c9ff1fb6d85052689fa31795bfdee0` was seventy-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. The approved cadence remains hourly. |
+| Added behavior | The serializable high-risk closure check now requires the exact independent authorization-journal row as well as the RoadEvent authorization fields, governed v1 snapshot, and current non-abstaining cognitive v2 receipt. The journal match covers Tenant + Purpose + Case + authorized event version, human actor, authorization time and reason, and the exact v1/v2 source identity. A missing or mismatched journal rejects closure before RoadEvent, audit, or outbox writes. |
+| Journey contract | Both the pre-restart drift attempt and the post-restart retry consume the exact journal row in their closure gates. Receipt `ros-brain.local-postgres-journey-receipt.v27` is withheld unless those rejection and unchanged-write-set proofs succeed. |
+| Local evidence | The focused PostgreSQL repository and harness contract passed 52 of 52. The full workspace passed 655 API, 33 dashboard, 36 mobile, and 8 domain tests (732 total). Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live journey exited 127 before execution because neither Docker nor Podman is installed; therefore no PostgreSQL `v27` receipt is claimed. |
+| Safety limits | The journal is evidence of prior explicit human authorization, not a source of authority. The change grants no collection, severity reduction, dispatch, provider call, activation, or autonomous closure; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **HIGH-RISK CLOSURE NOW FAILS CLOSED WHEN ITS INDEPENDENT APPEND-ONLY AUTHORIZATION RECORD IS ABSENT OR DOES NOT EXACTLY MATCH THE CURRENT GOVERNED SOURCE.** |
+| Next handoff | Run the clean `v27` journey on Docker or Podman and fix the first actual journal-gate, transaction, or restart-persistence discrepancy before accepting its receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

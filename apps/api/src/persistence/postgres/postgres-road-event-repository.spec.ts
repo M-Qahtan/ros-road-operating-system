@@ -370,8 +370,35 @@ test('high-risk closure validates the persisted snapshot inside a serializable u
   assert.ok(verificationIndex > 0 && updateIndex > verificationIndex);
   assert.match(client.queries[verificationIndex]!.text, /cognitive_latest\.cognitive_revision=\$7/);
   assert.match(client.queries[verificationIndex]!.text, /cognitive_latest\.cognitive_digest=\$8/);
-  assert.deepEqual(client.queries[verificationIndex]!.values.slice(-2), [16, 'e'.repeat(64)]);
+  assert.match(client.queries[verificationIndex]!.text, /FROM road_event_closure_authorization_journal authorization_journal/);
+  assert.match(client.queries[verificationIndex]!.text, /authorization_journal\.event_version=\$9/);
+  assert.deepEqual(client.queries[verificationIndex]!.values.slice(-6), [
+    16, 'e'.repeat(64), 2, ACTOR_ID,
+    new Date('2026-07-25T03:00:00.000Z'), 'verified current source snapshot'
+  ]);
   assert.equal(client.queries.at(-1)?.text, 'COMMIT');
+});
+
+test('missing independent authorization journal rejects high-risk closure before durable writes', async () => {
+  const client = new FakeClient((text) => {
+    if (text.includes('FROM road_events') && text.includes('FOR UPDATE')) return { rows: [authorizedRow()], rowCount: 1 };
+    if (text.includes('closure_snapshot_current')) return { rows: [{ closure_snapshot_current: false }], rowCount: 1 };
+    return { rows: [], rowCount: 1 };
+  });
+  const closed = authorizedRecovery();
+  closed.transitionTo(RoadEventStatus.Closed);
+
+  await assert.rejects(
+    () => new PostgresRoadEventRepository(new FakePool(client)).update(closed, 2, context),
+    RoadEventClosureSourceSnapshotChangedError
+  );
+
+  const verification = client.queries.find((query) => query.text.includes('closure_snapshot_current'));
+  assert.match(verification!.text, /road_event_closure_authorization_journal/);
+  assert.equal(client.queries.some((query) => query.text.includes('UPDATE road_events')), false);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO audit_logs')), false);
+  assert.equal(client.queries.some((query) => query.text.includes('INSERT INTO outbox_events')), false);
+  assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
 });
 
 test('source drift rejects high-risk closure before event audit or outbox writes', async () => {

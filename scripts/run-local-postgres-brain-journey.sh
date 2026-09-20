@@ -820,7 +820,7 @@ ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_WRITE_SET="${cognitive_closure_recovery_p
 ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_AUTHORIZATION_HISTORY="${cognitive_closure_recovery_proof[5]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v26",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v27",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,

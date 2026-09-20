@@ -296,6 +296,21 @@ const CLOSURE_SNAPSHOT_CURRENT_SQL = `
         AND cognitive_exact.cognitive_revision=$7 AND cognitive_exact.cognitive_digest=$8
         AND cognitive_exact.cognitive_requires_abstention=false
     )
+    AND EXISTS (
+      SELECT 1 FROM road_event_closure_authorization_journal authorization_journal
+      WHERE authorization_journal.tenant_id=s.tenant_id
+        AND authorization_journal.purpose=s.purpose
+        AND authorization_journal.case_id=s.case_id
+        AND authorization_journal.event_version=$9
+        AND authorization_journal.authorized_by=$10::uuid
+        AND authorization_journal.authorized_at=$11
+        AND authorization_journal.authorization_reason=$12
+        AND authorization_journal.source_input_version=s.input_version
+        AND authorization_journal.source_snapshot_digest=s.snapshot_digest
+        AND authorization_journal.cognitive_policy_version='ros-eye.input-snapshot.v2'
+        AND authorization_journal.cognitive_revision=$7
+        AND authorization_journal.cognitive_digest=$8
+    )
     AND COALESCE((
       SELECT cognitive_latest.cognitive_revision=$7 AND cognitive_latest.cognitive_digest=$8
         AND cognitive_latest.cognitive_requires_abstention=false
@@ -421,7 +436,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         const verification = await client.query<ClosureSnapshotVerificationRow>(CLOSURE_SNAPSHOT_CURRENT_SQL, [
           scope.tenantId, scope.purpose, event.id, closureSnapshot.inputVersion,
           closureSnapshot.sourceSnapshotDigest, roadEventRevisionDigest(before, scope, 'CASE'),
-          closureSnapshot.cognitiveRevision, closureSnapshot.cognitiveDigest
+          closureSnapshot.cognitiveRevision, closureSnapshot.cognitiveDigest,
+          before.version, before.closureAuthorization!.actorId,
+          before.closureAuthorization!.authorizedAt, before.closureAuthorization!.reason
         ]);
         if (verification.rowCount !== 1 || verification.rows[0]?.closure_snapshot_current !== true) {
           throw new RoadEventClosureSourceSnapshotChangedError('Closure source snapshot is no longer current');
