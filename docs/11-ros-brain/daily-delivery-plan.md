@@ -604,6 +604,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AN AUTHORIZATION STORED ONLY ON THE ROAD EVENT CAN NO LONGER APPEAR ACTIONABLE TO OPERATORS WITHOUT ITS EXACT INDEPENDENT APPEND-ONLY JOURNAL RECORD.** |
 | Next handoff | Add the journal-match disposition to the disposable PostgreSQL operator-read journey and require it to remain withheld after restart when the journal row is absent or mismatched. |
 
+### Post-restart closure-authorization read proof
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `7aeef1686f8c989e6fe680175e51289872d0ec3a` was eighty-one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The disposable PostgreSQL journey now evaluates the exact operator-read journal match after the database restart. It requires the intact event and journal to produce `AUTHORIZED`, temporarily changes the RoadEvent authorization reason inside a savepoint, requires that mismatch to produce `WITHHELD`, rolls the savepoint back, and requires `AUTHORIZED` to be restored. |
+| Atomic acceptance | The proof hashes the RoadEvent and independent journal and counts RoadEvent audit and outbox rows before the mismatch. Receipt `ros-brain.local-postgres-journey-receipt.v28` is withheld unless rollback restores the exact event and the event, audit, outbox, and journal write-set remains unchanged. The journey manifest now binds the new proof script. |
+| Local evidence | The focused PostgreSQL harness contract passed 35 of 35. The full workspace passed 657 API, 33 dashboard, 36 mobile, and 8 domain tests (734 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. The live journey remains unclaimed until Docker or Podman is available. |
+| Safety limits | This proves a read-time visibility boundary only; it does not create authorization, close an incident, collect data, change severity, dispatch, call a provider, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. A local receipt would not satisfy REL-013 external immutable archival. |
+| Result | **THE NEXT LIVE RECEIPT IS BLOCKED UNLESS A POST-RESTART JOURNAL MISMATCH IS WITHHELD AND ITS ROLLBACK LEAVES NO DURABLE WRITE.** |
+| Next handoff | Run the clean `v28` journey on Docker or Podman and fix the first actual mismatch-disposition, rollback, or restart-persistence discrepancy before accepting its receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
