@@ -86,6 +86,51 @@ SET closure_authorized_by='20000000-0000-4000-8000-000000000007',
 WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
   AND id='10000000-0000-4000-8000-000000000007';
 
+INSERT INTO road_event_closure_authorization_journal (
+  tenant_id, purpose, case_id, event_version,
+  authorized_by, authorized_at, authorization_reason,
+  source_input_version, source_snapshot_digest,
+  cognitive_policy_version, cognitive_revision, cognitive_digest,
+  recorded_at
+) VALUES (
+  'riyadh-pilot', 'road-safety-response', '10000000-0000-4000-8000-000000000007', 2,
+  '20000000-0000-4000-8000-000000000007', '2026-09-19T20:00:20Z',
+  'Supervisor reviewed exact cognitive source receipt',
+  1, repeat('1', 64), 'ros-eye.input-snapshot.v2', 1, repeat('6', 64),
+  '2026-09-19T20:00:20Z'
+);
+
+DO $$
+DECLARE
+  mutation_message text;
+BEGIN
+  BEGIN
+    UPDATE road_event_closure_authorization_journal
+    SET authorization_reason='forbidden rewrite'
+    WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
+      AND case_id='10000000-0000-4000-8000-000000000007' AND event_version=2;
+    RAISE EXCEPTION 'Closure authorization journal update unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    GET STACKED DIAGNOSTICS mutation_message = MESSAGE_TEXT;
+    IF mutation_message <> 'RoadEvent closure authorization journal is append-only' THEN
+      RAISE;
+    END IF;
+  END;
+
+  BEGIN
+    DELETE FROM road_event_closure_authorization_journal
+    WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
+      AND case_id='10000000-0000-4000-8000-000000000007' AND event_version=2;
+    RAISE EXCEPTION 'Closure authorization journal delete unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    GET STACKED DIAGNOSTICS mutation_message = MESSAGE_TEXT;
+    IF mutation_message <> 'RoadEvent closure authorization journal is append-only' THEN
+      RAISE;
+    END IF;
+  END;
+END;
+$$;
+
 -- The authorization above remains immutable history. These append-only rows model
 -- a later owner-ledger state that must invalidate its use without rewriting it.
 INSERT INTO ros_eye_safety_fusion_input_snapshots (
@@ -303,5 +348,13 @@ SELECT unnest(ARRAY[
    ) latest ON true
    WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response'
      AND event.id='10000000-0000-4000-8000-000000000007')
+  , 'CLOSURE_AUTHORIZATION_JOURNAL', 'UPDATE_DELETE_REJECTED',
+  'CLOSURE_AUTHORIZATION_JOURNAL_STATE',
+  (SELECT count(*)::text || '|' || min(event_version)::text || '|' ||
+    min(source_input_version)::text || '|' || min(source_snapshot_digest) || '|' ||
+    min(cognitive_revision)::text || '|' || min(cognitive_digest)
+   FROM road_event_closure_authorization_journal
+   WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response'
+     AND case_id='10000000-0000-4000-8000-000000000007')
 ]);
 SQL

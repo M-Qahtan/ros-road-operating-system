@@ -139,7 +139,7 @@ if [[ "${#contact_closure_race_proof[@]}" -ne 14 \
   exit 2
 fi
 mapfile -t cognitive_closure_proof < "$cognitive_closure_proof_file"
-if [[ "${#cognitive_closure_proof[@]}" -ne 8 \
+if [[ "${#cognitive_closure_proof[@]}" -ne 12 \
   || "${cognitive_closure_proof[0]}" != "COGNITIVE_CLOSURE_DRIFT" \
   || "${cognitive_closure_proof[1]}" != "REJECTED" \
   || "${cognitive_closure_proof[2]}" != "ROAD_EVENT_AUDIT_OUTBOX" \
@@ -147,7 +147,11 @@ if [[ "${#cognitive_closure_proof[@]}" -ne 8 \
   || "${cognitive_closure_proof[4]}" != "AUTHORIZATION_HISTORY" \
   || "${cognitive_closure_proof[5]}" != "UNCHANGED" \
   || "${cognitive_closure_proof[6]}" != "COGNITIVE_CLOSURE_STATE" \
-  || "${cognitive_closure_proof[7]}" != "RECOVERY|2|1|1|2|2|0|0" ]]; then
+  || "${cognitive_closure_proof[7]}" != "RECOVERY|2|1|1|2|2|0|0" \
+  || "${cognitive_closure_proof[8]}" != "CLOSURE_AUTHORIZATION_JOURNAL" \
+  || "${cognitive_closure_proof[9]}" != "UPDATE_DELETE_REJECTED" \
+  || "${cognitive_closure_proof[10]}" != "CLOSURE_AUTHORIZATION_JOURNAL_STATE" \
+  || "${cognitive_closure_proof[11]}" != "1|2|1|$(printf '1%.0s' {1..64})|1|$(printf '6%.0s' {1..64})" ]]; then
   echo "Cognitive closure drift proof was incomplete or unsafe: ${cognitive_closure_proof[*]}" >&2
   exit 2
 fi
@@ -184,11 +188,16 @@ readonly contact_recovery_postmaster_started_at_before_restart="${contact_recove
 readonly contact_recovery_system_identifier_after_restart="${contact_recovery_identity_after_restart%%|*}"
 readonly contact_recovery_postmaster_started_at_after_restart="${contact_recovery_identity_after_restart#*|}"
 readonly cognitive_closure_state_before_restart="${cognitive_closure_proof[7]}"
+readonly closure_authorization_journal_state_before_restart="${cognitive_closure_proof[11]}"
 readonly cognitive_closure_state_after_restart="$(
   psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || event.closure_source_input_version::text || '|' || event.closure_cognitive_revision::text || '|' || latest.input_version::text || '|' || latest.cognitive_revision::text || '|' || (SELECT count(*)::text FROM audit_logs audit WHERE audit.resource_type='RoadEvent' AND audit.resource_id=event.id) || '|' || (SELECT count(*)::text FROM outbox_events outbox WHERE outbox.aggregate_type='RoadEvent' AND outbox.aggregate_id=event.id) FROM road_events event JOIN LATERAL (SELECT cognitive.input_version, cognitive.cognitive_revision FROM ros_eye_cognitive_input_snapshot_bindings cognitive WHERE cognitive.tenant_id=event.tenant_id AND cognitive.purpose=event.purpose AND cognitive.case_id=event.id ORDER BY cognitive.input_version DESC LIMIT 1) latest ON true WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response' AND event.id='10000000-0000-4000-8000-000000000007'"
 )"
+readonly closure_authorization_journal_state_after_restart="$(
+  psql "$DATABASE_URL" -Atqc "SELECT count(*)::text || '|' || min(event_version)::text || '|' || min(source_input_version)::text || '|' || min(source_snapshot_digest) || '|' || min(cognitive_revision)::text || '|' || min(cognitive_digest) FROM road_event_closure_authorization_journal WHERE tenant_id='riyadh-pilot' AND purpose='road-safety-response' AND case_id='10000000-0000-4000-8000-000000000007'"
+)"
 if [[ "$cognitive_closure_state_before_restart" != 'RECOVERY|2|1|1|2|2|0|0' \
-  || "$cognitive_closure_state_after_restart" != "$cognitive_closure_state_before_restart" ]]; then
+  || "$cognitive_closure_state_after_restart" != "$cognitive_closure_state_before_restart" \
+  || "$closure_authorization_journal_state_after_restart" != "$closure_authorization_journal_state_before_restart" ]]; then
   echo "Cognitive closure rejection did not survive PostgreSQL restart exactly: $cognitive_closure_state_after_restart" >&2
   exit 2
 fi
@@ -803,12 +812,15 @@ ROS_RECEIPT_COGNITIVE_CLOSURE_WRITE_SET="${cognitive_closure_proof[3]}" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_AUTHORIZATION_HISTORY="${cognitive_closure_proof[5]}" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_STATE_BEFORE_RESTART="$cognitive_closure_state_before_restart" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_STATE_AFTER_RESTART="$cognitive_closure_state_after_restart" \
+ROS_RECEIPT_CLOSURE_AUTHORIZATION_JOURNAL_MUTATION="${cognitive_closure_proof[9]}" \
+ROS_RECEIPT_CLOSURE_AUTHORIZATION_JOURNAL_STATE_BEFORE_RESTART="$closure_authorization_journal_state_before_restart" \
+ROS_RECEIPT_CLOSURE_AUTHORIZATION_JOURNAL_STATE_AFTER_RESTART="$closure_authorization_journal_state_after_restart" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_RETRY="${cognitive_closure_recovery_proof[1]}" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_WRITE_SET="${cognitive_closure_recovery_proof[3]}" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_AUTHORIZATION_HISTORY="${cognitive_closure_recovery_proof[5]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v25",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v26",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -901,6 +913,12 @@ node -e '
       process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_STATE_BEFORE_RESTART,
     cognitiveClosureStateAfterRestart:
       process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_STATE_AFTER_RESTART,
+    closureAuthorizationJournalMutation:
+      process.env.ROS_RECEIPT_CLOSURE_AUTHORIZATION_JOURNAL_MUTATION,
+    closureAuthorizationJournalStateBeforeRestart:
+      process.env.ROS_RECEIPT_CLOSURE_AUTHORIZATION_JOURNAL_STATE_BEFORE_RESTART,
+    closureAuthorizationJournalStateAfterRestart:
+      process.env.ROS_RECEIPT_CLOSURE_AUTHORIZATION_JOURNAL_STATE_AFTER_RESTART,
     cognitiveClosurePostRestartRetry:
       process.env.ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_RETRY,
     cognitiveClosurePostRestartWriteSet:

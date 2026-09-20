@@ -568,6 +568,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A NEW HIGH-RISK CLOSURE AUTHORIZATION CANNOT BE PERSISTED WITHOUT AN INDEPENDENT, SCOPE-BOUND, SOURCE-BOUND, APPEND-ONLY HISTORY ROW IN THE SAME TRANSACTION.** |
 | Next handoff | Add journal persistence, mutation rejection, and post-restart recovery to the disposable PostgreSQL journey and its next receipt, proving the exact behavior on a live engine. |
 
+### PostgreSQL closure-authorization journal receipt
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `65cffc695fd4645e926f993eb155902f0772dc68` was seventy-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. The approved cadence remains hourly. |
+| Added behavior | The disposable cognitive-closure journey now writes the exact scoped v1/v2-bound human authorization into `road_event_closure_authorization_journal`. It then attempts both UPDATE and DELETE, accepts only the migration trigger's append-only rejection, records the exact row identity, restarts PostgreSQL, and requires the same identity to remain singular and unchanged. |
+| Receipt boundary | Receipt `ros-brain.local-postgres-journey-receipt.v26` is withheld unless mutation rejection, pre-restart state, and post-restart state are all present and exact. The manifest digest includes the migration and journey scripts, while `externalArchiveReceipt` remains null. |
+| Local evidence | The focused repository and PostgreSQL harness contract passed 51 of 51. The full workspace passed 654 API, 33 dashboard, 36 mobile, and 8 domain tests (731 total). Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live journey exited 127 before execution because neither Docker nor Podman is installed; therefore no PostgreSQL `v26` receipt is claimed. |
+| Safety limits | The fixture stores and reads human authorization provenance only. It grants no collection, severity reduction, dispatch, provider call, activation, or autonomous closure authority; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. A local receipt would not satisfy REL-013 external immutable archival. |
+| Result | **THE NEXT LIVE RECEIPT IS BLOCKED UNLESS POSTGRESQL ENFORCES THE JOURNAL'S APPEND-ONLY TRIGGER AND PRESERVES THE EXACT SOURCE-BOUND ROW ACROSS RESTART.** |
+| Next handoff | Run the clean `v26` journey on Docker or Podman and fix the first actual migration, trigger, or restart-persistence discrepancy before accepting its receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
