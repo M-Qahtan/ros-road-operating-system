@@ -700,6 +700,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CONFLICTED CLOSURE REQUEST CANNOT BE REPLAYED OR REVIVED: EXPLICIT REFRESH RECOVERS THE NEWER INCIDENT ONLY WITH AUTHORIZATION WITHHELD.** |
 | Next handoff | Require a new governed supervisor authorization against revision 9 and prove that only its returned revision can re-enable closure; the invalidated revision-8 authorization must remain historical and unusable. |
 
+### Revision-bound reauthorization after conflict recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `2999db2a1128e7feec9be28e70ac9b3714f32356` was ninety commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | After refresh exposes revision 9 with authorization withheld, the authenticated dashboard can re-enable closure only by issuing a new supervisor authorization with `expectedVersion=9`. The returned revision 10 carries the replacement authorization; the invalidated revision-8 authorization remains visible only as historical audit evidence. |
+| Fail-closed acceptance | The conflicted closure request remains singular and is never retried. The replacement request is singular and exactly revision-bound; closure stays disabled throughout revision 9 and becomes available only from the trusted revision-10 response. The earlier authorization cannot be rebound or reused. |
+| Test-gate repair | The Domain package no longer relies on a shell-dependent recursive glob that could report success with zero tests. It now uses the repository test-file runner and executes all eight RoadEvent safety tests on a clean workspace. |
+| Local evidence | The focused dashboard suite passed 35 of 35. The full workspace passed 660 API, 35 dashboard, 36 mobile, and 8 domain tests (739 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
+| Safety limits | This validates the browser/controller boundary against the production HTTP gateway contract using deterministic in-process responses. It does not close an incident, call an external service, dispatch, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **A CONFLICT-INVALIDATED AUTHORIZATION REMAINS HISTORICAL AND UNUSABLE; ONLY A NEW SUPERVISOR AUTHORIZATION BOUND TO REVISION 9 RETURNS THE REVISION 10 CONTROL STATE.** |
+| Next handoff | Bind the same conflict-refresh-reauthorize sequence to the in-process API HTTP handler so the real handler, not only the dashboard fetch boundary, proves 409, withheld refresh, and exact replacement authorization envelopes. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

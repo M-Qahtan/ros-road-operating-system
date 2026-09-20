@@ -126,8 +126,19 @@ test('authenticated closure conflict requires an explicit refresh to a withheld 
     },
     severity: { level: 'S4', score: 96, confidence: 0.95, reasonCodes: ['life_threat'], requiresHumanReview: true }
   };
+  const timeline: AuditTimelineEntryContract[] = [{
+    action: 'road_event.closure_authorized',
+    actorType: 'SUPERVISOR',
+    actorId,
+    beforeState: null,
+    afterState: { version: 8 },
+    reason: 'تحقق المشرف من سلامة الموقع',
+    traceId: 'trace-invalidated-authorization',
+    occurredAt: '2026-08-20T10:00:00.000Z'
+  }];
   const paths: string[] = [];
   let transitionRequests = 0;
+  let authorizationRequests = 0;
   const fetcher: typeof fetch = async (input, init) => {
     assertTrustedRequest(init);
     const target = new URL(String(input), 'https://dashboard.example.test');
@@ -145,7 +156,36 @@ test('authenticated closure conflict requires an explicit refresh to a withheld 
       };
       return new Response(JSON.stringify(envelope), { status: 409, headers: { 'content-type': 'application/json' } });
     }
-    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname.endsWith('/closure-authorization')) {
+      authorizationRequests += 1;
+      const body = JSON.parse(String(init?.body)) as {
+        readonly expectedVersion: number;
+        readonly reason: string;
+        readonly authorizedAt: string;
+      };
+      assert.deepEqual(body, {
+        expectedVersion: 9,
+        reason: 'إعادة تفويض بعد مراجعة الإصدار الجديد',
+        authorizedAt: '2026-08-20T10:01:00.000Z'
+      });
+      event = {
+        ...event,
+        version: 10,
+        closureAuthorization: { actorId, reason: body.reason, authorizedAt: body.authorizedAt }
+      };
+      timeline.push({
+        action: 'road_event.closure_authorized',
+        actorType: 'SUPERVISOR',
+        actorId,
+        beforeState: { version: 9 },
+        afterState: { version: 10 },
+        reason: body.reason,
+        traceId: 'trace-replacement-authorization',
+        occurredAt: body.authorizedAt
+      });
+      return ok(event);
+    }
+    if (target.pathname.endsWith('/timeline')) return ok(timeline);
     if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
     return ok({ items: [event], total: 1, limit: 100, offset: 0 });
   };
@@ -183,6 +223,24 @@ test('authenticated closure conflict requires an explicit refresh to a withheld 
   assert.match(refreshedHtml, new RegExp(event.id));
   assert.match(refreshedHtml, /لا يوجد تفويض — الإغلاق غير متاح/);
   assert.match(refreshedHtml, /<option value="CLOSED" disabled>/);
+  assert.match(refreshedHtml, /تحقق المشرف من سلامة الموقع/);
+
+  await controller.authorizeClosure('إعادة تفويض بعد مراجعة الإصدار الجديد');
+  assert.equal(authorizationRequests, 1);
+  assert.equal(transitionRequests, 1);
+  assert.equal(controller.state.selected?.version, 10);
+  assert.deepEqual(controller.state.selected?.closureAuthorization, {
+    actorId,
+    reason: 'إعادة تفويض بعد مراجعة الإصدار الجديد',
+    authorizedAt: '2026-08-20T10:01:00.000Z'
+  });
+  assert.equal(controller.state.timeline.length, 2);
+  assert.equal(controller.canTransitionTo('CLOSED'), true);
+  const reauthorizedHtml = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:01:00.000Z') });
+  assert.doesNotMatch(reauthorizedHtml, /<option value="CLOSED" disabled>/);
+  assert.match(reauthorizedHtml, /تحقق المشرف من سلامة الموقع/);
+  assert.match(reauthorizedHtml, /إعادة تفويض بعد مراجعة الإصدار الجديد/);
   assert.deepEqual(paths, [
     'GET /api/v1/road-events',
     `GET /api/v1/road-events/${event.id}`,
@@ -190,6 +248,8 @@ test('authenticated closure conflict requires an explicit refresh to a withheld 
     `POST /api/v1/road-events/${event.id}/transition`,
     'GET /api/v1/road-events',
     `GET /api/v1/road-events/${event.id}`,
+    `GET /api/v1/road-events/${event.id}/timeline`,
+    `POST /api/v1/road-events/${event.id}/closure-authorization`,
     `GET /api/v1/road-events/${event.id}/timeline`
   ]);
 });
