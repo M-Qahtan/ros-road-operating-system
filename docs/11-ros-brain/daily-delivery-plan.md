@@ -628,6 +628,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **BOTH MISSING AND MISMATCHED INDEPENDENT JOURNAL EVIDENCE ARE NOW REQUIRED TO REMAIN NON-ACTIONABLE IN THE NEXT POST-RESTART RECEIPT.** |
 | Next handoff | Run the clean `v29` journey on Docker or Podman and fix the first actual missing-journal, mismatch, rollback, or restart-persistence discrepancy before accepting its receipt. |
 
+### Journal verification across the operator queue
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `3b8930f39a8be3de89a609fcbc090171913116c6` was eighty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The PostgreSQL list path that feeds the operator queue is now directly covered with matched and missing-journal rows in one page. It preserves an authorization only for the exact journal match and withholds the other row without hiding the incident itself or changing pagination. |
+| Fail-closed acceptance | The list query must perform the same Tenant + Purpose + Case + Version journal check as the single-case read. One unsafe row cannot inherit another row's match, and the withheld incident remains visible for human review. |
+| Local evidence | The focused PostgreSQL repository suite passed 20 of 20. The full workspace passed 659 API, 33 dashboard, 36 mobile, and 8 domain tests (736 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build dependencies were regenerated before the focused test. |
+| Safety limits | This adds queue-path regression evidence and no execution authority. It does not collect data, change severity, close an incident, dispatch, call a provider, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **A MISSING JOURNAL ROW CAN NO LONGER BE REGRESSED INTO AN ACTIONABLE CLOSURE AUTHORIZATION THROUGH THE PAGINATED OPERATOR LIST PATH.** |
+| Next handoff | Carry the same withheld disposition through the authenticated RoadEvent HTTP list response and prove that operator clients receive the incident without executable closure authorization. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

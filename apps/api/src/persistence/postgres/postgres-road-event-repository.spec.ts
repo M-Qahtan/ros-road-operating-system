@@ -591,3 +591,26 @@ test('list scopes in SQL before filters, pagination and total count', async () =
   assert.match(client.queries[0]!.text, /severity = ANY\(\$4::severity_level\[\]\)/);
   assert.match(client.queries[0]!.text, /COUNT\(\*\) OVER\(\) AS total_count/);
 });
+
+test('list withholds only closure authorizations missing their exact independent journal row', async () => {
+  const matchingId = '55555555-5555-4555-8555-555555555555';
+  const client = new FakeClient(() => ({
+    rows: [
+      { ...authorizedRow(), total_count: '2' },
+      { ...authorizedRow(), id: matchingId, closure_authorization_journal_current: false, total_count: '2' }
+    ],
+    rowCount: 2
+  }));
+
+  const page = await new PostgresRoadEventRepository(new FakePool(client)).list({
+    limit: 10,
+    offset: 0
+  }, SCOPE);
+
+  assert.equal(page.total, 2);
+  assert.equal(page.items[0]?.closureAuthorization?.actorId, ACTOR_ID);
+  assert.equal(page.items[1]?.id, matchingId);
+  assert.equal(page.items[1]?.closureAuthorization, undefined);
+  assert.match(client.queries[0]!.text, /road_event_closure_authorization_journal authorization_journal/);
+  assert.match(client.queries[0]!.text, /authorization_journal\.event_version=road_events\.version/);
+});
