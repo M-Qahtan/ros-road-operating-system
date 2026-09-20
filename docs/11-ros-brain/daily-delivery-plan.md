@@ -616,6 +616,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE NEXT LIVE RECEIPT IS BLOCKED UNLESS A POST-RESTART JOURNAL MISMATCH IS WITHHELD AND ITS ROLLBACK LEAVES NO DURABLE WRITE.** |
 | Next handoff | Run the clean `v28` journey on Docker or Podman and fix the first actual mismatch-disposition, rollback, or restart-persistence discrepancy before accepting its receipt. |
 
+### Missing-journal closure-authorization read proof
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `525481f3699972e04c964066f01556e89ae9c80f` was eighty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The post-restart operator-read proof now creates a transaction-scoped legacy RoadEvent carrying human authorization fields but no independent journal row. The read disposition must be `WITHHELD`, then the savepoint is rolled back before the existing mismatch and restoration checks continue. |
+| Fail-closed acceptance | Receipt `ros-brain.local-postgres-journey-receipt.v29` is withheld unless exact journal evidence reads `AUTHORIZED`, missing journal evidence reads `WITHHELD`, mismatched evidence reads `WITHHELD`, rollback restores `AUTHORIZED`, and the RoadEvent, audit, outbox, and journal write-set remains unchanged. |
+| Local evidence | The focused PostgreSQL harness contract passed 36 of 36. The full workspace passed 658 API, 33 dashboard, 36 mobile, and 8 domain tests (735 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. The live journey remains unclaimed until Docker or Podman is available. |
+| Safety limits | The temporary fixture is rolled back and does not create durable authorization or history. The change grants no collection, severity reduction, dispatch, provider call, activation, or autonomous closure; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **BOTH MISSING AND MISMATCHED INDEPENDENT JOURNAL EVIDENCE ARE NOW REQUIRED TO REMAIN NON-ACTIONABLE IN THE NEXT POST-RESTART RECEIPT.** |
+| Next handoff | Run the clean `v29` journey on Docker or Podman and fix the first actual missing-journal, mismatch, rollback, or restart-persistence discrepancy before accepting its receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

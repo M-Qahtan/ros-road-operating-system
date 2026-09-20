@@ -220,15 +220,17 @@ fi
 export ROS_POSTGRES_CLOSURE_AUTHORIZATION_READ_PROOF_FILE="$closure_authorization_read_proof_file"
 bash scripts/run-postgres-closure-authorization-read.sh
 mapfile -t closure_authorization_read_proof < "$closure_authorization_read_proof_file"
-if [[ "${#closure_authorization_read_proof[@]}" -ne 8 \
+if [[ "${#closure_authorization_read_proof[@]}" -ne 10 \
   || "${closure_authorization_read_proof[0]}" != "CLOSURE_AUTHORIZATION_READ_MODEL" \
   || "${closure_authorization_read_proof[1]}" != "AUTHORIZED" \
-  || "${closure_authorization_read_proof[2]}" != "MISMATCH" \
+  || "${closure_authorization_read_proof[2]}" != "MISSING_JOURNAL" \
   || "${closure_authorization_read_proof[3]}" != "WITHHELD" \
-  || "${closure_authorization_read_proof[4]}" != "ROLLBACK_RESTORED" \
-  || "${closure_authorization_read_proof[5]}" != "AUTHORIZED" \
-  || "${closure_authorization_read_proof[6]}" != "ROAD_EVENT_AUDIT_OUTBOX_JOURNAL" \
-  || "${closure_authorization_read_proof[7]}" != "UNCHANGED" ]]; then
+  || "${closure_authorization_read_proof[4]}" != "MISMATCH" \
+  || "${closure_authorization_read_proof[5]}" != "WITHHELD" \
+  || "${closure_authorization_read_proof[6]}" != "ROLLBACK_RESTORED" \
+  || "${closure_authorization_read_proof[7]}" != "AUTHORIZED" \
+  || "${closure_authorization_read_proof[8]}" != "ROAD_EVENT_AUDIT_OUTBOX_JOURNAL" \
+  || "${closure_authorization_read_proof[9]}" != "UNCHANGED" ]]; then
   echo "Post-restart closure authorization read proof was incomplete or unsafe: ${closure_authorization_read_proof[*]}" >&2
   exit 2
 fi
@@ -837,12 +839,13 @@ ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_RETRY="${cognitive_closure_recovery_proof
 ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_WRITE_SET="${cognitive_closure_recovery_proof[3]}" \
 ROS_RECEIPT_COGNITIVE_CLOSURE_RECOVERY_AUTHORIZATION_HISTORY="${cognitive_closure_recovery_proof[5]}" \
 ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_EXACT="${closure_authorization_read_proof[1]}" \
-ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_MISMATCH="${closure_authorization_read_proof[3]}" \
-ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_ROLLBACK="${closure_authorization_read_proof[5]}" \
-ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_WRITE_SET="${closure_authorization_read_proof[7]}" \
+ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_MISSING="${closure_authorization_read_proof[3]}" \
+ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_MISMATCH="${closure_authorization_read_proof[5]}" \
+ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_ROLLBACK="${closure_authorization_read_proof[7]}" \
+ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_WRITE_SET="${closure_authorization_read_proof[9]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v28",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v29",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -950,6 +953,8 @@ node -e '
     closureAuthorizationReadAfterRestartVerified: true,
     closureAuthorizationReadExact:
       process.env.ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_EXACT,
+    closureAuthorizationReadMissingJournal:
+      process.env.ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_MISSING,
     closureAuthorizationReadMismatch:
       process.env.ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_MISMATCH,
     closureAuthorizationReadRollbackRestored:

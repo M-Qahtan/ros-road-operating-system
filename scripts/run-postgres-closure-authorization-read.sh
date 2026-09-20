@@ -52,6 +52,39 @@ SELECT CASE WHEN EXISTS (
     AND event.id='10000000-0000-4000-8000-000000000007'
 ) THEN 'AUTHORIZED' ELSE 'WITHHELD' END AS exact_disposition \gset
 
+SAVEPOINT missing_journal_read;
+INSERT INTO road_events (
+  id, tenant_id, purpose, status, severity, severity_score, confidence, reason_codes,
+  severity_requires_human_review, location, occurred_at, version,
+  closure_authorized_by, closure_authorized_at, closure_authorization_reason
+) VALUES (
+  '10000000-0000-4000-8000-000000000008', 'riyadh-pilot', 'road-safety-response',
+  'RECOVERY', 'S3', 77, 0.920, ARRAY['missing_closure_authorization_journal'], true,
+  ST_SetSRID(ST_MakePoint(46.6753, 24.7136), 4326)::geography,
+  '2026-09-19T20:02:00Z', 1,
+  '20000000-0000-4000-8000-000000000008', '2026-09-19T20:02:20Z',
+  'Legacy authorization without independent journal evidence'
+);
+SELECT CASE WHEN EXISTS (
+  SELECT 1 FROM road_events event
+  JOIN road_event_closure_authorization_journal authorization_journal
+    ON authorization_journal.tenant_id=event.tenant_id
+    AND authorization_journal.purpose=event.purpose
+    AND authorization_journal.case_id=event.id
+    AND authorization_journal.event_version=event.version
+    AND authorization_journal.authorized_by=event.closure_authorized_by
+    AND authorization_journal.authorized_at=event.closure_authorized_at
+    AND authorization_journal.authorization_reason=event.closure_authorization_reason
+    AND authorization_journal.source_input_version=event.closure_source_input_version
+    AND authorization_journal.source_snapshot_digest=event.closure_source_snapshot_digest
+    AND authorization_journal.cognitive_policy_version=event.closure_cognitive_policy_version
+    AND authorization_journal.cognitive_revision=event.closure_cognitive_revision
+    AND authorization_journal.cognitive_digest=event.closure_cognitive_digest
+  WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response'
+    AND event.id='10000000-0000-4000-8000-000000000008'
+) THEN 'AUTHORIZED' ELSE 'WITHHELD' END AS missing_disposition \gset
+ROLLBACK TO SAVEPOINT missing_journal_read;
+
 SAVEPOINT mismatched_read;
 UPDATE road_events
 SET closure_authorization_reason=closure_authorization_reason || '-mismatch'
@@ -137,6 +170,7 @@ COMMIT;
 \set QUIET 0
 SELECT unnest(ARRAY[
   'CLOSURE_AUTHORIZATION_READ_MODEL', :'exact_disposition',
+  'MISSING_JOURNAL', :'missing_disposition',
   'MISMATCH', :'mismatch_disposition',
   'ROLLBACK_RESTORED', :'restored_disposition',
   'ROAD_EVENT_AUDIT_OUTBOX_JOURNAL', 'UNCHANGED'
