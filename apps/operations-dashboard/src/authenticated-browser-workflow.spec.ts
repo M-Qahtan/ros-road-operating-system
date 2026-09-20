@@ -38,7 +38,7 @@ function assertTrustedRequest(init: RequestInit | undefined): void {
   assert.equal(headers.has('x-ros-eye-roles'), false);
 }
 
-test('authenticated RoadEvent browser workflow crosses HTTP queue detail timeline and closure authorization', async () => {
+test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {
   let event: RoadEventResponse = {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     status: 'RECOVERY',
@@ -62,6 +62,12 @@ test('authenticated RoadEvent browser workflow crosses HTTP queue detail timelin
         afterState: { version: 8 }, reason: body.reason, traceId: 'trace-closure', occurredAt: body.authorizedAt });
       return ok(event);
     }
+    if (target.pathname.endsWith('/transition')) {
+      const body = JSON.parse(String(init?.body)) as { readonly expectedVersion: number; readonly nextStatus: string; readonly reason: string };
+      assert.deepEqual(body, { expectedVersion: 8, nextStatus: 'CLOSED', reason: 'اكتملت مراجعة الإغلاق' });
+      event = { ...event, status: 'CLOSED', version: 9 };
+      return ok(event);
+    }
     if (target.pathname.endsWith('/timeline')) return ok(timeline);
     if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
     return ok({ items: [event], total: 1, limit: 100, offset: 0 });
@@ -74,17 +80,33 @@ test('authenticated RoadEvent browser workflow crosses HTTP queue detail timelin
 
   await controller.load();
   await controller.select(event.id);
-  await controller.authorizeClosure('تحقق المشرف من سلامة الموقع');
-  const html = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+  let html = renderDashboard(controller.state, { canTransition: controller.canTransition(),
     canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:00:00.000Z') });
 
+  assert.equal(controller.canTransitionTo('CLOSED'), false);
+  assert.match(html, /<option value="CLOSED" disabled>/);
+  await assert.rejects(() => controller.transition('CLOSED', 'اكتملت مراجعة الإغلاق'), /دون تفويض إغلاق موثّق/);
+  assert.equal(paths.some((path) => path.includes('/transition')), false);
+
+  await controller.authorizeClosure('تحقق المشرف من سلامة الموقع');
+  html = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:00:00.000Z') });
+
+  assert.equal(controller.state.selected?.version, 8);
+  assert.equal(controller.canTransitionTo('CLOSED'), true);
+  assert.doesNotMatch(html, /<option value="CLOSED" disabled>/);
   assert.match(html, /تحقق المشرف من سلامة الموقع/);
   assert.match(html, /road_event\.closure_authorized/);
+  await controller.transition('CLOSED', 'اكتملت مراجعة الإغلاق');
+  assert.equal(controller.state.selected?.status, 'CLOSED');
+  assert.equal(controller.state.selected?.version, 9);
   assert.deepEqual(paths, [
     'GET /api/v1/road-events',
     `GET /api/v1/road-events/${event.id}`,
     `GET /api/v1/road-events/${event.id}/timeline`,
     `POST /api/v1/road-events/${event.id}/closure-authorization`,
+    `GET /api/v1/road-events/${event.id}/timeline`,
+    `POST /api/v1/road-events/${event.id}/transition`,
     `GET /api/v1/road-events/${event.id}/timeline`
   ]);
 });

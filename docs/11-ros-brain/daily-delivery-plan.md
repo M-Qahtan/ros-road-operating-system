@@ -664,6 +664,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A JOURNAL-WITHHELD CASE REMAINS REVIEWABLE, BUT THE DASHBOARD CANNOT SUBMIT OR DISPLAY AN AVAILABLE CLOSE ACTION UNTIL GOVERNED HUMAN AUTHORIZATION IS PRESENT.** |
 | Next handoff | Add the withheld-versus-authorized closure-control state to the authenticated browser workflow across the real HTTP gateway, proving no closure request is emitted before authorization and that the exact authorized revision restores the control. |
 
+### Exact authorization revision across the authenticated dashboard gateway
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `e2214dd664d316f5010be3101a8ae564fe3da8a1` was eighty-seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The authenticated dashboard workflow now proves that a journal-withheld RoadEvent renders with `CLOSED` disabled and rejects a direct closure attempt before the HTTP gateway emits any transition request. Supervisor authorization returns revision 8; only that exact revision re-enables the control and is sent as `expectedVersion: 8` in the subsequent authenticated closure request. |
+| Fail-closed acceptance | Before authorization, no `POST /transition` exists in the observed request sequence. After authorization, the gateway carries trusted Bearer, Tenant, and Purpose context without self-asserted identity headers, and the closure request is accepted only with the exact authorized revision. |
+| Local evidence | The focused dashboard suite passed 34 of 34. The full workspace passed 660 API, 34 dashboard, 36 mobile, and 8 domain tests (738 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
+| Safety limits | The HTTP endpoint is exercised through the production `HttpRoadEventGateway` request contract with a deterministic in-process fetch boundary; no external service, real incident, dispatch, or closure was invoked. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **THE AUTHENTICATED DASHBOARD EMITS ZERO CLOSURE REQUESTS WHILE AUTHORIZATION IS WITHHELD AND RESTORES THE CONTROL ONLY FOR THE EXACT SUPERVISOR-AUTHORIZED REVISION.** |
+| Next handoff | Add authenticated HTTP conflict evidence showing that cognitive or event revision drift after authorization returns 409, marks the selected view stale, disables closure, and emits no automatic retry. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
