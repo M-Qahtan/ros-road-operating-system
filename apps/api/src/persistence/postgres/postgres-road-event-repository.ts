@@ -366,6 +366,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
           ]
         );
         await this.appendInitialRevisionReceipts(client, event, scope, occurredAt);
+        if (event.closureAuthorization !== undefined) {
+          await this.appendClosureAuthorization(client, event, scope, occurredAt);
+        }
         await this.appendAuditAndOutbox(client, event, null, afterState, context, occurredAt);
       });
     } catch (error) {
@@ -475,6 +478,9 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
       );
       if (updated.rowCount !== 1) throw new RoadEventConcurrencyError(`RoadEvent ${event.id} changed during update`);
         await this.appendChangedRevisionReceipts(client, before, event, scope, occurredAt);
+        if (context.action === 'road_event.closure_authorized') {
+          await this.appendClosureAuthorization(client, event, scope, occurredAt);
+        }
         await this.appendAuditAndOutbox(client, event, beforeState, afterState, context, occurredAt);
       });
     } catch (error) {
@@ -569,6 +575,38 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         context.purpose
       ]
     );
+  }
+
+  private async appendClosureAuthorization(
+    client: PostgresClient,
+    event: RoadEvent,
+    scope: RoadEventAccessScope,
+    recordedAt: Date
+  ): Promise<void> {
+    const authorization = event.closureAuthorization;
+    if (authorization === undefined) throw new RoadEventClosureSourceSnapshotChangedError('Closure authorization journal requires human authorization');
+    const source = authorization.sourceSnapshot;
+    const result = await client.query(
+      `INSERT INTO road_event_closure_authorization_journal (
+         tenant_id, purpose, case_id, event_version,
+         authorized_by, authorized_at, authorization_reason,
+         source_input_version, source_snapshot_digest,
+         cognitive_policy_version, cognitive_revision, cognitive_digest,
+         recorded_at
+       ) VALUES (
+         $1, $2, $3::uuid, $4, $5::uuid, $6, $7,
+         $8, $9, $10, $11, $12, $13
+       )`,
+      [
+        scope.tenantId, scope.purpose, event.id, event.version,
+        authorization.actorId, authorization.authorizedAt, authorization.reason,
+        source?.inputVersion ?? null, source?.sourceSnapshotDigest ?? null,
+        source?.cognitiveSnapshotPolicyVersion ?? null,
+        source?.cognitiveRevision ?? null, source?.cognitiveDigest ?? null,
+        recordedAt
+      ]
+    );
+    if (result.rowCount !== 1) throw new RoadEventClosureSourceSnapshotChangedError('Closure authorization history was not appended');
   }
 
   private async appendInitialRevisionReceipts(

@@ -272,6 +272,76 @@ test('update rejects a stale expected version before writing audit or outbox', a
   assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
 });
 
+test('closure authorization is journaled in the same transaction before audit and outbox', async () => {
+  const before = new RoadEvent({
+    id: EVENT_ID,
+    occurredAt: new Date('2026-07-25T02:55:00.000Z'),
+    latitude: 24.7136,
+    longitude: 46.6753,
+    status: RoadEventStatus.Recovery,
+    version: 1,
+    severity: {
+      level: SeverityLevel.High, score: 82, confidence: 0.91,
+      reasonCodes: ['verified_impact'], requiresHumanReview: true
+    }
+  });
+  const caseDigest = roadEventRevisionDigest(before, SCOPE, 'CASE');
+  const severityDigest = roadEventRevisionDigest(before, SCOPE, 'SEVERITY');
+  const client = new FakeClient((text, values) => {
+    if (text.includes('FROM road_events') && text.includes('FOR UPDATE')) {
+      return { rows: [{ ...row(1), status: RoadEventStatus.Recovery, severity: SeverityLevel.High,
+        severity_score: 82, confidence: '0.910', reason_codes: ['verified_impact'] }], rowCount: 1 };
+    }
+    if (text.includes('UPDATE road_events')) return { rows: [{ version: 2 }], rowCount: 1 };
+    if (text.includes('SELECT revision, digest FROM road_event_revision_ledger')) {
+      return values[3] === 'CASE'
+        ? { rows: [{ revision: 1, digest: caseDigest }], rowCount: 1 }
+        : { rows: [{ revision: 1, digest: severityDigest }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  });
+  const authorized = new RoadEvent({
+    id: EVENT_ID,
+    occurredAt: new Date('2026-07-25T02:55:00.000Z'),
+    latitude: 24.7136,
+    longitude: 46.6753,
+    status: RoadEventStatus.Recovery,
+    version: 1,
+    severity: {
+      level: SeverityLevel.High, score: 82, confidence: 0.91,
+      reasonCodes: ['verified_impact'], requiresHumanReview: true
+    }
+  });
+  authorized.authorizeClosure({
+    actorId: ACTOR_ID,
+    authorizedAt: new Date('2026-07-25T03:10:00.000Z'),
+    reason: 'human reviewed current cognitive receipt',
+    sourceSnapshot: {
+      inputVersion: 37, sourceSnapshotDigest: SNAPSHOT_DIGEST,
+      cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2',
+      cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64)
+    }
+  });
+
+  await new PostgresRoadEventRepository(new FakePool(client)).update(authorized, 1, {
+    ...context, actorType: 'SUPERVISOR', action: 'road_event.closure_authorized',
+    eventType: 'RoadEventClosureAuthorized', reason: 'human reviewed current cognitive receipt'
+  });
+
+  const journalIndex = client.queries.findIndex((query) => query.text.includes('INSERT INTO road_event_closure_authorization_journal'));
+  const auditIndex = client.queries.findIndex((query) => query.text.includes('INSERT INTO audit_logs'));
+  const outboxIndex = client.queries.findIndex((query) => query.text.includes('INSERT INTO outbox_events'));
+  assert.ok(journalIndex > 0 && auditIndex > journalIndex && outboxIndex > auditIndex);
+  assert.deepEqual(client.queries[journalIndex]!.values.slice(0, 7), [
+    SCOPE.tenantId, SCOPE.purpose, EVENT_ID, 2, ACTOR_ID,
+    new Date('2026-07-25T03:10:00.000Z'), 'human reviewed current cognitive receipt'
+  ]);
+  assert.deepEqual(client.queries[journalIndex]!.values.slice(7, 12), [
+    37, SNAPSHOT_DIGEST, 'ros-eye.input-snapshot.v2', 16, 'e'.repeat(64)
+  ]);
+  assert.equal(client.queries.at(-1)?.text, 'COMMIT');
+});
+
 test('high-risk closure validates the persisted snapshot inside a serializable update transaction', async () => {
   const before = authorizedRecovery();
   const caseDigest = roadEventRevisionDigest(before, SCOPE, 'CASE');
@@ -440,6 +510,20 @@ test('closure cognitive migration binds authorization to the exact immutable v2 
   assert.match(migration, /FOREIGN KEY \(\s*tenant_id, purpose, id, closure_source_input_version/);
   assert.match(migration, /REFERENCES ros_eye_cognitive_input_snapshot_bindings/);
   assert.match(migration, /closure_cognitive_policy_version = 'ros-eye\.input-snapshot\.v2'/);
+});
+
+test('closure authorization journal is scoped, cognitive-bound and append-only', () => {
+  const migration = readFileSync('database/migrations/0026_closure_authorization_journal.sql', 'utf8');
+  assert.match(migration, /PRIMARY KEY \(tenant_id, purpose, case_id, event_version\)/);
+  assert.match(migration, /REFERENCES road_events\(tenant_id, purpose, id\) ON DELETE RESTRICT/);
+  assert.match(migration, /REFERENCES ros_eye_safety_fusion_input_snapshots/);
+  assert.match(migration, /REFERENCES ros_eye_cognitive_input_snapshot_bindings/);
+  assert.match(migration, /source_snapshot_digest IS NOT NULL/);
+  assert.match(migration, /cognitive_digest IS NOT NULL/);
+  assert.match(migration, /cognitive_policy_version = 'ros-eye\.input-snapshot\.v2'/);
+  assert.match(migration, /BEFORE UPDATE OR DELETE ON road_event_closure_authorization_journal/);
+  assert.match(migration, /closure authorization journal is append-only/);
+  assert.match(migration, /no row grants autonomous closure or activation authority/);
 });
 
 test('list scopes in SQL before filters, pagination and total count', async () => {
