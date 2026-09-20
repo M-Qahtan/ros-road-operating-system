@@ -110,6 +110,72 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
     `GET /api/v1/road-events/${event.id}/timeline`
   ]);
 });
+
+test('authenticated closure conflict disables the stale control without an automatic retry', async () => {
+  const event: RoadEventResponse = {
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    status: 'RECOVERY',
+    latitude: 24.72,
+    longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z',
+    version: 8,
+    closureAuthorization: {
+      actorId,
+      reason: 'تحقق المشرف من سلامة الموقع',
+      authorizedAt: '2026-08-20T10:00:00.000Z'
+    },
+    severity: { level: 'S4', score: 96, confidence: 0.95, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const paths: string[] = [];
+  let transitionRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    paths.push(`${init?.method ?? 'GET'} ${target.pathname}`);
+    if (target.pathname.endsWith('/transition')) {
+      transitionRequests += 1;
+      const body = JSON.parse(String(init?.body)) as { readonly expectedVersion: number; readonly nextStatus: string };
+      assert.deepEqual(body, { expectedVersion: 8, nextStatus: 'CLOSED', reason: 'اكتملت مراجعة الإغلاق' });
+      const envelope: ApiEnvelope<never> = {
+        success: false,
+        data: null,
+        error: { code: 'SOURCE_SNAPSHOT_CONFLICT', message: 'internal cognitive revision changed' },
+        traceId: 'trace-safe-conflict'
+      };
+      return new Response(JSON.stringify(envelope), { status: 409, headers: { 'content-type': 'application/json' } });
+    }
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+    return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:01:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(event.id);
+  assert.equal(controller.canTransitionTo('CLOSED'), true);
+  await assert.rejects(() => controller.transition('CLOSED', 'اكتملت مراجعة الإغلاق'), /تغيرت البيانات/);
+
+  assert.equal(transitionRequests, 1);
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canTransitionTo('CLOSED'), false);
+  assert.doesNotMatch(controller.state.error ?? '', /internal|cognitive|SOURCE_SNAPSHOT_CONFLICT/i);
+  const html = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:01:00.000Z') });
+  assert.match(html, /البيانات قديمة/);
+  assert.match(html, /<select name="nextStatus" disabled>/);
+  assert.deepEqual(paths, [
+    'GET /api/v1/road-events',
+    `GET /api/v1/road-events/${event.id}`,
+    `GET /api/v1/road-events/${event.id}/timeline`,
+    `POST /api/v1/road-events/${event.id}/transition`
+  ]);
+});
+
 test('authenticated Human Safety browser workflow crosses every HTTP action with server-rebound identity', async () => {
   const now = new Date('2026-08-20T10:00:00.000Z');
   const backend = new SimulatedHumanSafetyCommandCenterGateway(seedCommandCenterCases(now));

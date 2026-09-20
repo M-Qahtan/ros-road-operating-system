@@ -676,6 +676,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE AUTHENTICATED DASHBOARD EMITS ZERO CLOSURE REQUESTS WHILE AUTHORIZATION IS WITHHELD AND RESTORES THE CONTROL ONLY FOR THE EXACT SUPERVISOR-AUTHORIZED REVISION.** |
 | Next handoff | Add authenticated HTTP conflict evidence showing that cognitive or event revision drift after authorization returns 409, marks the selected view stale, disables closure, and emits no automatic retry. |
 
+### Authorization drift conflict at the authenticated dashboard boundary
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `71380fcf0360f4c6132aa9c23cefbe6daeabe803` was eighty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The authenticated dashboard workflow now exercises an authorized revision that conflicts at closure time. HTTP 409 is sanitized, marks the selected case stale, disables every transition including `CLOSED`, and emits exactly one transition request with no automatic retry. |
+| Fail-closed acceptance | A cognitive or RoadEvent revision conflict cannot retain an actionable closure control or leak the server's internal conflict reason. The operator receives a bounded refresh instruction, while the selected incident and human-review context remain visible. |
+| Local evidence | The focused dashboard suite passed 35 of 35. The full workspace passed 660 API, 35 dashboard, 36 mobile, and 8 domain tests (739 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
+| Safety limits | This verifies fail-closed client behavior against the production HTTP gateway contract with a deterministic in-process response. It performs no external call or incident mutation and grants no collection, dispatch, severity reduction, activation, or autonomous closure. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **AN AUTHORIZATION-REVISION CONFLICT NOW FAILS CLOSED IN THE AUTHENTICATED OPERATOR PATH WITHOUT RETRY, INTERNAL-DATA LEAKAGE, OR A REMAINING CLOSURE CONTROL.** |
+| Next handoff | Prove that an explicit operator refresh after the 409 reads the newer revision, keeps the incident reviewable with authorization withheld, and never reuses or retries the stale closure request. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
