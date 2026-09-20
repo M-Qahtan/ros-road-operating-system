@@ -40,6 +40,8 @@ test('browser workflow loads queue, opens S4 detail, confirms supervisor authori
 
   await controller.authorizeClosure('تمت مراجعة سلامة الموقع من مشرفين');
   html = renderDashboard(controller.state, { canTransition: true, canAuthorizeClosure: true, now: new Date('2026-07-25T03:30:00.000Z') });
+  assert.equal(controller.canTransitionTo('CLOSED'), true);
+  assert.doesNotMatch(html, /<option value="CLOSED" disabled>/);
   assert.match(html, /تمت مراجعة سلامة الموقع من مشرفين/);
   assert.match(html, /road_event.closure_authorized/);
   assert.match(html, /trace-authorize/);

@@ -43,10 +43,10 @@ function detail(state: DashboardState, canTransition: boolean, canAuthorize: boo
       <article><h3>سلامة الإنسان</h3><p>${escape(deriveHumanSafetyStatus(event, state.timeline))}</p><small>الثقة ${(event.severity.confidence * 100).toFixed(0)}٪ — المراجعة البشرية ${event.severity.requiresHumanReview ? 'مطلوبة' : 'غير مطلوبة'}</small></article>
       <article><h3>الإشارات المرتبطة</h3>${signals.length === 0 ? '<p class="muted">لا توجد إشارات معروضة في سجل التدقيق.</p>' : `<ul>${signals.map((id) => `<li><code>${escape(id)}</code></li>`).join('')}</ul>`}</article>
       <article><h3>الموقع</h3><p dir="ltr">${event.latitude.toFixed(6)}, ${event.longitude.toFixed(6)}</p></article>
-      <article><h3>تفويض الإغلاق</h3><p>${event.closureAuthorization === null ? 'لا يوجد تفويض' : escape(event.closureAuthorization.reason)}</p></article>
+      <article><h3>تفويض الإغلاق</h3><p>${event.closureAuthorization === null ? 'لا يوجد تفويض — الإغلاق غير متاح' : escape(event.closureAuthorization.reason)}</p></article>
     </div>
     <form id="transition-form" class="action-box" ${canTransition ? '' : 'aria-disabled="true"'}>
-      <h3>تغيير الحالة</h3><label>الحالة التالية<select name="nextStatus" ${canTransition ? '' : 'disabled'}>${Object.entries(STATUS_AR).map(([value, label]) => `<option value="${value}">${escape(label)}</option>`).join('')}</select></label>
+      <h3>تغيير الحالة</h3><label>الحالة التالية<select name="nextStatus" ${canTransition ? '' : 'disabled'}>${Object.entries(STATUS_AR).map(([value, label]) => `<option value="${value}"${value === 'CLOSED' && event.closureAuthorization === null ? ' disabled' : ''}>${escape(label)}</option>`).join('')}</select></label>
       <label>سبب القرار<textarea name="reason" minlength="3" maxlength="500" required ${canTransition ? '' : 'disabled'}></textarea></label>
       <button type="submit" class="primary" ${canTransition ? '' : 'disabled'}>مراجعة وتنفيذ الانتقال</button>
     </form>

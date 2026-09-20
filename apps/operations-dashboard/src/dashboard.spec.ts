@@ -71,6 +71,34 @@ test('permission and stale states are explicit and fail closed', async () => {
   assert.match(html, /disabled/);
 });
 
+test('journal-withheld authorization keeps the incident reviewable and blocks closure controls', async () => {
+  const gateway = new FakeGateway();
+  const controller = new OperationsDashboardController(
+    gateway,
+    { roles: ['SUPERVISOR'] },
+    () => new Date('2026-07-25T03:10:00.000Z')
+  );
+  await controller.load();
+  await controller.select(roadEvent.id);
+
+  assert.equal(controller.canTransition(), true);
+  assert.equal(controller.canTransitionTo('CLOSED'), false);
+  await assert.rejects(
+    () => controller.transition('CLOSED', 'الموقع آمن'),
+    /دون تفويض إغلاق موثّق/
+  );
+  assert.equal(gateway.calls.some((call) => call.startsWith('transition:')), false);
+
+  const html = renderDashboard(controller.state, {
+    canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(),
+    now: new Date('2026-07-25T03:10:00.000Z')
+  });
+  assert.match(html, new RegExp(roadEvent.id));
+  assert.match(html, /لا يوجد تفويض — الإغلاق غير متاح/);
+  assert.match(html, /<option value="CLOSED" disabled>/);
+});
+
 test('remote conflict makes the selected RoadEvent stale and disables critical controls', async () => {
   const controller = new OperationsDashboardController(
     new ConflictGateway(),

@@ -652,6 +652,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A JOURNAL-WITHHELD INCIDENT REMAINS VISIBLE THROUGH THE AUTHENTICATED HTTP LIST WITHOUT AN EXECUTABLE CLOSURE AUTHORIZATION.** |
 | Next handoff | Carry the explicit null authorization through the operations-dashboard gateway and rendering path, proving that the incident remains reviewable while closure controls stay unavailable. |
 
+### Journal-withheld authorization in operator closure controls
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `f3a5005285799bad7d8a537b14fa6ab17e85e854` was eighty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The operations dashboard now keeps a journal-withheld RoadEvent visible for review while explicitly marking closure unavailable. The `CLOSED` option is disabled when `closureAuthorization` is null, and a direct controller call fails before any gateway request. Other authorized lifecycle transitions remain available. |
+| Fail-closed acceptance | A null authorization cannot be converted into a closure attempt by DOM manipulation or direct controller invocation. Once a supervisor creates a visible authorization through the existing governed path, the close option becomes available again; the dashboard still grants no authority beyond the server-side checks. |
+| Local evidence | The focused dashboard suite passed 34 of 34. The full workspace passed 660 API, 34 dashboard, 36 mobile, and 8 domain tests (738 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed, so no live `v29` receipt is claimed. |
+| Safety limits | This is a defense-in-depth operator boundary; PostgreSQL and API remain authoritative. It does not create authorization, close an incident, collect data, change severity, dispatch, call a provider, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **A JOURNAL-WITHHELD CASE REMAINS REVIEWABLE, BUT THE DASHBOARD CANNOT SUBMIT OR DISPLAY AN AVAILABLE CLOSE ACTION UNTIL GOVERNED HUMAN AUTHORIZATION IS PRESENT.** |
+| Next handoff | Add the withheld-versus-authorized closure-control state to the authenticated browser workflow across the real HTTP gateway, proving no closure request is emitted before authorization and that the exact authorized revision restores the control. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

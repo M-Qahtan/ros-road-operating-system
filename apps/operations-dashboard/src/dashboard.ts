@@ -46,6 +46,11 @@ export class OperationsDashboardController {
     return this.current.phase === 'ready' && this.current.selected !== null && !this.current.stale
       && this.session.roles.some((role) => role === 'OPERATOR' || role === 'SUPERVISOR');
   }
+  canTransitionTo(nextStatus: RoadEventStatusContract): boolean {
+    if (!this.canTransition()) return false;
+    const selected = this.current.selected;
+    return nextStatus !== 'CLOSED' || (selected !== null && selected.closureAuthorization !== null);
+  }
 
   async load(): Promise<DashboardState> {
     this.current = { ...this.current, phase: 'loading', error: null };
@@ -95,6 +100,7 @@ export class OperationsDashboardController {
   async transition(nextStatus: RoadEventStatusContract, reason: string): Promise<DashboardState> {
     const selected = this.requireSelected();
     if (!this.canTransition()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تنفيذ قرار حرج' : 'لا تملك صلاحية تغيير حالة الحدث');
+    if (!this.canTransitionTo(nextStatus)) throw new Error('لا يمكن إغلاق الحدث دون تفويض إغلاق موثّق');
     const normalizedReason = this.requireReason(reason);
     const request: TransitionRoadEventRequest = { expectedVersion: selected.version, nextStatus, reason: normalizedReason };
     try {
