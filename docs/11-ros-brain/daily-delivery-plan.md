@@ -861,6 +861,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FAILED RETRY CANNOT REVIVE STALE CONTEXT; A LATER RECOVERY REQUIRES ANOTHER COMPLETE AUTHENTICATED READ PAIR.** |
 | Next handoff | Make incident-selection retry single-flight so rapid duplicate operator actions cannot create overlapping read pairs or race the recovered dashboard state. |
 
+### Single-flight authenticated incident-selection retry
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `d8213a3560079e97c59bb7a1b2a05b7492104de4` was one hundred and three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | Concurrent explicit retries for the same failed incident selection now share one in-flight promise. The controller issues only one authenticated detail/timeline read pair and delivers the same recovered state to every duplicate caller; the guard clears when that attempt settles. |
+| Fail-closed acceptance | Two concurrent retry calls must return the same promise and add exactly two GET requests rather than four. Recovery must contain only the newly read incident and its timeline, remove retry eligibility, and reject a later retry locally without network traffic. |
+| Local evidence | The focused operations-dashboard build and suite passed 36 of 36. The full workspace passed 666 API, 36 dashboard, 36 mobile, and 8 domain tests (746 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Retry remains an authenticated read-only operation under the existing Tenant + Purpose scope. It grants no mutation, reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **RAPID DUPLICATE RETRY ACTIONS ARE COALESCED INTO ONE AUTHENTICATED READ PAIR AND CANNOT RACE EACH OTHER INTO THE RECOVERED DASHBOARD STATE.** |
+| Next handoff | Prevent an in-flight retry from overwriting a newer explicit operator selection or queue reload by binding completion to the latest selection intent. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

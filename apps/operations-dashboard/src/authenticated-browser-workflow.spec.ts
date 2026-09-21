@@ -216,8 +216,14 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   assert.doesNotMatch(failedRetryHtml, /road_event\.closure_authorized|road_event\.closed|internal active incident read failed/);
 
   failActiveSelection = false;
-  const recovered = await controller.retrySelection();
+  const recoveryStartPathCount = paths.length;
+  const recovery = controller.retrySelection();
+  const duplicateRecovery = controller.retrySelection();
+  assert.equal(duplicateRecovery, recovery);
+  const [recovered, duplicateRecovered] = await Promise.all([recovery, duplicateRecovery]);
   const recoveredSelectionPathCount = paths.length;
+  assert.equal(recoveredSelectionPathCount, recoveryStartPathCount + 2);
+  assert.equal(duplicateRecovered, recovered);
   assert.equal(controller.state.phase, 'ready');
   assert.equal(controller.state.stale, false);
   assert.equal(recovered.selected?.id, activeEvent.id);
@@ -230,7 +236,7 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   assert.match(recoveredSelectionHtml, new RegExp(activeEvent.id));
   assert.match(recoveredSelectionHtml, /لا يوجد تفويض — الإغلاق غير متاح/);
   assert.doesNotMatch(recoveredSelectionHtml, /retry-selection-button|road_event\.closure_authorized|road_event\.closed/);
-  await assert.rejects(() => controller.retrySelection(), /لا توجد محاولة تحميل فاشلة/);
+  assert.throws(() => controller.retrySelection(), /لا توجد محاولة تحميل فاشلة/);
   assert.equal(paths.length, recoveredSelectionPathCount);
   assert.deepEqual(paths, [
     'GET /api/v1/road-events',

@@ -34,6 +34,7 @@ export class OperationsDashboardController {
     phase: 'loading', events: [], selected: null, timeline: [], stale: false, error: null, lastUpdatedAt: null
   };
   private failedSelectionId: string | null = null;
+  private retryInFlight: Promise<DashboardState> | null = null;
 
   constructor(
     private readonly gateway: RoadEventGateway,
@@ -106,10 +107,12 @@ export class OperationsDashboardController {
     return this.current;
   }
 
-  async retrySelection(): Promise<DashboardState> {
+  retrySelection(): Promise<DashboardState> {
+    if (this.retryInFlight !== null) return this.retryInFlight;
     const id = this.failedSelectionId;
     if (id === null) throw new Error('لا توجد محاولة تحميل فاشلة لإعادتها');
-    return this.select(id);
+    this.retryInFlight = this.select(id).finally(() => { this.retryInFlight = null; });
+    return this.retryInFlight;
   }
 
   canRetrySelection(): boolean {
