@@ -776,6 +776,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE V32 CONTRACT NOW REQUIRES THE RESTARTED INCIDENT TO REJECT HISTORICAL AUTHORITY, CONSUME THE EXACT CURRENT HUMAN AUTHORIZATION ONCE, AND REJECT REPLAY WITHOUT DUPLICATING AUDIT OR OUTBOX WRITES.** |
 | Next handoff | Run the clean `v32` journey on Docker or Podman and fix the first actual SQL, transaction, restart, finalization, or receipt discrepancy before accepting the receipt. |
 
+### Terminal closure durability after a distinct restart
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `3075578038fe62bbb68e8ed52d77a631245efcd9` was ninety-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty starting worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | After exact revision-10 authorization is consumed and the disposable incident closes at revision 11, the journey captures the complete terminal state, performs another distinct PostgreSQL restart, and requires the identical state afterward. |
+| Restart acceptance | Before and after restart, the state must remain exactly `CLOSED|11|WITHHELD|8,10|8,10|1|1|<historical-v8-journal-md5>`: no current closure authorization is actionable, journal and authorization-audit histories remain `[8,10]`, exactly one closure Audit and one closure Outbox record remain, and the historical revision-8 authorization hash cannot change. The cluster system identifier must remain stable while the postmaster start time must change. |
+| Receipt boundary | Receipt `ros-brain.local-postgres-journey-receipt.v33` is withheld unless the terminal state is complete before restart, identical afterward, and bound into the continuous restart provenance chain. The receipt records both states and both postmaster start times; `externalArchiveReceipt` remains null. |
+| Local evidence | Shell syntax checks and the focused PostgreSQL harness contract passed 40 of 40. The full workspace passed 666 API, 35 dashboard, 36 mobile, and 8 domain tests (745 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live journey exited 127 before execution because neither Docker nor Podman is installed; therefore no PostgreSQL `v33` receipt or live restart result is claimed. |
+| Safety limits | This is a fail-closed journey and receipt contract over disposable data, not live-engine or operational evidence. It grants no collection, severity reduction, dispatch, provider call, activation, or autonomous closure; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **THE V33 RECEIPT IS NOW BLOCKED UNLESS THE CLOSED REVISION-11 INCIDENT REMAINS TERMINAL, ITS CONSUMED AUTHORIZATION REMAINS WITHHELD, AND ITS SINGLE AUDIT/OUTBOX WRITES AND `[8,10]` HISTORY SURVIVE A DISTINCT POSTGRESQL RESTART EXACTLY.** |
+| Next handoff | Run the clean `v33` journey on Docker or Podman and fix the first actual SQL, transaction, terminal-state, restart, or receipt discrepancy before accepting the receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

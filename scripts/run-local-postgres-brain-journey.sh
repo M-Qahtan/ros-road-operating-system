@@ -309,6 +309,37 @@ if [[ "${#closure_reauthorization_finalize_proof[@]}" -ne 12 \
   echo "Post-restart closure finalization proof was incomplete or unsafe: ${closure_reauthorization_finalize_proof[*]}" >&2
   exit 2
 fi
+
+closure_finalized_state() {
+  psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || CASE WHEN EXISTS (SELECT 1 FROM road_event_closure_authorization_journal journal WHERE journal.tenant_id=event.tenant_id AND journal.purpose=event.purpose AND journal.case_id=event.id AND journal.event_version=event.version) THEN 'AUTHORIZED' ELSE 'WITHHELD' END || '|' || (SELECT string_agg(journal.event_version::text, ',' ORDER BY journal.event_version) FROM road_event_closure_authorization_journal journal WHERE journal.tenant_id=event.tenant_id AND journal.purpose=event.purpose AND journal.case_id=event.id) || '|' || (SELECT string_agg(audit.after_state->>'version', ',' ORDER BY (audit.after_state->>'version')::integer) FROM audit_logs audit WHERE audit.resource_type='RoadEvent' AND audit.resource_id=event.id AND audit.action='road_event.closure_authorized') || '|' || (SELECT count(*)::text FROM audit_logs audit WHERE audit.resource_type='RoadEvent' AND audit.resource_id=event.id AND audit.action='road_event.closed') || '|' || (SELECT count(*)::text FROM outbox_events outbox WHERE outbox.aggregate_type='RoadEvent' AND outbox.aggregate_id=event.id AND outbox.event_type='RoadEventClosed') || '|' || (SELECT md5(to_jsonb(journal)::text) FROM road_event_closure_authorization_journal journal WHERE journal.tenant_id=event.tenant_id AND journal.purpose=event.purpose AND journal.case_id=event.id AND journal.event_version=8) FROM road_events event WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response' AND event.id='10000000-0000-4000-8000-000000000009'"
+}
+
+readonly closure_finalization_identity_before_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+)"
+readonly closure_finalization_state_before_restart="$(closure_finalized_state)"
+if [[ ! "$closure_finalization_state_before_restart" =~ ^CLOSED\|11\|WITHHELD\|8,10\|8,10\|1\|1\|[a-f0-9]{32}$ ]]; then
+  echo "Closure finalization state was incomplete before terminal restart: $closure_finalization_state_before_restart" >&2
+  exit 2
+fi
+"$container_engine" restart -- "$container_name" >/dev/null
+wait_for_postgres "after closure finalization restart"
+readonly closure_finalization_identity_after_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+)"
+readonly closure_finalization_state_after_restart="$(closure_finalized_state)"
+readonly closure_finalization_system_identifier_before_restart="${closure_finalization_identity_before_restart%%|*}"
+readonly closure_finalization_postmaster_started_at_before_restart="${closure_finalization_identity_before_restart#*|}"
+readonly closure_finalization_system_identifier_after_restart="${closure_finalization_identity_after_restart%%|*}"
+readonly closure_finalization_postmaster_started_at_after_restart="${closure_finalization_identity_after_restart#*|}"
+if [[ "$closure_finalization_system_identifier_before_restart" != "$closure_finalization_system_identifier_after_restart" \
+  || "$closure_finalization_postmaster_started_at_before_restart" == "$closure_finalization_postmaster_started_at_after_restart" \
+  || "$closure_finalization_state_after_restart" != "$closure_finalization_state_before_restart" ]]; then
+  echo "Terminal closure did not survive PostgreSQL restart exactly: $closure_finalization_state_after_restart" >&2
+  exit 2
+fi
 readonly contact_recovery_state="$(
   psql "$DATABASE_URL" -Atqc "SELECT event.status::text || '|' || event.version::text || '|' || session.version::text || '|' || (SELECT max(revision)::text FROM ros_eye_contact_revision_ledger ledger WHERE ledger.tenant_id=event.tenant_id AND ledger.purpose=event.purpose AND ledger.case_id=event.id) || '|' || (SELECT count(*)::text FROM ros_eye_contact_audit audit WHERE audit.tenant_id=event.tenant_id AND audit.case_id=event.id::text) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NOT NULL) || '|' || (SELECT count(*)::text FROM ros_eye_contact_outbox outbox WHERE outbox.tenant_id=event.tenant_id AND outbox.case_id=event.id::text AND outbox.cancelled_at IS NULL) FROM road_events event JOIN ros_eye_contact_sessions session ON session.tenant_id=event.tenant_id AND session.case_id=event.id::text WHERE event.tenant_id='riyadh-pilot' AND event.purpose='road-safety-response' AND event.id='10000000-0000-4000-8000-000000000005'"
 )"
@@ -852,6 +883,8 @@ if [[ ! "$candidate_sha" =~ ^[a-f0-9]{40}$ \
   || "$contact_recovery_system_identifier_after_restart" != "$database_system_identifier" \
   || "$closure_reauthorization_system_identifier_before_restart" != "$contact_recovery_system_identifier_after_restart" \
   || "$closure_reauthorization_system_identifier_after_restart" != "$database_system_identifier" \
+  || "$closure_finalization_system_identifier_before_restart" != "$closure_reauthorization_system_identifier_after_restart" \
+  || "$closure_finalization_system_identifier_after_restart" != "$database_system_identifier" \
   || -z "$postmaster_started_at_before_restart" \
   || -z "$postmaster_started_at_after_restart" \
   || "$postmaster_started_at_before_restart" == "$postmaster_started_at_after_restart" \
@@ -859,7 +892,9 @@ if [[ ! "$candidate_sha" =~ ^[a-f0-9]{40}$ \
   || "$contact_recovery_postmaster_started_at_before_restart" == "$contact_recovery_postmaster_started_at_after_restart" \
   || "$contact_recovery_postmaster_started_at_after_restart" != "$closure_reauthorization_postmaster_started_at_before_restart" \
   || "$closure_reauthorization_postmaster_started_at_before_restart" == "$closure_reauthorization_postmaster_started_at_after_restart" \
-  || "$closure_reauthorization_postmaster_started_at_after_restart" != "$postmaster_started_at" ]]; then
+  || "$closure_reauthorization_postmaster_started_at_after_restart" != "$closure_finalization_postmaster_started_at_before_restart" \
+  || "$closure_finalization_postmaster_started_at_before_restart" == "$closure_finalization_postmaster_started_at_after_restart" \
+  || "$closure_finalization_postmaster_started_at_after_restart" != "$postmaster_started_at" ]]; then
   echo "PostgreSQL journey passed but its local receipt provenance is incomplete" >&2
   exit 2
 fi
@@ -936,9 +971,13 @@ ROS_RECEIPT_CLOSURE_FINALIZATION_EXACT="${closure_reauthorization_finalize_proof
 ROS_RECEIPT_CLOSURE_FINALIZATION_DUPLICATE="${closure_reauthorization_finalize_proof[7]}" \
 ROS_RECEIPT_CLOSURE_FINALIZATION_HISTORY="${closure_reauthorization_finalize_proof[9]}" \
 ROS_RECEIPT_CLOSURE_FINALIZATION_STATE="${closure_reauthorization_finalize_proof[11]}" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_STATE_BEFORE_RESTART="$closure_finalization_state_before_restart" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_STATE_AFTER_RESTART="$closure_finalization_state_after_restart" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_BEFORE="$closure_finalization_postmaster_started_at_before_restart" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_AFTER="$closure_finalization_postmaster_started_at_after_restart" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v32",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v33",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -1085,6 +1124,15 @@ node -e '
       process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_HISTORY,
     postRestartClosureFinalState:
       process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_STATE,
+    terminalClosureRestartVerified: true,
+    terminalClosureStateBeforeRestart:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_STATE_BEFORE_RESTART,
+    terminalClosureStateAfterRestart:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_STATE_AFTER_RESTART,
+    terminalClosurePostmasterStartedAtBeforeRestart:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_BEFORE,
+    terminalClosurePostmasterStartedAtAfterRestart:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_AFTER,
     result: "PASS",
     externalArchiveReceipt: null,
   };
