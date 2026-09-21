@@ -38,6 +38,89 @@ function assertTrustedRequest(init: RequestInit | undefined): void {
   assert.equal(headers.has('x-ros-eye-roles'), false);
 }
 
+function barrier(): { readonly wait: Promise<void>; readonly release: () => void } {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  return { wait, release };
+}
+
+test('newer authenticated operator intent supersedes an in-flight selection retry', async () => {
+  const failedEvent: RoadEventResponse = {
+    id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 3, closureAuthorization: null,
+    severity: { level: 'S2', score: 50, confidence: 0.9, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+  };
+  const newerEvent: RoadEventResponse = { ...failedEvent, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', version: 5 };
+  let failSelection = true;
+  let retryBarrier: ReturnType<typeof barrier> | null = null;
+  const paths: string[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    paths.push(`${init?.method ?? 'GET'} ${target.pathname}`);
+    if (target.pathname === `/api/v1/road-events/${failedEvent.id}`) {
+      if (failSelection) {
+        const envelope: ApiEnvelope<never> = { success: false, data: null,
+          error: { code: 'DEPENDENCY_UNAVAILABLE', message: 'delayed incident read failed' }, traceId: 'trace-intent-failure' };
+        return new Response(JSON.stringify(envelope), { status: 503, headers: { 'content-type': 'application/json' } });
+      }
+      if (retryBarrier !== null) await retryBarrier.wait;
+      return ok(failedEvent);
+    }
+    if (target.pathname === `/api/v1/road-events/${newerEvent.id}`) return ok(newerEvent);
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    return ok({ items: [failedEvent, newerEvent], total: 2, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(failedEvent.id);
+  assert.equal(controller.canRetrySelection(), true);
+
+  failSelection = false;
+  retryBarrier = barrier();
+  const obsoleteRetry = controller.retrySelection();
+  await controller.select(newerEvent.id);
+  assert.equal(controller.state.selected?.id, newerEvent.id);
+  retryBarrier.release();
+  const obsoleteRetryResult = await obsoleteRetry;
+  assert.equal(obsoleteRetryResult.selected?.id, newerEvent.id);
+  assert.equal(controller.state.selected?.id, newerEvent.id);
+
+  failSelection = true;
+  retryBarrier = null;
+  await controller.select(failedEvent.id);
+  assert.equal(controller.canRetrySelection(), true);
+  failSelection = false;
+  retryBarrier = barrier();
+  const obsoleteRetryBeforeReload = controller.retrySelection();
+  const reloaded = await controller.load();
+  assert.equal(reloaded.phase, 'ready');
+  assert.equal(reloaded.selected, null);
+  retryBarrier.release();
+  const obsoleteReloadResult = await obsoleteRetryBeforeReload;
+  assert.equal(obsoleteReloadResult.selected, null);
+  assert.equal(controller.state.selected, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.deepEqual(paths, [
+    'GET /api/v1/road-events',
+    `GET /api/v1/road-events/${failedEvent.id}`,
+    `GET /api/v1/road-events/${failedEvent.id}/timeline`,
+    `GET /api/v1/road-events/${failedEvent.id}`,
+    `GET /api/v1/road-events/${failedEvent.id}/timeline`,
+    `GET /api/v1/road-events/${newerEvent.id}`,
+    `GET /api/v1/road-events/${newerEvent.id}/timeline`,
+    `GET /api/v1/road-events/${failedEvent.id}`,
+    `GET /api/v1/road-events/${failedEvent.id}/timeline`,
+    `GET /api/v1/road-events/${failedEvent.id}`,
+    `GET /api/v1/road-events/${failedEvent.id}/timeline`,
+    'GET /api/v1/road-events'
+  ]);
+});
+
 test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {
   let event: RoadEventResponse = {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

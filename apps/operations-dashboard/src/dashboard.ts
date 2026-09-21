@@ -35,6 +35,7 @@ export class OperationsDashboardController {
   };
   private failedSelectionId: string | null = null;
   private retryInFlight: Promise<DashboardState> | null = null;
+  private readIntent = 0;
 
   constructor(
     private readonly gateway: RoadEventGateway,
@@ -60,10 +61,12 @@ export class OperationsDashboardController {
   }
 
   async load(): Promise<DashboardState> {
+    const intent = ++this.readIntent;
     this.failedSelectionId = null;
     this.current = { ...this.current, phase: 'loading', error: null };
     try {
       const page = await this.gateway.list();
+      if (intent !== this.readIntent) return this.current;
       const updatedAt = this.now().toISOString();
       this.current = {
         phase: page.items.length === 0 ? 'empty' : 'ready',
@@ -75,14 +78,17 @@ export class OperationsDashboardController {
         lastUpdatedAt: updatedAt
       };
     } catch (error) {
+      if (intent !== this.readIntent) return this.current;
       this.current = { ...this.current, phase: 'failure', error: error instanceof Error ? error.message : 'تعذر تحميل الأحداث' };
     }
     return this.current;
   }
 
   async select(id: string): Promise<DashboardState> {
+    const intent = ++this.readIntent;
     try {
       const [selected, timeline] = await Promise.all([this.gateway.getById(id), this.gateway.timeline(id)]);
+      if (intent !== this.readIntent) return this.current;
       this.current = {
         ...this.current,
         phase: 'ready',
@@ -94,6 +100,7 @@ export class OperationsDashboardController {
       };
       this.failedSelectionId = null;
     } catch (error) {
+      if (intent !== this.readIntent) return this.current;
       this.failedSelectionId = id;
       this.current = {
         ...this.current,

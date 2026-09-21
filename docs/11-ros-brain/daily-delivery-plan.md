@@ -873,6 +873,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **RAPID DUPLICATE RETRY ACTIONS ARE COALESCED INTO ONE AUTHENTICATED READ PAIR AND CANNOT RACE EACH OTHER INTO THE RECOVERED DASHBOARD STATE.** |
 | Next handoff | Prevent an in-flight retry from overwriting a newer explicit operator selection or queue reload by binding completion to the latest selection intent. |
 
+### Latest authenticated read intent wins
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `c959c5682c65d6038cea7725bc8512365550d5af` was one hundred and four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | Every authenticated queue load or incident selection now advances a controller-owned read intent. A slower earlier retry may finish its network reads, but it cannot replace the state produced by a newer explicit incident selection or queue reload. |
+| Race acceptance | A delayed retry followed by another incident selection must return the newer incident state and leave it selected. A delayed retry followed by a queue reload must leave the refreshed queue with no selected incident. Both stale completions must be ignored without restoring retry eligibility or prior timeline data. |
+| Local evidence | The focused operations-dashboard build and suite passed 37 of 37, including authenticated delayed-response coverage for selection and reload supersession. The full workspace passed 666 API, 37 dashboard, 36 mobile, and 8 domain tests (747 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | The intent token controls only which authenticated read result may update browser state. It does not cancel transport, mutate incidents, reopen state, collect data, reduce severity, dispatch, activate, call providers, or grant autonomous authority. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A STALE RETRY RESULT CAN NO LONGER OVERWRITE A NEWER OPERATOR SELECTION OR QUEUE RELOAD.** |
+| Next handoff | Bind delayed closure-authorization and transition follow-up results to the initiating incident intent so a critical completion cannot overwrite a newer operator selection. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
