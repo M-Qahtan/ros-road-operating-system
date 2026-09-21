@@ -813,6 +813,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AN EXPLICIT AUTHENTICATED REFRESH PRESERVES THE CLOSED INCIDENT AND ITS AUDIT TIMELINE WHILE EMITTING ZERO NEW MUTATION REQUESTS.** |
 | Next handoff | Prove the same durable terminal state is preserved when the operator changes selection away from the closed incident and returns to it, without restoring any critical control. |
 
+### Terminal selection round trip in the authenticated dashboard
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `7c09ad28ea26e49e4862ce5f6a39f50480f1a2d8` was ninety-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. |
+| Added behavior | The authenticated operator journey now leaves the durable closed incident, selects a separate active incident, and returns through fresh detail and timeline reads. The returned incident remains `CLOSED` with `closureAuthorization=null` and retains both historical audit entries. |
+| Fail-closed acceptance | The active incident may expose its ordinary transition capability, but returning to the closed incident must disable transition and closure authorization again. Direct reopen and reauthorization attempts must add zero HTTP requests after the return boundary. |
+| Local evidence | The focused operations-dashboard suite passed 36 of 36. The full workspace passed 666 API, 36 dashboard, 36 mobile, and 8 domain tests (746 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey still cannot execute without Docker or Podman, so no live `v33` receipt is claimed. |
+| Safety limits | This is a selection-state isolation proof over an authenticated test gateway. It grants no reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **SWITCHING TO AN ACTIVE INCIDENT CANNOT LEAK ITS CONTROLS INTO A DURABLE CLOSED INCIDENT WHEN THE OPERATOR RETURNS.** |
+| Next handoff | Prove the same isolation when a stale active incident fails to load while the previously viewed closed incident remains fail-closed and cannot inherit stale controls or timeline data. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
