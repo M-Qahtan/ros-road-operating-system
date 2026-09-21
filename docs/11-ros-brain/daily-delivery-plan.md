@@ -945,6 +945,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE ARABIC DASHBOARD EXPOSES THE SAME CRITICAL COMMAND FOR RESEND ONLY AFTER A MATCHING AUTHENTICATED REFRESH.** |
 | Next handoff | Prove that an ambiguous-operation review cannot survive a browser reload or trusted-session replacement, and that no operation identity is serialized into DOM or storage. |
 
+### Browser-session boundary discards ambiguous operation identity
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `5d2428358eb20d97a4358751379d17079ca8f6aa` was one hundred and eleven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | The RoadEvent dashboard now explicitly discards the selected incident, Timeline, failed-selection retry, and retained ambiguous critical command when its browser page exits. A back-forward-cache restoration performs a fresh authenticated load rather than reviving that command. A replacement trusted OIDC session receives a new controller with no inherited retry authority. |
+| Fail-closed acceptance | The ambiguous operation identity and reason must not appear in rendered HTML, local storage, session storage, or IndexedDB. Page exit must make retry fail before HTTP and clear incident context. A different trusted actor and token must be able to read the incident but must not inherit the prior actor's ambiguous operation or resend eligibility. |
+| Local evidence | The focused operations-dashboard build and suite passed 43 of 43. The authenticated workflow captured the real idempotency key from the failed POST, proved that neither it nor the private reason appeared in rendered HTML, discarded the browser session, rejected retry without network access, and proved a replacement actor starts without the operation. The full workspace passed 666 API, 43 dashboard, 36 mobile, and 8 domain tests (753 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Session discard does not cancel a request that may already have reached the server and makes no claim about its remote disposition. A fresh authenticated read and the server's version/idempotency controls remain authoritative. It grants no reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous authority. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **AN AMBIGUOUS CRITICAL COMMAND CANNOT CROSS A BROWSER OR TRUSTED-SESSION BOUNDARY.** |
+| Next handoff | Prove that a critical response completing after page exit cannot repopulate cleared incident state, Timeline, or retry authority when the page is restored. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

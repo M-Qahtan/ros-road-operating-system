@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import type { ApiEnvelope, RoadEventResponse } from '@ros/contracts';
 import { HttpRoadEventGateway, type AuditTimelineEntryContract } from './api-client.js';
@@ -413,6 +414,73 @@ test('authenticated refresh disables an ambiguous retry when the incident revisi
   assert.match(html, /تغير الحادث أو الإصدار أو الصلاحية/);
   assert.match(html, /إعادة الإرسال غير متاحة/);
   assert.doesNotMatch(html, /retry-critical-action-button|verify-critical-action-button/);
+});
+
+test('page exit and trusted-session replacement discard ambiguous operation identity without DOM or storage exposure', async () => {
+  const event: RoadEventResponse = {
+    id: '46464646-4646-4646-8646-464646464646', status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 7, closureAuthorization: null,
+    severity: { level: 'S4', score: 96, confidence: 0.95, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  let capturedOperationId = '';
+  const secretReason = 'سبب سري لا يجوز عرضه أو تخزينه';
+  const ambiguousFetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization')) {
+      capturedOperationId = new Headers(init?.headers).get('idempotency-key') ?? '';
+      throw new TypeError('connection reset after send');
+    }
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+    return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+  };
+  const original = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, ambiguousFetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+  await original.load();
+  await original.select(event.id);
+  await assert.rejects(() => original.authorizeClosure(secretReason), /تعذر التحقق من نتيجة الإجراء/);
+  assert.notEqual(capturedOperationId, '');
+  const html = renderDashboard(original.state, {
+    canTransition: original.canTransition(), canAuthorizeClosure: original.canAuthorizeClosure(),
+    ambiguousCriticalAction: original.ambiguousCriticalActionView(), now: new Date('2026-08-20T10:00:00.000Z')
+  });
+  assert.doesNotMatch(html, new RegExp(capturedOperationId));
+  assert.doesNotMatch(html, new RegExp(secretReason));
+
+  original.discardBrowserSession();
+  assert.equal(original.ambiguousCriticalActionView(), null);
+  assert.equal(original.state.selected, null);
+  assert.deepEqual(original.state.timeline, []);
+  await assert.rejects(() => original.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
+
+  const replacementSession = {
+    ...session, actorId: '22222222-2222-4222-8222-222222222222',
+    getAccessToken: () => Promise.resolve('replacement-browser-token')
+  };
+  const replacementFetcher: typeof fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get('authorization'), 'Bearer replacement-browser-token');
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+    return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+  };
+  const replacement = new OperationsDashboardController(
+    new HttpRoadEventGateway('', replacementSession, replacementFetcher), { roles: ['SUPERVISOR'] }
+  );
+  await replacement.load();
+  await replacement.select(event.id);
+  assert.equal(replacement.ambiguousCriticalActionView(), null);
+  await assert.rejects(() => replacement.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
+
+  const [browserSource, controllerSource] = await Promise.all([
+    readFile(new URL('./browser.js', import.meta.url), 'utf8'),
+    readFile(new URL('./dashboard.js', import.meta.url), 'utf8')
+  ]);
+  assert.doesNotMatch(`${browserSource}\n${controllerSource}`, /localStorage|sessionStorage|indexedDB/);
 });
 
 test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {

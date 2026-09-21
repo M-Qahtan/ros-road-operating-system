@@ -95,6 +95,10 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
     paint();
   }
 
+  window.addEventListener('pagehide', () => { controller.discardBrowserSession(); });
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) void reload();
+  });
   void reload();
   window.setInterval(() => { void reload(); }, 10_000);
 }

@@ -223,6 +223,16 @@ export class OperationsDashboardController {
     };
   }
 
+  discardBrowserSession(): DashboardState {
+    ++this.readIntent;
+    this.failedSelectionId = null;
+    this.ambiguousCriticalOperation = null;
+    this.current = {
+      phase: 'loading', events: [], selected: null, timeline: [], stale: false, error: null, lastUpdatedAt: null
+    };
+    return this.current;
+  }
+
   async retryAmbiguousCriticalAction(): Promise<DashboardState> {
     const operation = this.ambiguousCriticalOperation;
     if (operation === null) throw new Error('لا يوجد إجراء حرج غامض لإعادة التحقق منه');
