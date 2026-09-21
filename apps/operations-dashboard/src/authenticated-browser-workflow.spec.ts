@@ -89,6 +89,81 @@ test('periodic queue refresh waits for a critical command and performs one authe
   assert.equal(controller.state.selected, null);
 });
 
+test('failed post-command reconciliation stays fail-closed and explicit refresh recovers without replay', async () => {
+  let event: RoadEventResponse = {
+    id: '50505050-5050-4050-8050-505050505050',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 12, closureAuthorization: null,
+    severity: { level: 'S4', score: 97, confidence: 0.96, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const mutationStarted = barrier();
+  const mutationResponse = barrier();
+  let failQueueReconciliation = false;
+  let listReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization')) {
+      mutationRequests += 1;
+      mutationStarted.release();
+      await mutationResponse.wait;
+      event = { ...event, version: 13, closureAuthorization: {
+        actorId, reason: 'تفويض لا يعاد عند فشل المصالحة', authorizedAt: '2026-08-20T10:00:00.000Z'
+      } };
+      return ok(event);
+    }
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+    listReads += 1;
+    if (failQueueReconciliation) {
+      const envelope: ApiEnvelope<never> = { success: false, data: null,
+        error: { code: 'DEPENDENCY_UNAVAILABLE', message: 'internal queue reconciliation failed' },
+        traceId: 'trace-post-command-reconciliation' };
+      return new Response(JSON.stringify(envelope), { status: 503, headers: { 'content-type': 'application/json' } });
+    }
+    return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+  const coordinator = new CriticalRefreshCoordinator(
+    () => controller.isCriticalActionInFlight(),
+    async () => { await controller.load(); }
+  );
+
+  await coordinator.request();
+  await controller.select(event.id);
+  const mutation = controller.authorizeClosure('تفويض لا يعاد عند فشل المصالحة');
+  await mutationStarted.wait;
+  await coordinator.request();
+  failQueueReconciliation = true;
+  mutationResponse.release();
+  const mutationResult = await mutation;
+  assert.equal(mutationResult.selected?.version, 13);
+
+  await coordinator.flushAfterCriticalAction();
+  assert.equal(listReads, 2);
+  assert.equal(mutationRequests, 1);
+  assert.equal(controller.state.phase, 'failure');
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.doesNotMatch(controller.state.error ?? '', /internal queue reconciliation failed/);
+
+  failQueueReconciliation = false;
+  await coordinator.request();
+  assert.equal(listReads, 3);
+  assert.equal(mutationRequests, 1);
+  assert.equal(controller.state.phase, 'ready');
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+});
+
 function ok<T>(data: T): Response {
   const envelope: ApiEnvelope<T> = { success: true, data, error: null, traceId: 'trace-http-workflow' };
   return new Response(JSON.stringify(envelope), { status: 200, headers: { 'content-type': 'application/json' } });

@@ -981,6 +981,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A PERIODIC QUEUE REFRESH CANNOT INVALIDATE AN IN-FLIGHT HUMAN COMMAND; ONE AUTHENTICATED RECONCILIATION FOLLOWS IT.** |
 | Next handoff | Prove that failure of the mandatory post-command reconciliation leaves the dashboard fail-closed with no critical controls, then that one explicit authenticated refresh can recover it without repeating the command. |
 
+### Failed post-command reconciliation recovers without command replay
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-22, GitHub candidate `ba55d8e32e361778163e74921aad4892b6a0faa2` was one hundred and fourteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | A failed queue reconciliation now clears selected incident details and Timeline, marks the dashboard stale, and retains a failure phase. A later explicit authenticated queue refresh may recover the list, but it never resubmits the already accepted critical command. |
+| Fail-closed acceptance | After the server accepts the command once, a 503 during the mandatory queue reconciliation must leave no selected incident, no Timeline, and no transition or closure-authorization controls. The internal dependency detail must remain sanitized. One later successful list read may restore a ready non-stale queue while mutation count remains exactly one. |
+| Local evidence | The focused operations-dashboard build and suite passed 46 of 46. The authenticated race accepted closure authorization at version 13 with one POST, failed the deferred queue read, and produced `failure/stale` with empty incident context and both critical control predicates false. A later explicit authenticated refresh restored `ready` with no selection; list reads advanced from two to three while the POST count stayed one. The full workspace passed 666 API, 46 dashboard, 36 mobile, and 8 domain tests (756 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Recovery restores read-only server state only; it does not infer delivery, grant command replay, reopen a terminal incident, lower severity, dispatch, activate, collect data, or confer autonomous authority. Tenant, purpose, role, version, human-review, and append-only audit boundaries remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A FAILED POST-COMMAND RECONCILIATION FAILS CLOSED AND RECOVERS WITHOUT REPLAYING THE HUMAN COMMAND.** |
+| Next handoff | After reconciliation recovery, reopen the incident and prove the accepted authorization and its append-only Timeline entry are read back exactly once, with controls derived only from the recovered server revision. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

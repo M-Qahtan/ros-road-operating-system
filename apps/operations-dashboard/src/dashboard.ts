@@ -112,7 +112,14 @@ export class OperationsDashboardController {
       };
     } catch (error) {
       if (intent !== this.readIntent) return this.current;
-      this.current = { ...this.current, phase: 'failure', error: error instanceof Error ? error.message : 'تعذر تحميل الأحداث' };
+      this.current = {
+        ...this.current,
+        phase: 'failure',
+        selected: null,
+        timeline: [],
+        stale: true,
+        error: error instanceof Error ? error.message : 'تعذر تحميل الأحداث'
+      };
     }
     return this.current;
   }
