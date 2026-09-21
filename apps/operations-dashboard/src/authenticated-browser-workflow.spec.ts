@@ -66,6 +66,8 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
       const body = JSON.parse(String(init?.body)) as { readonly expectedVersion: number; readonly nextStatus: string; readonly reason: string };
       assert.deepEqual(body, { expectedVersion: 8, nextStatus: 'CLOSED', reason: 'اكتملت مراجعة الإغلاق' });
       event = { ...event, status: 'CLOSED', version: 9 };
+      timeline.push({ action: 'road_event.closed', actorType: 'SUPERVISOR', actorId, beforeState: { version: 8 },
+        afterState: { version: 9 }, reason: body.reason, traceId: 'trace-closed', occurredAt: '2026-08-20T10:00:30.000Z' });
       return ok(event);
     }
     if (target.pathname.endsWith('/timeline')) return ok(timeline);
@@ -110,6 +112,28 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
     canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:00:00.000Z') });
   assert.match(terminalHtml, /تم استهلاك التفويض — الحالة مغلقة نهائيًا/);
   assert.match(terminalHtml, /<select name="nextStatus" disabled>/);
+  assert.match(terminalHtml, /road_event\.closure_authorized/);
+  assert.match(terminalHtml, /road_event\.closed/);
+
+  event = { ...event, closureAuthorization: null };
+  await controller.load();
+  await controller.select(event.id);
+  const durableTerminalPathCount = paths.length;
+  assert.equal(controller.state.selected?.status, 'CLOSED');
+  assert.equal(controller.state.selected?.version, 9);
+  assert.equal(controller.state.selected?.closureAuthorization, null);
+  assert.equal(controller.state.timeline.length, 2);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  await assert.rejects(() => controller.transition('RECOVERY', 'محاولة إعادة فتح بعد التحديث'), /الحالة النهائية/);
+  await assert.rejects(() => controller.authorizeClosure('محاولة تفويض بعد التحديث'), /الحالة النهائية/);
+  assert.equal(paths.length, durableTerminalPathCount);
+  const refreshedTerminalHtml = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:01:00.000Z') });
+  assert.match(refreshedTerminalHtml, /تم استهلاك التفويض — الحالة مغلقة نهائيًا/);
+  assert.match(refreshedTerminalHtml, /road_event\.closure_authorized/);
+  assert.match(refreshedTerminalHtml, /road_event\.closed/);
+  assert.match(refreshedTerminalHtml, /<select name="nextStatus" disabled>/);
   assert.deepEqual(paths, [
     'GET /api/v1/road-events',
     `GET /api/v1/road-events/${event.id}`,
@@ -117,6 +141,9 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
     `POST /api/v1/road-events/${event.id}/closure-authorization`,
     `GET /api/v1/road-events/${event.id}/timeline`,
     `POST /api/v1/road-events/${event.id}/transition`,
+    `GET /api/v1/road-events/${event.id}/timeline`,
+    'GET /api/v1/road-events',
+    `GET /api/v1/road-events/${event.id}`,
     `GET /api/v1/road-events/${event.id}/timeline`
   ]);
 });

@@ -801,6 +801,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A TERMINAL INCIDENT CAN STILL BE REVIEWED, BUT IT CANNOT EMIT A NEW TRANSITION OR CLOSURE-AUTHORIZATION REQUEST FROM THE OPERATIONS DASHBOARD.** |
 | Next handoff | Prove the same zero-request behavior after an explicit authenticated refresh returns the durable closed revision with `closureAuthorization=null`, preserving the visible audit timeline. |
 
+### Durable terminal refresh in the authenticated dashboard
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `e1c66cfe916b172bdf53cf44945649fe8c6280e7` was ninety-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process or candidate workflow run existed. The repository had unrelated open pull requests, but this review branch had no pull request. |
+| Added behavior | The authenticated browser journey now performs an explicit list/detail/timeline refresh after closure, reads the durable `CLOSED` revision with `closureAuthorization=null`, and keeps both the authorization and closure audit entries visible. |
+| Fail-closed acceptance | The refreshed terminal incident must disable transition and closure-authorization capabilities. Direct attempts to reopen or reauthorize must fail locally and add zero HTTP requests after the refresh boundary. |
+| Local evidence | The focused operations-dashboard suite passed 36 of 36. The full workspace passed 666 API, 36 dashboard, 36 mobile, and 8 domain tests (746 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey still cannot execute without Docker or Podman, so no live `v33` receipt is claimed. |
+| Safety limits | This is a browser/controller proof over an authenticated test gateway. It grants no reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **AN EXPLICIT AUTHENTICATED REFRESH PRESERVES THE CLOSED INCIDENT AND ITS AUDIT TIMELINE WHILE EMITTING ZERO NEW MUTATION REQUESTS.** |
+| Next handoff | Prove the same durable terminal state is preserved when the operator changes selection away from the closed incident and returns to it, without restoring any critical control. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
