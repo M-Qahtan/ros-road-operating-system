@@ -47,6 +47,7 @@ export class OperationsDashboardController {
   };
   private failedSelectionId: string | null = null;
   private retryInFlight: Promise<DashboardState> | null = null;
+  private criticalActionInFlight: { readonly key: string; readonly result: Promise<DashboardState> } | null = null;
   private readIntent = 0;
 
   constructor(
@@ -154,14 +155,17 @@ export class OperationsDashboardController {
     if (!this.canTransitionTo(nextStatus)) throw new Error('لا يمكن إغلاق الحدث دون تفويض إغلاق موثّق');
     const normalizedReason = this.requireReason(reason);
     const request: TransitionRoadEventRequest = { expectedVersion: selected.version, nextStatus, reason: normalizedReason };
-    try {
-      const updated = await this.gateway.transition(selected.id, request);
-      return this.applyCriticalResult(updated, intent);
-    } catch (error) {
-      this.applyRemoteFailure(error, intent);
-      if (intent !== this.readIntent) throw new SupersededCriticalActionError(selected.id, 'TRANSITION');
-      throw error;
-    }
+    const key = JSON.stringify(['TRANSITION', selected.id, selected.version, nextStatus, normalizedReason]);
+    return this.runCriticalAction(key, async () => {
+      try {
+        const updated = await this.gateway.transition(selected.id, request);
+        return this.applyCriticalResult(updated, intent);
+      } catch (error) {
+        this.applyRemoteFailure(error, intent);
+        if (intent !== this.readIntent) throw new SupersededCriticalActionError(selected.id, 'TRANSITION');
+        throw error;
+      }
+    });
   }
 
   async authorizeClosure(reason: string): Promise<DashboardState> {
@@ -174,14 +178,30 @@ export class OperationsDashboardController {
       reason: this.requireReason(reason),
       authorizedAt: this.now().toISOString()
     };
-    try {
-      const updated = await this.gateway.authorizeClosure(selected.id, request);
-      return this.applyCriticalResult(updated, intent);
-    } catch (error) {
-      this.applyRemoteFailure(error, intent);
-      if (intent !== this.readIntent) throw new SupersededCriticalActionError(selected.id, 'AUTHORIZE_CLOSURE');
-      throw error;
+    const key = JSON.stringify(['AUTHORIZE_CLOSURE', selected.id, selected.version, request.reason]);
+    return this.runCriticalAction(key, async () => {
+      try {
+        const updated = await this.gateway.authorizeClosure(selected.id, request);
+        return this.applyCriticalResult(updated, intent);
+      } catch (error) {
+        this.applyRemoteFailure(error, intent);
+        if (intent !== this.readIntent) throw new SupersededCriticalActionError(selected.id, 'AUTHORIZE_CLOSURE');
+        throw error;
+      }
+    });
+  }
+
+  private runCriticalAction(key: string, execute: () => Promise<DashboardState>): Promise<DashboardState> {
+    const active = this.criticalActionInFlight;
+    if (active !== null) {
+      if (active.key === key) return active.result;
+      throw new Error('يوجد إجراء حرج قيد التنفيذ؛ انتظر اكتماله ثم حدّث الحادث قبل محاولة أخرى');
     }
+    const result = execute().finally(() => {
+      if (this.criticalActionInFlight?.result === result) this.criticalActionInFlight = null;
+    });
+    this.criticalActionInFlight = { key, result };
+    return result;
   }
 
   private async applyCriticalResult(updated: RoadEventResponse, intent: number): Promise<DashboardState> {

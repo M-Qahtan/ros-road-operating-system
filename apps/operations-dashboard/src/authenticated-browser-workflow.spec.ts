@@ -234,6 +234,69 @@ test('delayed critical failure is attributed to its originating incident without
   assert.equal(controller.canTransition(), true);
 });
 
+test('repeated critical confirmations share one authenticated mutation and reject a competing action locally', async () => {
+  let event: RoadEventResponse = {
+    id: '55555555-5555-4555-8555-555555555555', status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 7, closureAuthorization: null,
+    severity: { level: 'S4', score: 96, confidence: 0.95, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const authorizationBarrier = barrier();
+  const transitionBarrier = barrier();
+  const paths: string[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    paths.push(`${init?.method ?? 'GET'} ${target.pathname}`);
+    if (target.pathname.endsWith('/closure-authorization')) {
+      await authorizationBarrier.wait;
+      const body = JSON.parse(String(init?.body)) as { readonly reason: string; readonly authorizedAt: string };
+      event = { ...event, version: 8, closureAuthorization: { actorId, reason: body.reason, authorizedAt: body.authorizedAt } };
+      return ok(event);
+    }
+    if (target.pathname.endsWith('/transition')) {
+      await transitionBarrier.wait;
+      event = { ...event, status: 'CLOSED', version: 9 };
+      return ok(event);
+    }
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+    return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(event.id);
+  const firstAuthorization = controller.authorizeClosure('تحقق المشرف من سلامة الموقع');
+  const duplicateAuthorization = controller.authorizeClosure('تحقق المشرف من سلامة الموقع');
+  await assert.rejects(
+    () => controller.authorizeClosure('سبب متنافس أثناء التنفيذ'),
+    /يوجد إجراء حرج قيد التنفيذ/
+  );
+  assert.equal(paths.filter((path) => path.endsWith('/closure-authorization')).length, 1);
+  authorizationBarrier.release();
+  const [authorized, duplicateAuthorized] = await Promise.all([firstAuthorization, duplicateAuthorization]);
+  assert.equal(authorized.selected?.version, 8);
+  assert.equal(duplicateAuthorized.selected?.version, 8);
+
+  const firstTransition = controller.transition('CLOSED', 'اكتملت مراجعة الإغلاق');
+  const duplicateTransition = controller.transition('CLOSED', 'اكتملت مراجعة الإغلاق');
+  await assert.rejects(
+    () => controller.transition('RECOVERY', 'انتقال متنافس أثناء التنفيذ'),
+    /يوجد إجراء حرج قيد التنفيذ/
+  );
+  assert.equal(paths.filter((path) => path.endsWith('/transition')).length, 1);
+  transitionBarrier.release();
+  const [closed, duplicateClosed] = await Promise.all([firstTransition, duplicateTransition]);
+  assert.equal(closed.selected?.version, 9);
+  assert.equal(duplicateClosed.selected?.version, 9);
+  assert.equal(paths.filter((path) => path.endsWith('/transition')).length, 1);
+  assert.equal(paths.filter((path) => path.endsWith('/closure-authorization')).length, 1);
+  assert.equal(paths.filter((path) => path.endsWith('/timeline')).length, 3);
+});
+
 test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {
   let event: RoadEventResponse = {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

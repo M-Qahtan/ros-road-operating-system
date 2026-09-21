@@ -909,6 +909,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FAILURE FROM AN ABANDONED INCIDENT VIEW CAN NO LONGER STALE OR MISLABEL THE INCIDENT THE OPERATOR IS CURRENTLY REVIEWING.** |
 | Next handoff | Make each critical dashboard action single-flight so repeated confirmation or rapid submission cannot emit duplicate mutation requests with distinct idempotency keys. |
 
+### Critical dashboard mutations are single-flight
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `e3ab805015af574d8f9ef6aecaf1cd9bdc37af09` was one hundred and seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | Each closure authorization or RoadEvent transition is now one controller-scoped flight through mutation and authenticated Timeline refresh. Repeated confirmation of the exact incident, version, action, and normalized reason joins the existing result and emits no second HTTP mutation. A different critical command arriving during that flight is rejected locally before HTTP and instructs the operator to wait and refresh. |
+| Concurrency acceptance | Concurrent duplicate authorization and closure calls must each emit exactly one authenticated mutation and one follow-up Timeline read. A competing reason or transition during either flight must fail locally. The guard must release only after the shared result settles, without changing server authority, version checks, or terminal-state rules. |
+| Local evidence | The focused operations-dashboard build and suite passed 40 of 40 after correcting one test-only Timeline count discovered by the first run. The full workspace passed 666 API, 40 dashboard, 36 mobile, and 8 domain tests (750 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Single-flight is an in-memory browser control, not durable idempotency across reloads or a claim that an ambiguous remote mutation did not commit. It grants no reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous authority. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **RAPID OR REPEATED CRITICAL CONFIRMATION CAN NO LONGER CREATE MULTIPLE MUTATION REQUESTS IN ONE DASHBOARD FLIGHT.** |
+| Next handoff | Bind a stable client operation identity to an exact critical command so an explicitly governed retry after an ambiguous transport outcome can reuse its idempotency key instead of creating a second logical mutation. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
