@@ -98,10 +98,13 @@ test('failed post-command reconciliation recovers and reopens the authoritative 
   };
   const mutationStarted = barrier();
   const mutationResponse = barrier();
+  const closureStarted = barrier();
+  const closureResponse = barrier();
   let failQueueReconciliation = false;
   let listReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
+  let transitionRequests = 0;
   const timeline: AuditTimelineEntryContract[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     assertTrustedRequest(init);
@@ -118,6 +121,29 @@ test('failed post-command reconciliation recovers and reopens the authoritative 
         beforeState: { version: 12 }, afterState: { version: 13 },
         reason: 'تفويض لا يعاد عند فشل المصالحة', traceId: 'trace-authoritative-recovery',
         occurredAt: '2026-08-20T10:00:00.000Z'
+      });
+      return ok(event);
+    }
+    if (target.pathname.endsWith('/transition')) {
+      transitionRequests += 1;
+      const body = JSON.parse(String(init?.body)) as {
+        readonly expectedVersion: number;
+        readonly nextStatus: string;
+        readonly reason: string;
+      };
+      assert.deepEqual(body, {
+        expectedVersion: 13,
+        nextStatus: 'CLOSED',
+        reason: 'إغلاق بشري بعد استعادة التفويض'
+      });
+      closureStarted.release();
+      await closureResponse.wait;
+      event = { ...event, status: 'CLOSED', version: 14, closureAuthorization: null };
+      timeline.push({
+        action: 'road_event.closed', actorType: 'SUPERVISOR', actorId,
+        beforeState: { version: 13 }, afterState: { version: 14 },
+        reason: body.reason, traceId: 'trace-recovered-closure',
+        occurredAt: '2026-08-20T10:01:00.000Z'
       });
       return ok(event);
     }
@@ -184,6 +210,39 @@ test('failed post-command reconciliation recovers and reopens the authoritative 
   assert.equal(recovered.timeline[0]?.action, 'road_event.closure_authorized');
   assert.deepEqual(recovered.timeline[0]?.afterState, { version: 13 });
   assert.equal(controller.canTransitionTo('CLOSED'), true);
+
+  const closure = controller.transition('CLOSED', 'إغلاق بشري بعد استعادة التفويض');
+  await closureStarted.wait;
+  await coordinator.request();
+  closureResponse.release();
+  const closureResult = await closure;
+  assert.equal(transitionRequests, 1);
+  assert.equal(closureResult.selected?.status, 'CLOSED');
+  assert.equal(closureResult.selected?.version, 14);
+  assert.equal(closureResult.selected?.closureAuthorization, null);
+  assert.deepEqual(closureResult.timeline.map((entry) => entry.action), [
+    'road_event.closure_authorized', 'road_event.closed'
+  ]);
+
+  await coordinator.flushAfterCriticalAction();
+  assert.equal(listReads, 4);
+  assert.equal(controller.state.selected, null);
+
+  const terminal = await controller.select(event.id);
+  assert.equal(timelineReads, 5);
+  assert.equal(terminal.selected?.status, 'CLOSED');
+  assert.equal(terminal.selected?.version, 14);
+  assert.equal(terminal.selected?.closureAuthorization, null);
+  assert.deepEqual(terminal.timeline.map((entry) => entry.action), [
+    'road_event.closure_authorized', 'road_event.closed'
+  ]);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  const requestCount = transitionRequests;
+  await assert.rejects(() => controller.transition('RECOVERY', 'محاولة إعادة فتح'), /الحالة النهائية/);
+  await assert.rejects(() => controller.authorizeClosure('محاولة تفويض جديد'), /الحالة النهائية/);
+  assert.equal(transitionRequests, requestCount);
+  assert.equal(mutationRequests, 1);
 });
 
 function ok<T>(data: T): Response {
