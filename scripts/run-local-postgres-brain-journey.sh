@@ -38,6 +38,7 @@ readonly journey_manifest_sha256="$(
     scripts/run-postgres-cognitive-closure-recovery.sh \
     scripts/run-postgres-closure-authorization-read.sh \
     scripts/run-postgres-closure-reauthorization-recovery.sh \
+    scripts/run-postgres-closure-reauthorization-finalize.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -53,6 +54,7 @@ readonly cognitive_closure_proof_file="$(mktemp)"
 readonly cognitive_closure_recovery_proof_file="$(mktemp)"
 readonly closure_authorization_read_proof_file="$(mktemp)"
 readonly closure_reauthorization_proof_file="$(mktemp)"
+readonly closure_reauthorization_finalize_proof_file="$(mktemp)"
 readonly post_restart_duplicate_log="$(mktemp)"
 readonly post_restart_wrong_purpose_log="$(mktemp)"
 readonly post_restart_wrong_tenant_log="$(mktemp)"
@@ -69,6 +71,7 @@ cleanup() {
   rm -f "$cognitive_closure_recovery_proof_file"
   rm -f "$closure_authorization_read_proof_file"
   rm -f "$closure_reauthorization_proof_file"
+  rm -f "$closure_reauthorization_finalize_proof_file"
   rm -f "$post_restart_duplicate_log"
   rm -f "$post_restart_wrong_purpose_log"
   rm -f "$post_restart_wrong_tenant_log"
@@ -285,6 +288,25 @@ if [[ "$closure_reauthorization_system_identifier_before_restart" != "$closure_r
   || "$closure_reauthorization_postmaster_started_at_before_restart" == "$closure_reauthorization_postmaster_started_at_after_restart" \
   || "$closure_reauthorization_state_after_restart" != "$closure_reauthorization_state_before_restart" ]]; then
   echo "Closure reauthorization did not survive PostgreSQL restart exactly: $closure_reauthorization_state_after_restart" >&2
+  exit 2
+fi
+export ROS_POSTGRES_CLOSURE_REAUTHORIZATION_FINALIZE_PROOF_FILE="$closure_reauthorization_finalize_proof_file"
+bash scripts/run-postgres-closure-reauthorization-finalize.sh
+mapfile -t closure_reauthorization_finalize_proof < "$closure_reauthorization_finalize_proof_file"
+if [[ "${#closure_reauthorization_finalize_proof[@]}" -ne 12 \
+  || "${closure_reauthorization_finalize_proof[0]}" != "POST_RESTART_CLOSURE_FINALIZATION" \
+  || "${closure_reauthorization_finalize_proof[1]}" != "VERIFIED" \
+  || "${closure_reauthorization_finalize_proof[2]}" != "HISTORICAL_AUTHORIZATION" \
+  || "${closure_reauthorization_finalize_proof[3]}" != "REJECTED" \
+  || "${closure_reauthorization_finalize_proof[4]}" != "EXACT_AUTHORIZATION" \
+  || "${closure_reauthorization_finalize_proof[5]}" != "CONSUMED" \
+  || "${closure_reauthorization_finalize_proof[6]}" != "DUPLICATE_RETRY" \
+  || "${closure_reauthorization_finalize_proof[7]}" != "REJECTED" \
+  || "${closure_reauthorization_finalize_proof[8]}" != "AUTHORIZATION_HISTORY" \
+  || "${closure_reauthorization_finalize_proof[9]}" != "8,10" \
+  || "${closure_reauthorization_finalize_proof[10]}" != "FINAL_STATE" \
+  || "${closure_reauthorization_finalize_proof[11]}" != "CLOSED|11" ]]; then
+  echo "Post-restart closure finalization proof was incomplete or unsafe: ${closure_reauthorization_finalize_proof[*]}" >&2
   exit 2
 fi
 readonly contact_recovery_state="$(
@@ -909,9 +931,14 @@ ROS_RECEIPT_CLOSURE_REAUTHORIZATION_STATE_BEFORE_RESTART="$closure_reauthorizati
 ROS_RECEIPT_CLOSURE_REAUTHORIZATION_STATE_AFTER_RESTART="$closure_reauthorization_state_after_restart" \
 ROS_RECEIPT_CLOSURE_REAUTHORIZATION_POSTMASTER_BEFORE="$closure_reauthorization_postmaster_started_at_before_restart" \
 ROS_RECEIPT_CLOSURE_REAUTHORIZATION_POSTMASTER_AFTER="$closure_reauthorization_postmaster_started_at_after_restart" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_HISTORICAL="${closure_reauthorization_finalize_proof[3]}" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_EXACT="${closure_reauthorization_finalize_proof[5]}" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_DUPLICATE="${closure_reauthorization_finalize_proof[7]}" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_HISTORY="${closure_reauthorization_finalize_proof[9]}" \
+ROS_RECEIPT_CLOSURE_FINALIZATION_STATE="${closure_reauthorization_finalize_proof[11]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v31",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v32",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -1047,6 +1074,17 @@ node -e '
       process.env.ROS_RECEIPT_CLOSURE_REAUTHORIZATION_POSTMASTER_BEFORE,
     closureReauthorizationPostmasterStartedAtAfterRestart:
       process.env.ROS_RECEIPT_CLOSURE_REAUTHORIZATION_POSTMASTER_AFTER,
+    postRestartClosureFinalizationVerified: true,
+    postRestartHistoricalAuthorization:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_HISTORICAL,
+    postRestartExactAuthorization:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_EXACT,
+    postRestartDuplicateClosureRetry:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_DUPLICATE,
+    postRestartClosureAuthorizationHistory:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_HISTORY,
+    postRestartClosureFinalState:
+      process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_STATE,
     result: "PASS",
     externalArchiveReceipt: null,
   };
