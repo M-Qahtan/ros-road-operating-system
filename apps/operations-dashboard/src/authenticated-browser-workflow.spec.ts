@@ -89,7 +89,7 @@ test('periodic queue refresh waits for a critical command and performs one authe
   assert.equal(controller.state.selected, null);
 });
 
-test('failed post-command reconciliation stays fail-closed and explicit refresh recovers without replay', async () => {
+test('failed post-command reconciliation recovers and reopens the authoritative outcome without replay', async () => {
   let event: RoadEventResponse = {
     id: '50505050-5050-4050-8050-505050505050',
     status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
@@ -100,7 +100,9 @@ test('failed post-command reconciliation stays fail-closed and explicit refresh 
   const mutationResponse = barrier();
   let failQueueReconciliation = false;
   let listReads = 0;
+  let timelineReads = 0;
   let mutationRequests = 0;
+  const timeline: AuditTimelineEntryContract[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     assertTrustedRequest(init);
     const target = new URL(String(input), 'https://dashboard.example.test');
@@ -111,9 +113,18 @@ test('failed post-command reconciliation stays fail-closed and explicit refresh 
       event = { ...event, version: 13, closureAuthorization: {
         actorId, reason: 'تفويض لا يعاد عند فشل المصالحة', authorizedAt: '2026-08-20T10:00:00.000Z'
       } };
+      timeline.push({
+        action: 'road_event.closure_authorized', actorType: 'SUPERVISOR', actorId,
+        beforeState: { version: 12 }, afterState: { version: 13 },
+        reason: 'تفويض لا يعاد عند فشل المصالحة', traceId: 'trace-authoritative-recovery',
+        occurredAt: '2026-08-20T10:00:00.000Z'
+      });
       return ok(event);
     }
-    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok(timeline);
+    }
     if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
     listReads += 1;
     if (failQueueReconciliation) {
@@ -162,6 +173,17 @@ test('failed post-command reconciliation stays fail-closed and explicit refresh 
   assert.equal(controller.state.stale, false);
   assert.equal(controller.state.selected, null);
   assert.deepEqual(controller.state.timeline, []);
+
+  const recovered = await controller.select(event.id);
+  assert.equal(listReads, 3);
+  assert.equal(mutationRequests, 1);
+  assert.equal(timelineReads, 3);
+  assert.equal(recovered.selected?.version, 13);
+  assert.equal(recovered.selected?.closureAuthorization?.actorId, actorId);
+  assert.equal(recovered.timeline.length, 1);
+  assert.equal(recovered.timeline[0]?.action, 'road_event.closure_authorized');
+  assert.deepEqual(recovered.timeline[0]?.afterState, { version: 13 });
+  assert.equal(controller.canTransitionTo('CLOSED'), true);
 });
 
 function ok<T>(data: T): Response {

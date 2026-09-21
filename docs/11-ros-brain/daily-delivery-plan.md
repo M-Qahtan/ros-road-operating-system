@@ -993,6 +993,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FAILED POST-COMMAND RECONCILIATION FAILS CLOSED AND RECOVERS WITHOUT REPLAYING THE HUMAN COMMAND.** |
 | Next handoff | After reconciliation recovery, reopen the incident and prove the accepted authorization and its append-only Timeline entry are read back exactly once, with controls derived only from the recovered server revision. |
 
+### Recovered incident reads the authoritative authorization exactly once
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-22, GitHub candidate `02485a51e9b393d06ac0086aa805eb3843f7cb8d` was one hundred and fifteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added evidence | The authenticated failure-and-recovery journey now reopens the incident after the explicit queue refresh and reads both detail and Timeline from the server. It receives the accepted supervisor authorization at version 13 and one `road_event.closure_authorized` record bound from version 12 to 13. |
+| Fail-closed acceptance | Recovery may not reconstruct authorization from local command memory or replay the POST. The selected incident, authorization actor, transition eligibility, and Timeline must all come from the post-recovery authenticated reads; the audit record must occur once and mutation count must remain one. |
+| Local evidence | The focused operations-dashboard build and suite passed 46 of 46. The journey performed three Timeline reads across initial selection, accepted-command reconciliation, and recovered re-selection; the final server view contained exactly one authorization record and enabled `CLOSED` only at recovered version 13. Queue reads remained three and the authorization POST remained one. The full workspace passed 666 API, 46 dashboard, 36 mobile, and 8 domain tests (756 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Reading a current authorization only enables the existing human-governed transition contract; it grants no autonomous closure, reopening, severity reduction, dispatch, activation, collection, or provider authority. Tenant, purpose, role, exact version, and append-only history remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **THE RECOVERED INCIDENT DERIVES ITS AUTHORIZATION AND CONTROL ELIGIBILITY ONLY FROM THE CURRENT SERVER REVISION AND ONE APPEND-ONLY AUDIT RECORD.** |
+| Next handoff | From the recovered version 13 only, submit the human-confirmed closure once, then prove the terminal server state and two-entry authorization/closure Timeline survive a fresh queue reconciliation without restoring any critical control. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
