@@ -59,6 +59,7 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   };
   const timeline: AuditTimelineEntryContract[] = [];
   const paths: string[] = [];
+  let failActiveSelection = false;
   const fetcher: typeof fetch = async (input, init) => {
     assertTrustedRequest(init);
     const target = new URL(String(input), 'https://dashboard.example.test');
@@ -80,7 +81,18 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
     }
     if (target.pathname === `/api/v1/road-events/${activeEvent.id}/timeline`) return ok([]);
     if (target.pathname.endsWith('/timeline')) return ok(timeline);
-    if (target.pathname === `/api/v1/road-events/${activeEvent.id}`) return ok(activeEvent);
+    if (target.pathname === `/api/v1/road-events/${activeEvent.id}`) {
+      if (failActiveSelection) {
+        const envelope: ApiEnvelope<never> = {
+          success: false,
+          data: null,
+          error: { code: 'DEPENDENCY_UNAVAILABLE', message: 'internal active incident read failed' },
+          traceId: 'trace-active-read-failure'
+        };
+        return new Response(JSON.stringify(envelope), { status: 503, headers: { 'content-type': 'application/json' } });
+      }
+      return ok(activeEvent);
+    }
     if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
     return ok({ items: [event, activeEvent], total: 2, limit: 100, offset: 0 });
   };
@@ -163,6 +175,25 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   assert.match(returnedTerminalHtml, /road_event\.closure_authorized/);
   assert.match(returnedTerminalHtml, /road_event\.closed/);
   assert.match(returnedTerminalHtml, /<select name="nextStatus" disabled>/);
+
+  failActiveSelection = true;
+  await controller.select(activeEvent.id);
+  const failedSelectionPathCount = paths.length;
+  assert.equal(controller.state.phase, 'failure');
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  await assert.rejects(() => controller.transition('RECOVERY', 'محاولة بعد فشل التحميل'), /اختر حدثًا/);
+  await assert.rejects(() => controller.authorizeClosure('محاولة تفويض بعد فشل التحميل'), /اختر حدثًا/);
+  assert.equal(paths.length, failedSelectionPathCount);
+  const failedSelectionHtml = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:03:00.000Z') });
+  assert.match(failedSelectionHtml, /البيانات قديمة/);
+  assert.match(failedSelectionHtml, /اختر حدثًا من القائمة/);
+  assert.doesNotMatch(failedSelectionHtml, /road_event\.closure_authorized|road_event\.closed/);
+  assert.doesNotMatch(failedSelectionHtml, /internal active incident read failed/);
   assert.deepEqual(paths, [
     'GET /api/v1/road-events',
     `GET /api/v1/road-events/${event.id}`,
@@ -177,7 +208,9 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
     `GET /api/v1/road-events/${activeEvent.id}`,
     `GET /api/v1/road-events/${activeEvent.id}/timeline`,
     `GET /api/v1/road-events/${event.id}`,
-    `GET /api/v1/road-events/${event.id}/timeline`
+    `GET /api/v1/road-events/${event.id}/timeline`,
+    `GET /api/v1/road-events/${activeEvent.id}`,
+    `GET /api/v1/road-events/${activeEvent.id}/timeline`
   ]);
 });
 

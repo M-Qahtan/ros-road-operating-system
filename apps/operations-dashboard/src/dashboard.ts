@@ -90,7 +90,14 @@ export class OperationsDashboardController {
         lastUpdatedAt: this.now().toISOString()
       };
     } catch (error) {
-      this.current = { ...this.current, phase: 'failure', error: error instanceof Error ? error.message : 'تعذر تحميل تفاصيل الحدث' };
+      this.current = {
+        ...this.current,
+        phase: 'failure',
+        selected: null,
+        timeline: [],
+        stale: true,
+        error: error instanceof Error ? error.message : 'تعذر تحميل تفاصيل الحدث'
+      };
     }
     return this.current;
   }

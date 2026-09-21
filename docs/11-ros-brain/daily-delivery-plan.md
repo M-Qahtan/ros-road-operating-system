@@ -825,6 +825,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **SWITCHING TO AN ACTIVE INCIDENT CANNOT LEAK ITS CONTROLS INTO A DURABLE CLOSED INCIDENT WHEN THE OPERATOR RETURNS.** |
 | Next handoff | Prove the same isolation when a stale active incident fails to load while the previously viewed closed incident remains fail-closed and cannot inherit stale controls or timeline data. |
 
+### Failed incident selection clears prior critical context
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `30774b660fe4660b4ca1c4310e8a0ab1aef4f4bd` was one hundred commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. |
+| Added behavior | If authenticated detail or timeline loading fails while changing incidents, the dashboard now clears the previous selected incident and its timeline, marks the state stale and failed, and renders no critical detail context until a fresh selection succeeds. |
+| Fail-closed acceptance | The prior closed incident's audit entries must disappear from the failed-selection detail view. Transition and closure-authorization capabilities remain false, direct invocation fails before the gateway, and the internal dependency error remains sanitized. |
+| Local evidence | The focused operations-dashboard suite passed 36 of 36 after correcting one expected-path fixture error found by the first run. The full workspace then passed 666 API, 36 dashboard, 36 mobile, and 8 domain tests (746 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey still cannot execute without Docker or Podman, so no live `v33` receipt is claimed. |
+| Safety limits | This is a read-failure isolation boundary. It grants no mutation, reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A FAILED INCIDENT SELECTION CAN NO LONGER RETAIN OR MISATTRIBUTE THE PREVIOUS INCIDENT'S CRITICAL DETAIL OR AUDIT TIMELINE.** |
+| Next handoff | Add an explicit retry path that can recover from the cleared failure state only through fresh authenticated detail and timeline reads, with controls derived solely from the recovered incident. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
