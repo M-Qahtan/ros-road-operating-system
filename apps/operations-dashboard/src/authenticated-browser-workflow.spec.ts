@@ -297,6 +297,69 @@ test('repeated critical confirmations share one authenticated mutation and rejec
   assert.equal(paths.filter((path) => path.endsWith('/timeline')).length, 3);
 });
 
+test('ambiguous critical retry requires a fresh read and reuses the exact idempotency key', async () => {
+  let event: RoadEventResponse = {
+    id: '44444444-4444-4444-8444-444444444444', status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 7, closureAuthorization: null,
+    severity: { level: 'S4', score: 96, confidence: 0.95, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const authorizationKeys: string[] = [];
+  const transitionKeys: string[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    const key = new Headers(init?.headers).get('idempotency-key');
+    if (target.pathname.endsWith('/closure-authorization')) {
+      assert.ok(key !== null);
+      authorizationKeys.push(key);
+      if (authorizationKeys.length === 1) throw new TypeError('connection reset after send');
+      const body = JSON.parse(String(init?.body)) as { readonly reason: string; readonly authorizedAt: string };
+      event = { ...event, version: 8, closureAuthorization: { actorId, reason: body.reason, authorizedAt: body.authorizedAt } };
+      return ok(event);
+    }
+    if (target.pathname.endsWith('/transition')) {
+      assert.ok(key !== null);
+      transitionKeys.push(key);
+      if (transitionKeys.length === 1) throw new TypeError('connection reset after send');
+      event = { ...event, status: 'CLOSED', version: 9 };
+      return ok(event);
+    }
+    assert.equal(key, null);
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+    return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(event.id);
+  await assert.rejects(() => controller.authorizeClosure('تحقق المشرف من سلامة الموقع'), /تعذر التحقق من نتيجة الإجراء/);
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+  await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /حدّث الحادث/);
+  await controller.select(event.id);
+  assert.equal(controller.canRetryAmbiguousCriticalAction(), true);
+  await controller.retryAmbiguousCriticalAction();
+  assert.equal(controller.state.selected?.version, 8);
+  assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(authorizationKeys.length, 2);
+  assert.equal(authorizationKeys[0], authorizationKeys[1]);
+
+  await assert.rejects(() => controller.transition('CLOSED', 'اكتملت مراجعة الإغلاق'), /تعذر التحقق من نتيجة الإجراء/);
+  assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+  await controller.select(event.id);
+  assert.equal(controller.canRetryAmbiguousCriticalAction(), true);
+  await controller.retryAmbiguousCriticalAction();
+  assert.equal(controller.state.selected?.status, 'CLOSED');
+  assert.equal(controller.state.selected?.version, 9);
+  assert.equal(transitionKeys.length, 2);
+  assert.equal(transitionKeys[0], transitionKeys[1]);
+  assert.notEqual(authorizationKeys[0], transitionKeys[0]);
+});
+
 test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {
   let event: RoadEventResponse = {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

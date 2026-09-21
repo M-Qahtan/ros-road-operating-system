@@ -29,6 +29,12 @@ const TERMINAL_STATUSES: ReadonlySet<RoadEventStatusContract> = new Set([
   'CLOSED', 'FALSE_POSITIVE', 'DUPLICATE'
 ]);
 
+type CriticalOperation =
+  | { readonly action: 'TRANSITION'; readonly incidentId: string; readonly operationId: string; readonly key: string;
+      readonly request: TransitionRoadEventRequest }
+  | { readonly action: 'AUTHORIZE_CLOSURE'; readonly incidentId: string; readonly operationId: string; readonly key: string;
+      readonly request: AuthorizeClosureRequest };
+
 export class SupersededCriticalActionError extends Error {
   override readonly name = 'SupersededCriticalActionError';
 
@@ -48,6 +54,7 @@ export class OperationsDashboardController {
   private failedSelectionId: string | null = null;
   private retryInFlight: Promise<DashboardState> | null = null;
   private criticalActionInFlight: { readonly key: string; readonly result: Promise<DashboardState> } | null = null;
+  private ambiguousCriticalOperation: CriticalOperation | null = null;
   private readIntent = 0;
 
   constructor(
@@ -154,18 +161,13 @@ export class OperationsDashboardController {
     if (!this.canTransition()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تنفيذ قرار حرج' : 'لا تملك صلاحية تغيير حالة الحدث');
     if (!this.canTransitionTo(nextStatus)) throw new Error('لا يمكن إغلاق الحدث دون تفويض إغلاق موثّق');
     const normalizedReason = this.requireReason(reason);
-    const request: TransitionRoadEventRequest = { expectedVersion: selected.version, nextStatus, reason: normalizedReason };
-    const key = JSON.stringify(['TRANSITION', selected.id, selected.version, nextStatus, normalizedReason]);
-    return this.runCriticalAction(key, async () => {
-      try {
-        const updated = await this.gateway.transition(selected.id, request);
-        return this.applyCriticalResult(updated, intent);
-      } catch (error) {
-        this.applyRemoteFailure(error, intent);
-        if (intent !== this.readIntent) throw new SupersededCriticalActionError(selected.id, 'TRANSITION');
-        throw error;
-      }
-    });
+    const operation: CriticalOperation = {
+      action: 'TRANSITION', incidentId: selected.id, operationId: crypto.randomUUID(),
+      key: JSON.stringify(['TRANSITION', selected.id, selected.version, nextStatus, normalizedReason]),
+      request: { expectedVersion: selected.version, nextStatus, reason: normalizedReason }
+    };
+    this.ambiguousCriticalOperation = null;
+    return this.executeCriticalOperation(operation, intent);
   }
 
   async authorizeClosure(reason: string): Promise<DashboardState> {
@@ -173,19 +175,48 @@ export class OperationsDashboardController {
     const intent = this.readIntent;
     if (TERMINAL_STATUSES.has(selected.status)) throw new Error('الحالة النهائية لا تقبل تفويض إغلاق جديد');
     if (!this.canAuthorizeClosure()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تفويض الإغلاق' : 'تفويض إغلاق S3/S4 متاح للمشرف فقط');
-    const request: AuthorizeClosureRequest = {
-      expectedVersion: selected.version,
-      reason: this.requireReason(reason),
-      authorizedAt: this.now().toISOString()
+    const normalizedReason = this.requireReason(reason);
+    const operation: CriticalOperation = {
+      action: 'AUTHORIZE_CLOSURE', incidentId: selected.id, operationId: crypto.randomUUID(),
+      key: JSON.stringify(['AUTHORIZE_CLOSURE', selected.id, selected.version, normalizedReason]),
+      request: { expectedVersion: selected.version, reason: normalizedReason, authorizedAt: this.now().toISOString() }
     };
-    const key = JSON.stringify(['AUTHORIZE_CLOSURE', selected.id, selected.version, request.reason]);
-    return this.runCriticalAction(key, async () => {
+    this.ambiguousCriticalOperation = null;
+    return this.executeCriticalOperation(operation, intent);
+  }
+
+  canRetryAmbiguousCriticalAction(): boolean {
+    const operation = this.ambiguousCriticalOperation;
+    const selected = this.current.selected;
+    if (operation === null || selected === null || this.current.phase !== 'ready' || this.current.stale
+      || selected.id !== operation.incidentId || selected.version !== operation.request.expectedVersion) return false;
+    return operation.action === 'TRANSITION'
+      ? this.canTransitionTo(operation.request.nextStatus)
+      : this.canAuthorizeClosure();
+  }
+
+  async retryAmbiguousCriticalAction(): Promise<DashboardState> {
+    const operation = this.ambiguousCriticalOperation;
+    if (operation === null) throw new Error('لا يوجد إجراء حرج غامض لإعادة التحقق منه');
+    if (!this.canRetryAmbiguousCriticalAction()) {
+      throw new Error('حدّث الحادث وتحقق من بقاء الإصدار والصلاحية قبل إعادة الإجراء الغامض');
+    }
+    return this.executeCriticalOperation(operation, this.readIntent);
+  }
+
+  private executeCriticalOperation(operation: CriticalOperation, intent: number): Promise<DashboardState> {
+    return this.runCriticalAction(operation.key, async () => {
       try {
-        const updated = await this.gateway.authorizeClosure(selected.id, request);
+        const updated = operation.action === 'TRANSITION'
+          ? await this.gateway.transition(operation.incidentId, operation.request, operation.operationId)
+          : await this.gateway.authorizeClosure(operation.incidentId, operation.request, operation.operationId);
+        if (this.ambiguousCriticalOperation?.operationId === operation.operationId) this.ambiguousCriticalOperation = null;
         return this.applyCriticalResult(updated, intent);
       } catch (error) {
         this.applyRemoteFailure(error, intent);
-        if (intent !== this.readIntent) throw new SupersededCriticalActionError(selected.id, 'AUTHORIZE_CLOSURE');
+        if (intent !== this.readIntent) throw new SupersededCriticalActionError(operation.incidentId, operation.action);
+        if (error instanceof ApiRequestError && error.outcomeAmbiguous) this.ambiguousCriticalOperation = operation;
+        else if (this.ambiguousCriticalOperation?.operationId === operation.operationId) this.ambiguousCriticalOperation = null;
         throw error;
       }
     });

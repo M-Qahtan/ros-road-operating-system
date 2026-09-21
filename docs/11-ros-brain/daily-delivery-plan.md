@@ -921,6 +921,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **RAPID OR REPEATED CRITICAL CONFIRMATION CAN NO LONGER CREATE MULTIPLE MUTATION REQUESTS IN ONE DASHBOARD FLIGHT.** |
 | Next handoff | Bind a stable client operation identity to an exact critical command so an explicitly governed retry after an ambiguous transport outcome can reuse its idempotency key instead of creating a second logical mutation. |
 
+### Ambiguous critical retries preserve operation identity
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `342f9f83e3cfff627021e22deb93507f73572d97` was one hundred and eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | The dashboard controller now creates one UUID operation identity for each exact closure authorization or transition and passes it to the HTTP gateway as the idempotency key. Only an ambiguous POST outcome retains that complete command and key. An explicit retry is denied while the view is stale, and becomes eligible only after an authenticated incident read shows the same incident, expected version, authority, and transition eligibility; the retry then reuses the original body and key. |
+| Fail-closed acceptance | Network ambiguity for both authorization and closure must stale the view and disable retry. A fresh authenticated detail and Timeline read with the unchanged version must be required before retry. The second POST must carry the exact first key, while a distinct logical command must receive a different key. Success clears retry eligibility; version, terminal-state, role, and closure-authorization gates remain authoritative. |
+| Local evidence | The focused operations-dashboard build and suite passed 41 of 41. The authenticated HTTP journey proved fresh-read gating and exact key reuse for both closure authorization and final transition, with distinct identities between commands. The full workspace passed 666 API, 41 dashboard, 36 mobile, and 8 domain tests (751 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | The retry record is in-memory and incident/version-bound; it does not survive reload, infer a remote outcome, bypass a fresh read, or authorize an altered payload. It grants no reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous authority. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **AN AMBIGUOUS CRITICAL RETRY CAN NO LONGER CREATE A SECOND LOGICAL MUTATION IDENTITY AFTER THE REQUIRED FRESH READ.** |
+| Next handoff | Expose this guarded retry in the Arabic browser workflow only after a successful authenticated refresh, with the original incident and action visible and every altered or stale context disabled. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
