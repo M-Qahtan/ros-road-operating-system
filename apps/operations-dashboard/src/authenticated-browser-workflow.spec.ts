@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ApiEnvelope, RoadEventResponse } from '@ros/contracts';
 import { HttpRoadEventGateway, type AuditTimelineEntryContract } from './api-client.js';
 import { OperationsDashboardController, SupersededCriticalActionError } from './dashboard.js';
+import { CriticalRefreshCoordinator } from './critical-refresh-coordinator.js';
 import { HumanSafetyCommandCenterController } from './human-safety-command-center.js';
 import {
   HttpHumanSafetyCommandCenterGateway,
@@ -23,6 +24,70 @@ const session = {
   purpose: 'HUMAN_SAFETY_RESPONSE',
   getAccessToken: () => Promise.resolve('trusted-browser-token')
 };
+
+test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
+  let event: RoadEventResponse = {
+    id: '49494949-4949-4949-8949-494949494949',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 7, closureAuthorization: null,
+    severity: { level: 'S4', score: 96, confidence: 0.95, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const mutationStarted = barrier();
+  const mutationResponse = barrier();
+  let listReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization')) {
+      mutationRequests += 1;
+      mutationStarted.release();
+      await mutationResponse.wait;
+      event = { ...event, version: 8, closureAuthorization: {
+        actorId, reason: 'تفويض بشري صالح', authorizedAt: '2026-08-20T10:00:00.000Z'
+      } };
+      return ok(event);
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+    listReads += 1;
+    return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+  const coordinator = new CriticalRefreshCoordinator(
+    () => controller.isCriticalActionInFlight(),
+    async () => { await controller.load(); }
+  );
+
+  await coordinator.request();
+  await controller.select(event.id);
+  const mutation = controller.authorizeClosure('تفويض بشري صالح');
+  await mutationStarted.wait;
+  await Promise.all([coordinator.request(), coordinator.request()]);
+  assert.equal(listReads, 1);
+  assert.equal(controller.state.selected?.id, event.id);
+
+  mutationResponse.release();
+  const mutationResult = await mutation;
+  assert.equal(mutationResult.selected?.version, 8);
+  assert.equal(mutationRequests, 1);
+  assert.equal(timelineReads, 2);
+  assert.equal(listReads, 1);
+
+  await coordinator.flushAfterCriticalAction();
+  await coordinator.flushAfterCriticalAction();
+  assert.equal(listReads, 2);
+  assert.equal(mutationRequests, 1);
+  assert.equal(controller.state.phase, 'ready');
+  assert.equal(controller.state.selected, null);
+});
 
 function ok<T>(data: T): Response {
   const envelope: ApiEnvelope<T> = { success: true, data, error: null, traceId: 'trace-http-workflow' };

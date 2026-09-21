@@ -969,6 +969,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A LATE CRITICAL RESPONSE CANNOT REVIVE INCIDENT OR RETRY STATE AFTER THE BROWSER SESSION HAS BEEN DISCARDED.** |
 | Next handoff | Suspend periodic queue refresh while a critical mutation is in flight, then require one authenticated refresh after it settles so the dashboard timer cannot supersede a valid human command. |
 
+### Periodic refresh cannot supersede an in-flight human command
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `683f739f5fc96982f6b29419877e0c13197724f4` was one hundred and thirteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | Browser queue refresh now observes the controller's critical-action flight state. A timer tick or refresh click during a closure authorization or transition is deferred; repeated ticks coalesce, and exactly one authenticated queue refresh runs after the critical action settles. The same boundary covers a governed retry of an ambiguous critical action. |
+| Fail-closed acceptance | No list read may advance the dashboard read intent while a critical mutation is pending. The mutation must complete once with its original idempotency identity and follow-up Timeline read before the deferred queue reconciliation runs, and repeated refresh requests must not multiply either the mutation or the reconciliation. |
+| Local evidence | The focused operations-dashboard build and suite passed 45 of 45. The authenticated race held a real authorization POST open, requested two queue refreshes, observed zero interim list reads, accepted the command at version 8 with one POST and its Timeline reconciliation, then performed exactly one deferred authenticated list read. The full workspace passed 666 API, 45 dashboard, 36 mobile, and 8 domain tests (755 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Deferring a browser list read grants no mutation, reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous authority. Server-side version, authorization, tenant, purpose, append-only history, and human-review checks remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A PERIODIC QUEUE REFRESH CANNOT INVALIDATE AN IN-FLIGHT HUMAN COMMAND; ONE AUTHENTICATED RECONCILIATION FOLLOWS IT.** |
+| Next handoff | Prove that failure of the mandatory post-command reconciliation leaves the dashboard fail-closed with no critical controls, then that one explicit authenticated refresh can recover it without repeating the command. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

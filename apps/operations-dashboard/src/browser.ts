@@ -1,6 +1,7 @@
 import type { RosRoleContract } from '@ros/contracts';
 import { HttpRoadEventGateway } from './api-client.js';
 import { OperationsDashboardController } from './dashboard.js';
+import { CriticalRefreshCoordinator } from './critical-refresh-coordinator.js';
 import { renderDashboard } from './render.js';
 import {
   requireTrustedBrowserSession,
@@ -36,7 +37,7 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
       ambiguousCriticalAction: controller.ambiguousCriticalActionView(),
       now: new Date()
     });
-    appRoot.querySelector('#refresh-button')?.addEventListener('click', () => { void reload(); });
+    appRoot.querySelector('#refresh-button')?.addEventListener('click', () => { void refreshCoordinator.request(); });
     appRoot.querySelector('#retry-selection-button')?.addEventListener('click', () => { void retrySelection(); });
     appRoot.querySelector('#verify-critical-action-button')?.addEventListener('click', () => { void verifyCriticalAction(); });
     appRoot.querySelector('#retry-critical-action-button')?.addEventListener('click', () => { void retryCriticalAction(); });
@@ -54,6 +55,10 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
     try { await controller.load(); paint(); }
     finally { reloadInFlight = false; }
   }
+  const refreshCoordinator = new CriticalRefreshCoordinator(
+    () => controller.isCriticalActionInFlight(),
+    reload
+  );
 
   async function select(id: string): Promise<void> { await controller.select(id); paint(); }
   async function retrySelection(): Promise<void> { await controller.retrySelection(); paint(); }
@@ -70,7 +75,7 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
     if (!window.confirm(`إعادة إرسال ${label} الأصلي للحادث ${action.incidentId}؟ لن يُنشأ أمر جديد.`)) return;
     try { await controller.retryAmbiguousCriticalAction(); }
     catch (error) { window.alert(error instanceof Error ? error.message : 'تعذر إعادة إرسال الإجراء الأصلي'); }
-    paint();
+    finally { paint(); await refreshCoordinator.flushAfterCriticalAction(); }
   }
 
   async function transition(event: SubmitEvent): Promise<void> {
@@ -82,7 +87,7 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
     if (!window.confirm(`تأكيد انتقال الحالة إلى ${nextStatus}؟ سيتم تسجيل القرار نهائيًا.`)) return;
     try { await controller.transition(nextStatus, reason); }
     catch (error) { window.alert(error instanceof Error ? error.message : 'تعذر تنفيذ الانتقال'); }
-    paint();
+    finally { paint(); await refreshCoordinator.flushAfterCriticalAction(); }
   }
 
   async function authorizeClosure(event: SubmitEvent): Promise<void> {
@@ -92,15 +97,15 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
     if (!window.confirm('هذا تفويض حرج لإغلاق S3/S4 وسيظهر في سجل التدقيق. هل تريد المتابعة؟')) return;
     try { await controller.authorizeClosure(reason); }
     catch (error) { window.alert(error instanceof Error ? error.message : 'تعذر تفويض الإغلاق'); }
-    paint();
+    finally { paint(); await refreshCoordinator.flushAfterCriticalAction(); }
   }
 
   window.addEventListener('pagehide', () => { controller.discardBrowserSession(); });
   window.addEventListener('pageshow', (event) => {
-    if (event.persisted) void reload();
+    if (event.persisted) void refreshCoordinator.request();
   });
-  void reload();
-  window.setInterval(() => { void reload(); }, 10_000);
+  void refreshCoordinator.request();
+  window.setInterval(() => { void refreshCoordinator.request(); }, 10_000);
 }
 
 function renderSessionFailure(appRoot: HTMLElement): void {

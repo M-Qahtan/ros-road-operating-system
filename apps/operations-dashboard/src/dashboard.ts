@@ -74,6 +74,9 @@ export class OperationsDashboardController {
   ) {}
 
   get state(): DashboardState { return this.current; }
+  isCriticalActionInFlight(): boolean {
+    return this.criticalActionInFlight !== null;
+  }
   canAuthorizeClosure(): boolean {
     return this.current.phase === 'ready' && this.current.selected !== null && !this.current.stale
       && !TERMINAL_STATUSES.has(this.current.selected.status)
