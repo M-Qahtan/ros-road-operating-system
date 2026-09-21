@@ -121,6 +121,69 @@ test('newer authenticated operator intent supersedes an in-flight selection retr
   ]);
 });
 
+test('newer authenticated selection supersedes delayed critical completion and follow-up timeline', async () => {
+  let criticalEvent: RoadEventResponse = {
+    id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 7, closureAuthorization: null,
+    severity: { level: 'S4', score: 95, confidence: 0.96, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const newerEvent: RoadEventResponse = {
+    ...criticalEvent, id: '99999999-9999-4999-8999-999999999999', version: 2, closureAuthorization: null,
+    severity: { level: 'S2', score: 48, confidence: 0.9, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+  };
+  let authorizationBarrier: ReturnType<typeof barrier> | null = null;
+  let transitionBarrier: ReturnType<typeof barrier> | null = null;
+  const paths: string[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    paths.push(`${init?.method ?? 'GET'} ${target.pathname}`);
+    if (target.pathname.endsWith('/closure-authorization')) {
+      if (authorizationBarrier !== null) await authorizationBarrier.wait;
+      const body = JSON.parse(String(init?.body)) as { readonly reason: string; readonly authorizedAt: string };
+      criticalEvent = { ...criticalEvent, version: 8,
+        closureAuthorization: { actorId, reason: body.reason, authorizedAt: body.authorizedAt } };
+      return ok(criticalEvent);
+    }
+    if (target.pathname.endsWith('/transition')) {
+      if (transitionBarrier !== null) await transitionBarrier.wait;
+      criticalEvent = { ...criticalEvent, status: 'CLOSED', version: 9 };
+      return ok(criticalEvent);
+    }
+    if (target.pathname === `/api/v1/road-events/${criticalEvent.id}`) return ok(criticalEvent);
+    if (target.pathname === `/api/v1/road-events/${newerEvent.id}`) return ok(newerEvent);
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    return ok({ items: [criticalEvent, newerEvent], total: 2, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(criticalEvent.id);
+  authorizationBarrier = barrier();
+  const authorization = controller.authorizeClosure('تحقق المشرف من سلامة الموقع');
+  await controller.select(newerEvent.id);
+  authorizationBarrier.release();
+  const authorizationResult = await authorization;
+  assert.equal(authorizationResult.selected?.id, newerEvent.id);
+  assert.equal(controller.state.selected?.id, newerEvent.id);
+  assert.equal(paths.filter((path) => path === `GET /api/v1/road-events/${criticalEvent.id}/timeline`).length, 1);
+
+  await controller.select(criticalEvent.id);
+  assert.equal(controller.canTransitionTo('CLOSED'), true);
+  transitionBarrier = barrier();
+  const transition = controller.transition('CLOSED', 'اكتملت مراجعة الإغلاق');
+  await controller.select(newerEvent.id);
+  transitionBarrier.release();
+  const transitionResult = await transition;
+  assert.equal(transitionResult.selected?.id, newerEvent.id);
+  assert.equal(controller.state.selected?.id, newerEvent.id);
+  assert.equal(controller.state.stale, false);
+  assert.equal(paths.filter((path) => path === `GET /api/v1/road-events/${criticalEvent.id}/timeline`).length, 2);
+});
+
 test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {
   let event: RoadEventResponse = {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

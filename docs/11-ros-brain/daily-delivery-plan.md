@@ -885,6 +885,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A STALE RETRY RESULT CAN NO LONGER OVERWRITE A NEWER OPERATOR SELECTION OR QUEUE RELOAD.** |
 | Next handoff | Bind delayed closure-authorization and transition follow-up results to the initiating incident intent so a critical completion cannot overwrite a newer operator selection. |
 
+### Critical completion remains bound to its initiating incident
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `00ac342dc9b02a02883acd2f70c33852c01218a2` was one hundred and five commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | Closure authorization and RoadEvent transition now retain the authenticated read intent from which the operator initiated them. If the operator selects another incident before the response arrives, the completed mutation cannot replace that newer selection, fetch an obsolete follow-up timeline, or mark the newer view stale. |
+| Race acceptance | A delayed closure authorization followed by a newer selection must leave the newer incident selected and emit no post-completion timeline read for the old incident. After a fresh read exposes the exact authorization revision, a delayed closure transition must obey the same rule. The remote request is not misrepresented as cancelled; only its obsolete browser-state projection is discarded. |
+| Local evidence | The focused operations-dashboard build and suite passed 38 of 38. The authenticated journey proved both delayed authorization and delayed closure transition while moving to a newer incident. The full workspace passed 666 API, 38 dashboard, 36 mobile, and 8 domain tests (748 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | The intent binding does not revoke or cancel a mutation already accepted by the API. It prevents only stale browser-state projection; the durable API and append-only audit remain authoritative and require a fresh authenticated read when the operator returns. It grants no reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous authority. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A DELAYED CRITICAL COMPLETION CAN NO LONGER OVERWRITE OR STALE A NEWER INCIDENT VIEW.** |
+| Next handoff | Prove that a delayed critical failure after the operator changes selection leaves the newer view healthy and reports the failure as belonging only to the originating incident. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

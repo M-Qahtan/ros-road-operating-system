@@ -136,6 +136,7 @@ export class OperationsDashboardController {
 
   async transition(nextStatus: RoadEventStatusContract, reason: string): Promise<DashboardState> {
     const selected = this.requireSelected();
+    const intent = this.readIntent;
     if (TERMINAL_STATUSES.has(selected.status)) throw new Error('الحالة النهائية لا تقبل انتقالات جديدة');
     if (!this.canTransition()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تنفيذ قرار حرج' : 'لا تملك صلاحية تغيير حالة الحدث');
     if (!this.canTransitionTo(nextStatus)) throw new Error('لا يمكن إغلاق الحدث دون تفويض إغلاق موثّق');
@@ -143,15 +144,16 @@ export class OperationsDashboardController {
     const request: TransitionRoadEventRequest = { expectedVersion: selected.version, nextStatus, reason: normalizedReason };
     try {
       const updated = await this.gateway.transition(selected.id, request);
-      return this.applyCriticalResult(updated);
+      return this.applyCriticalResult(updated, intent);
     } catch (error) {
-      this.applyRemoteFailure(error);
+      this.applyRemoteFailure(error, intent);
       throw error;
     }
   }
 
   async authorizeClosure(reason: string): Promise<DashboardState> {
     const selected = this.requireSelected();
+    const intent = this.readIntent;
     if (TERMINAL_STATUSES.has(selected.status)) throw new Error('الحالة النهائية لا تقبل تفويض إغلاق جديد');
     if (!this.canAuthorizeClosure()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تفويض الإغلاق' : 'تفويض إغلاق S3/S4 متاح للمشرف فقط');
     const request: AuthorizeClosureRequest = {
@@ -161,16 +163,18 @@ export class OperationsDashboardController {
     };
     try {
       const updated = await this.gateway.authorizeClosure(selected.id, request);
-      return this.applyCriticalResult(updated);
+      return this.applyCriticalResult(updated, intent);
     } catch (error) {
-      this.applyRemoteFailure(error);
+      this.applyRemoteFailure(error, intent);
       throw error;
     }
   }
 
-  private async applyCriticalResult(updated: RoadEventResponse): Promise<DashboardState> {
+  private async applyCriticalResult(updated: RoadEventResponse, intent: number): Promise<DashboardState> {
+    if (intent !== this.readIntent) return this.current;
     try {
       const timeline = await this.gateway.timeline(updated.id);
+      if (intent !== this.readIntent) return this.current;
       this.current = {
         ...this.current,
         events: this.current.events.map((event) => event.id === updated.id ? updated : event),
@@ -182,12 +186,14 @@ export class OperationsDashboardController {
       };
       return this.current;
     } catch (error) {
-      this.applyRemoteFailure(error);
+      if (intent !== this.readIntent) return this.current;
+      this.applyRemoteFailure(error, intent);
       throw error;
     }
   }
 
-  private applyRemoteFailure(error: unknown): void {
+  private applyRemoteFailure(error: unknown, intent: number = this.readIntent): void {
+    if (intent !== this.readIntent) return;
     if (!(error instanceof ApiRequestError)) return;
     this.current = { ...this.current, stale: true, error: error.message };
   }
