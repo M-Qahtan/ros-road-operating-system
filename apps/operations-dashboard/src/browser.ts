@@ -32,9 +32,11 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
     appRoot.innerHTML = renderDashboard(controller.state, {
       canTransition: controller.canTransition(),
       canAuthorizeClosure: controller.canAuthorizeClosure(),
+      canRetrySelection: controller.canRetrySelection(),
       now: new Date()
     });
     appRoot.querySelector('#refresh-button')?.addEventListener('click', () => { void reload(); });
+    appRoot.querySelector('#retry-selection-button')?.addEventListener('click', () => { void retrySelection(); });
     appRoot.querySelectorAll<HTMLElement>('[data-event-id]').forEach((button) => {
       button.addEventListener('click', () => { void select(button.dataset.eventId ?? ''); });
     });
@@ -51,6 +53,7 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
   }
 
   async function select(id: string): Promise<void> { await controller.select(id); paint(); }
+  async function retrySelection(): Promise<void> { await controller.retrySelection(); paint(); }
 
   async function transition(event: SubmitEvent): Promise<void> {
     event.preventDefault();

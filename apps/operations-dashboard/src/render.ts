@@ -64,15 +64,23 @@ function detail(state: DashboardState, canTransition: boolean, canAuthorize: boo
   </section>`;
 }
 
-export function renderDashboard(state: DashboardState, options: { readonly canTransition: boolean; readonly canAuthorizeClosure: boolean; readonly now: Date }): string {
+export function renderDashboard(state: DashboardState, options: {
+  readonly canTransition: boolean;
+  readonly canAuthorizeClosure: boolean;
+  readonly canRetrySelection?: boolean;
+  readonly now: Date;
+}): string {
   const banner = state.stale ? '<div class="alert warning" role="status">البيانات قديمة. حدّث الشاشة قبل اتخاذ قرار حرج.</div>' : '';
   const error = state.error === null ? '' : `<div class="alert error" role="alert">${escape(state.error)}</div>`;
+  const retry = options.canRetrySelection === true
+    ? '<button id="retry-selection-button" type="button">إعادة تحميل الحدث المحدد</button>'
+    : '';
   const listContent = state.phase === 'loading' ? '<p role="status">جارٍ تحميل الأحداث…</p>'
     : state.phase === 'empty' ? '<p class="muted">لا توجد أحداث نشطة.</p>'
     : state.events.map((event) => eventRow(event, options.now, state.selected?.id ?? null)).join('');
   return `<main id="main-content" tabindex="-1">
     <header class="topbar"><div><p class="eyebrow">ROS — مركز العمليات</p><h1>إدارة أحداث الطريق</h1></div><button id="refresh-button" type="button">تحديث البيانات</button></header>
-    ${banner}${error}
+    ${banner}${error}${retry}
     <div class="layout"><section class="panel queue" aria-labelledby="queue-title"><div class="section-title"><h2 id="queue-title">قائمة الأحداث</h2><span>${state.events.length}</span></div>${listContent}</section>
     ${detail(state, options.canTransition, options.canAuthorizeClosure)}</div>
   </main>`;

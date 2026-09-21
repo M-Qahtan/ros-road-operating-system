@@ -33,6 +33,7 @@ export class OperationsDashboardController {
   private current: DashboardState = {
     phase: 'loading', events: [], selected: null, timeline: [], stale: false, error: null, lastUpdatedAt: null
   };
+  private failedSelectionId: string | null = null;
 
   constructor(
     private readonly gateway: RoadEventGateway,
@@ -58,6 +59,7 @@ export class OperationsDashboardController {
   }
 
   async load(): Promise<DashboardState> {
+    this.failedSelectionId = null;
     this.current = { ...this.current, phase: 'loading', error: null };
     try {
       const page = await this.gateway.list();
@@ -89,7 +91,9 @@ export class OperationsDashboardController {
         error: null,
         lastUpdatedAt: this.now().toISOString()
       };
+      this.failedSelectionId = null;
     } catch (error) {
+      this.failedSelectionId = id;
       this.current = {
         ...this.current,
         phase: 'failure',
@@ -100,6 +104,17 @@ export class OperationsDashboardController {
       };
     }
     return this.current;
+  }
+
+  async retrySelection(): Promise<DashboardState> {
+    const id = this.failedSelectionId;
+    if (id === null) throw new Error('لا توجد محاولة تحميل فاشلة لإعادتها');
+    return this.select(id);
+  }
+
+  canRetrySelection(): boolean {
+    return this.failedSelectionId !== null && this.current.phase === 'failure'
+      && this.current.selected === null && this.current.stale;
   }
 
   refreshStaleness(): DashboardState {

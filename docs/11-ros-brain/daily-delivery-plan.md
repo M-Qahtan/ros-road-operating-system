@@ -837,6 +837,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FAILED INCIDENT SELECTION CAN NO LONGER RETAIN OR MISATTRIBUTE THE PREVIOUS INCIDENT'S CRITICAL DETAIL OR AUDIT TIMELINE.** |
 | Next handoff | Add an explicit retry path that can recover from the cleared failure state only through fresh authenticated detail and timeline reads, with controls derived solely from the recovered incident. |
 
+### Explicit authenticated incident-selection retry
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `2777511f33d0d0f36fa337dc32d921e368d382ef` was one hundred and one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | A failed authenticated incident selection now exposes one explicit retry control bound to that failed incident. Retry performs fresh detail and timeline reads; success clears stale/failure state and derives every control from the newly read incident. A queue reload or successful selection clears retry eligibility. |
+| Fail-closed acceptance | Failure retains no selected incident or prior timeline and exposes no critical control. Recovery must add exactly two authenticated GET requests, restore only the selected active incident with its own empty timeline and withheld closure authorization, remove the retry control, and reject a second retry before network access. |
+| Local evidence | The focused operations-dashboard build and suite passed 36 of 36. The full workspace passed 666 API, 36 dashboard, 36 mobile, and 8 domain tests (746 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Retry is read-only and carries the existing authenticated Tenant + Purpose scope. It grants no mutation, reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A CLEARED SELECTION FAILURE CAN RECOVER ONLY THROUGH FRESH AUTHENTICATED DETAIL AND TIMELINE READS, WITHOUT REUSING THE PRIOR INCIDENT'S CONTROLS OR AUDIT DATA.** |
+| Next handoff | Prove that a failed retry remains cleared and fail-closed, then that a later explicit retry can recover through another fresh read pair without duplicating or restoring stale context. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

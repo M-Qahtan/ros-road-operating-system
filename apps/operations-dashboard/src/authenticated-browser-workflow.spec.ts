@@ -126,6 +126,7 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   assert.equal(controller.state.selected?.version, 9);
   assert.equal(controller.canTransition(), false);
   assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(controller.canRetrySelection(), false);
   const terminalPathCount = paths.length;
   await assert.rejects(() => controller.transition('RECOVERY', 'محاولة إعادة فتح'), /الحالة النهائية/);
   await assert.rejects(() => controller.authorizeClosure('محاولة تفويض جديد'), /الحالة النهائية/);
@@ -185,15 +186,36 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   assert.deepEqual(controller.state.timeline, []);
   assert.equal(controller.canTransition(), false);
   assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(controller.canRetrySelection(), true);
   await assert.rejects(() => controller.transition('RECOVERY', 'محاولة بعد فشل التحميل'), /اختر حدثًا/);
   await assert.rejects(() => controller.authorizeClosure('محاولة تفويض بعد فشل التحميل'), /اختر حدثًا/);
   assert.equal(paths.length, failedSelectionPathCount);
   const failedSelectionHtml = renderDashboard(controller.state, { canTransition: controller.canTransition(),
-    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:03:00.000Z') });
+    canAuthorizeClosure: controller.canAuthorizeClosure(), canRetrySelection: controller.canRetrySelection(),
+    now: new Date('2026-08-20T10:03:00.000Z') });
   assert.match(failedSelectionHtml, /البيانات قديمة/);
   assert.match(failedSelectionHtml, /اختر حدثًا من القائمة/);
+  assert.match(failedSelectionHtml, /id="retry-selection-button"/);
   assert.doesNotMatch(failedSelectionHtml, /road_event\.closure_authorized|road_event\.closed/);
   assert.doesNotMatch(failedSelectionHtml, /internal active incident read failed/);
+
+  failActiveSelection = false;
+  const recovered = await controller.retrySelection();
+  const recoveredSelectionPathCount = paths.length;
+  assert.equal(controller.state.phase, 'ready');
+  assert.equal(controller.state.stale, false);
+  assert.equal(recovered.selected?.id, activeEvent.id);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), true);
+  const recoveredSelectionHtml = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), canRetrySelection: controller.canRetrySelection(),
+    now: new Date('2026-08-20T10:04:00.000Z') });
+  assert.match(recoveredSelectionHtml, new RegExp(activeEvent.id));
+  assert.match(recoveredSelectionHtml, /لا يوجد تفويض — الإغلاق غير متاح/);
+  assert.doesNotMatch(recoveredSelectionHtml, /retry-selection-button|road_event\.closure_authorized|road_event\.closed/);
+  await assert.rejects(() => controller.retrySelection(), /لا توجد محاولة تحميل فاشلة/);
+  assert.equal(paths.length, recoveredSelectionPathCount);
   assert.deepEqual(paths, [
     'GET /api/v1/road-events',
     `GET /api/v1/road-events/${event.id}`,
@@ -209,6 +231,8 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
     `GET /api/v1/road-events/${activeEvent.id}/timeline`,
     `GET /api/v1/road-events/${event.id}`,
     `GET /api/v1/road-events/${event.id}/timeline`,
+    `GET /api/v1/road-events/${activeEvent.id}`,
+    `GET /api/v1/road-events/${activeEvent.id}/timeline`,
     `GET /api/v1/road-events/${activeEvent.id}`,
     `GET /api/v1/road-events/${activeEvent.id}/timeline`
   ]);
