@@ -339,12 +339,28 @@ test('ambiguous critical retry requires a fresh read and reuses the exact idempo
   await assert.rejects(() => controller.authorizeClosure('تحقق المشرف من سلامة الموقع'), /تعذر التحقق من نتيجة الإجراء/);
   assert.equal(controller.state.stale, true);
   assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+  let retryHtml = renderDashboard(controller.state, {
+    canTransition: controller.canTransition(), canAuthorizeClosure: controller.canAuthorizeClosure(),
+    ambiguousCriticalAction: controller.ambiguousCriticalActionView(), now: new Date('2026-08-20T10:00:00.000Z')
+  });
+  assert.match(retryHtml, /إجراء حرج بنتيجة غير مؤكدة/);
+  assert.match(retryHtml, new RegExp(event.id));
+  assert.match(retryHtml, /تفويض الإغلاق/);
+  assert.match(retryHtml, /verify-critical-action-button/);
+  assert.doesNotMatch(retryHtml, /retry-critical-action-button/);
   await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /حدّث الحادث/);
   await controller.select(event.id);
   assert.equal(controller.canRetryAmbiguousCriticalAction(), true);
+  retryHtml = renderDashboard(controller.state, {
+    canTransition: controller.canTransition(), canAuthorizeClosure: controller.canAuthorizeClosure(),
+    ambiguousCriticalAction: controller.ambiguousCriticalActionView(), now: new Date('2026-08-20T10:00:00.000Z')
+  });
+  assert.match(retryHtml, /retry-critical-action-button/);
+  assert.doesNotMatch(retryHtml, /verify-critical-action-button/);
   await controller.retryAmbiguousCriticalAction();
   assert.equal(controller.state.selected?.version, 8);
   assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
   assert.equal(authorizationKeys.length, 2);
   assert.equal(authorizationKeys[0], authorizationKeys[1]);
 
@@ -358,6 +374,45 @@ test('ambiguous critical retry requires a fresh read and reuses the exact idempo
   assert.equal(transitionKeys.length, 2);
   assert.equal(transitionKeys[0], transitionKeys[1]);
   assert.notEqual(authorizationKeys[0], transitionKeys[0]);
+});
+
+test('authenticated refresh disables an ambiguous retry when the incident revision changed', async () => {
+  let event: RoadEventResponse = {
+    id: '45454545-4545-4545-8545-454545454545', status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 7, closureAuthorization: null,
+    severity: { level: 'S4', score: 96, confidence: 0.95, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization')) {
+      event = { ...event, version: 8, closureAuthorization: {
+        actorId, reason: 'سبق تسجيل التفويض', authorizedAt: '2026-08-20T10:00:00.000Z'
+      } };
+      throw new TypeError('connection reset after send');
+    }
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+    return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(event.id);
+  await assert.rejects(() => controller.authorizeClosure('تحقق المشرف من سلامة الموقع'), /تعذر التحقق من نتيجة الإجراء/);
+  await controller.select(event.id);
+  assert.equal(controller.ambiguousCriticalActionView()?.status, 'INVALIDATED');
+  assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+  const html = renderDashboard(controller.state, {
+    canTransition: controller.canTransition(), canAuthorizeClosure: controller.canAuthorizeClosure(),
+    ambiguousCriticalAction: controller.ambiguousCriticalActionView(), now: new Date('2026-08-20T10:00:00.000Z')
+  });
+  assert.match(html, /تغير الحادث أو الإصدار أو الصلاحية/);
+  assert.match(html, /إعادة الإرسال غير متاحة/);
+  assert.doesNotMatch(html, /retry-critical-action-button|verify-critical-action-button/);
 });
 
 test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {

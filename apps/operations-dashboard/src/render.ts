@@ -1,5 +1,11 @@
 import type { RoadEventResponse, RoadEventStatusContract, SeverityLevelContract } from '@ros/contracts';
-import { attachedSignalIds, DashboardState, deriveHumanSafetyStatus, slaAgeMinutes } from './dashboard.js';
+import {
+  attachedSignalIds,
+  type AmbiguousCriticalActionView,
+  DashboardState,
+  deriveHumanSafetyStatus,
+  slaAgeMinutes
+} from './dashboard.js';
 
 const STATUS_AR: Readonly<Record<RoadEventStatusContract, string>> = {
   DETECTED: 'مكتشف', VALIDATING: 'قيد التحقق', CONFIRMED: 'مؤكد', SAFETY_ASSESSMENT: 'تقييم السلامة',
@@ -64,10 +70,28 @@ function detail(state: DashboardState, canTransition: boolean, canAuthorize: boo
   </section>`;
 }
 
+function ambiguousCriticalAction(action: AmbiguousCriticalActionView | null | undefined): string {
+  if (action === null || action === undefined) return '';
+  const actionLabel = action.action === 'AUTHORIZE_CLOSURE'
+    ? 'تفويض الإغلاق'
+    : `انتقال الحالة إلى ${STATUS_AR[action.nextStatus ?? 'UNDER_REVIEW']}`;
+  const controls = action.status === 'REFRESH_REQUIRED'
+    ? '<p>النتيجة غير مؤكدة. يلزم تحقق مصادق جديد من الحادث قبل إتاحة إعادة الإرسال.</p><button id="verify-critical-action-button" type="button">تحقق من الحادث والأمر الأصلي</button>'
+    : action.status === 'RETRY_ALLOWED'
+      ? '<p>تطابق الحادث والإصدار والصلاحية بعد التحقق المصادق. ستُعاد العملية الأصلية دون إنشاء أمر جديد.</p><button id="retry-critical-action-button" type="button" class="primary">إعادة إرسال الأمر الأصلي</button>'
+      : '<p>تغير الحادث أو الإصدار أو الصلاحية؛ إعادة الإرسال محجوبة.</p><button type="button" disabled>إعادة الإرسال غير متاحة</button>';
+  return `<section class="panel critical" aria-labelledby="critical-retry-title">
+    <h2 id="critical-retry-title">إجراء حرج بنتيجة غير مؤكدة</h2>
+    <p><strong>${escape(actionLabel)}</strong> — الحادث <code>${escape(action.incidentId)}</code> — الإصدار ${action.expectedVersion}</p>
+    ${controls}
+  </section>`;
+}
+
 export function renderDashboard(state: DashboardState, options: {
   readonly canTransition: boolean;
   readonly canAuthorizeClosure: boolean;
   readonly canRetrySelection?: boolean;
+  readonly ambiguousCriticalAction?: AmbiguousCriticalActionView | null;
   readonly now: Date;
 }): string {
   const banner = state.stale ? '<div class="alert warning" role="status">البيانات قديمة. حدّث الشاشة قبل اتخاذ قرار حرج.</div>' : '';
@@ -80,7 +104,7 @@ export function renderDashboard(state: DashboardState, options: {
     : state.events.map((event) => eventRow(event, options.now, state.selected?.id ?? null)).join('');
   return `<main id="main-content" tabindex="-1">
     <header class="topbar"><div><p class="eyebrow">ROS — مركز العمليات</p><h1>إدارة أحداث الطريق</h1></div><button id="refresh-button" type="button">تحديث البيانات</button></header>
-    ${banner}${error}${retry}
+    ${banner}${error}${retry}${ambiguousCriticalAction(options.ambiguousCriticalAction)}
     <div class="layout"><section class="panel queue" aria-labelledby="queue-title"><div class="section-title"><h2 id="queue-title">قائمة الأحداث</h2><span>${state.events.length}</span></div>${listContent}</section>
     ${detail(state, options.canTransition, options.canAuthorizeClosure)}</div>
   </main>`;

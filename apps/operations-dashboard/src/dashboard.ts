@@ -35,6 +35,16 @@ type CriticalOperation =
   | { readonly action: 'AUTHORIZE_CLOSURE'; readonly incidentId: string; readonly operationId: string; readonly key: string;
       readonly request: AuthorizeClosureRequest };
 
+export type AmbiguousCriticalActionStatus = 'REFRESH_REQUIRED' | 'RETRY_ALLOWED' | 'INVALIDATED';
+
+export interface AmbiguousCriticalActionView {
+  readonly incidentId: string;
+  readonly action: 'TRANSITION' | 'AUTHORIZE_CLOSURE';
+  readonly expectedVersion: number;
+  readonly nextStatus: RoadEventStatusContract | null;
+  readonly status: AmbiguousCriticalActionStatus;
+}
+
 export class SupersededCriticalActionError extends Error {
   override readonly name = 'SupersededCriticalActionError';
 
@@ -193,6 +203,24 @@ export class OperationsDashboardController {
     return operation.action === 'TRANSITION'
       ? this.canTransitionTo(operation.request.nextStatus)
       : this.canAuthorizeClosure();
+  }
+
+  ambiguousCriticalActionView(): AmbiguousCriticalActionView | null {
+    const operation = this.ambiguousCriticalOperation;
+    if (operation === null) return null;
+    const selected = this.current.selected;
+    const status: AmbiguousCriticalActionStatus = this.current.phase !== 'ready' || selected === null || this.current.stale
+      ? 'REFRESH_REQUIRED'
+      : selected.id !== operation.incidentId || selected.version !== operation.request.expectedVersion
+        ? 'INVALIDATED'
+        : this.canRetryAmbiguousCriticalAction() ? 'RETRY_ALLOWED' : 'INVALIDATED';
+    return {
+      incidentId: operation.incidentId,
+      action: operation.action,
+      expectedVersion: operation.request.expectedVersion,
+      nextStatus: operation.action === 'TRANSITION' ? operation.request.nextStatus : null,
+      status
+    };
   }
 
   async retryAmbiguousCriticalAction(): Promise<DashboardState> {

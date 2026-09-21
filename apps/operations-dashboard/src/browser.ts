@@ -33,10 +33,13 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
       canTransition: controller.canTransition(),
       canAuthorizeClosure: controller.canAuthorizeClosure(),
       canRetrySelection: controller.canRetrySelection(),
+      ambiguousCriticalAction: controller.ambiguousCriticalActionView(),
       now: new Date()
     });
     appRoot.querySelector('#refresh-button')?.addEventListener('click', () => { void reload(); });
     appRoot.querySelector('#retry-selection-button')?.addEventListener('click', () => { void retrySelection(); });
+    appRoot.querySelector('#verify-critical-action-button')?.addEventListener('click', () => { void verifyCriticalAction(); });
+    appRoot.querySelector('#retry-critical-action-button')?.addEventListener('click', () => { void retryCriticalAction(); });
     appRoot.querySelectorAll<HTMLElement>('[data-event-id]').forEach((button) => {
       button.addEventListener('click', () => { void select(button.dataset.eventId ?? ''); });
     });
@@ -54,6 +57,21 @@ function startDashboard(appRoot: HTMLElement, session: TrustedBrowserSession): v
 
   async function select(id: string): Promise<void> { await controller.select(id); paint(); }
   async function retrySelection(): Promise<void> { await controller.retrySelection(); paint(); }
+  async function verifyCriticalAction(): Promise<void> {
+    const action = controller.ambiguousCriticalActionView();
+    if (action === null || action.status !== 'REFRESH_REQUIRED') return;
+    await controller.select(action.incidentId);
+    paint();
+  }
+  async function retryCriticalAction(): Promise<void> {
+    const action = controller.ambiguousCriticalActionView();
+    if (action === null || action.status !== 'RETRY_ALLOWED') return;
+    const label = action.action === 'AUTHORIZE_CLOSURE' ? 'تفويض الإغلاق' : 'انتقال الحالة';
+    if (!window.confirm(`إعادة إرسال ${label} الأصلي للحادث ${action.incidentId}؟ لن يُنشأ أمر جديد.`)) return;
+    try { await controller.retryAmbiguousCriticalAction(); }
+    catch (error) { window.alert(error instanceof Error ? error.message : 'تعذر إعادة إرسال الإجراء الأصلي'); }
+    paint();
+  }
 
   async function transition(event: SubmitEvent): Promise<void> {
     event.preventDefault();
