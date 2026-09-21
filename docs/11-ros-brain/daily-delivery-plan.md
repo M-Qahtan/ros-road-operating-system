@@ -750,6 +750,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE V30 CONTRACT NOW REQUIRES A ZERO-WRITE STALE ROLLBACK, A WITHHELD REVISION-9 READ, AND ONE EXACT REVISION-9 REAUTHORIZATION THAT PRESERVES THE REVISION-8 HISTORY. LIVE ENGINE EXECUTION REMAINS OPEN.** |
 | Next handoff | Run the clean `v30` journey on Docker or Podman and fix the first actual SQL, transaction, or receipt discrepancy before accepting the receipt. |
 
+### Post-restart durability of exact closure reauthorization
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `fdc349d5c3950fd931bc62d00be267928ec72e1c` was ninety-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty starting worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | After the exact revision-9 replacement authorization produces revision 10, the disposable journey now records the cluster identity and complete reauthorization state, performs a distinct third PostgreSQL restart, and requires the same current authorization and append-only history afterward. |
+| Restart acceptance | Before and after restart, the state must remain exactly `RECOVERY|10|AUTHORIZED|8,10|8,10|1|<historical-v8-journal-md5>`: the current journal match remains actionable only for revision 10, journal and authorization-audit histories remain `[8,10]`, exactly one current closure-authorization outbox event remains, and the historical revision-8 journal hash cannot change. The cluster system identifier must remain stable while the postmaster start time must change. |
+| Receipt boundary | Receipt `ros-brain.local-postgres-journey-receipt.v31` is withheld unless the complete state is equal before and after the distinct restart and the restart identity chain is continuous. The receipt records both states and both postmaster start times; `externalArchiveReceipt` remains null. |
+| Local evidence | Shell syntax checks and the focused PostgreSQL harness contract passed 38 of 38. The full workspace passed 664 API, 35 dashboard, 36 mobile, and 8 domain tests (743 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live journey cannot execute without Docker or Podman, so no PostgreSQL `v31` receipt or live restart result is claimed. |
+| Safety limits | This is a fail-closed journey and receipt contract, not live-engine evidence. It grants no collection, severity reduction, incident closure, dispatch, provider call, activation, or autonomous action; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **THE V31 RECEIPT IS NOW BLOCKED UNLESS THE EXACT REVISION-10 REAUTHORIZATION, `[8,10]` APPEND-ONLY HISTORY, SINGLE OUTBOX WRITE, AND HISTORICAL REVISION-8 HASH SURVIVE A DISTINCT POSTGRESQL RESTART.** |
+| Next handoff | Run the clean `v31` journey on Docker or Podman and fix the first actual SQL, transaction, restart, or receipt discrepancy before accepting the receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
