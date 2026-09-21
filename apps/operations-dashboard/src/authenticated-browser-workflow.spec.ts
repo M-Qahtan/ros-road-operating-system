@@ -483,6 +483,73 @@ test('page exit and trusted-session replacement discard ambiguous operation iden
   assert.doesNotMatch(`${browserSource}\n${controllerSource}`, /localStorage|sessionStorage|indexedDB/);
 });
 
+test('late critical success or ambiguous failure cannot repopulate a restored page after session discard', async () => {
+  for (const outcome of ['SUCCESS', 'AMBIGUOUS_FAILURE'] as const) {
+    let event: RoadEventResponse = {
+      id: outcome === 'SUCCESS'
+        ? '47474747-4747-4747-8747-474747474747'
+        : '48484848-4848-4848-8848-484848484848',
+      status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+      occurredAt: '2026-08-20T09:00:00.000Z', version: 7, closureAuthorization: null,
+      severity: { level: 'S4', score: 96, confidence: 0.95, reasonCodes: ['life_threat'], requiresHumanReview: true }
+    };
+    const mutationStarted = barrier();
+    const mutationResponse = barrier();
+    let timelineReads = 0;
+    let mutationRequests = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      assertTrustedRequest(init);
+      const target = new URL(String(input), 'https://dashboard.example.test');
+      if (target.pathname.endsWith('/closure-authorization')) {
+        mutationRequests += 1;
+        mutationStarted.release();
+        await mutationResponse.wait;
+        if (outcome === 'AMBIGUOUS_FAILURE') throw new TypeError('connection reset after send');
+        event = { ...event, version: 8, closureAuthorization: {
+          actorId, reason: 'تفويض وصل بعد مغادرة الصفحة', authorizedAt: '2026-08-20T10:00:00.000Z'
+        } };
+        return ok(event);
+      }
+      if (target.pathname.endsWith('/timeline')) {
+        timelineReads += 1;
+        return ok([]);
+      }
+      if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
+      return ok({ items: [event], total: 1, limit: 100, offset: 0 });
+    };
+    const controller = new OperationsDashboardController(
+      new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+      () => new Date('2026-08-20T10:00:00.000Z')
+    );
+
+    await controller.load();
+    await controller.select(event.id);
+    const mutation = controller.authorizeClosure('مراجعة بشرية قبل مغادرة الصفحة');
+    await mutationStarted.wait;
+    controller.discardBrowserSession();
+    await controller.load();
+    assert.equal(controller.state.phase, 'ready');
+    assert.equal(controller.state.selected, null);
+    assert.deepEqual(controller.state.timeline, []);
+    assert.equal(controller.state.stale, false);
+    assert.equal(controller.state.error, null);
+
+    mutationResponse.release();
+    if (outcome === 'SUCCESS') await mutation;
+    else await assert.rejects(mutation, SupersededCriticalActionError);
+
+    assert.equal(mutationRequests, 1);
+    assert.equal(timelineReads, 1);
+    assert.equal(controller.state.selected, null);
+    assert.deepEqual(controller.state.timeline, []);
+    assert.equal(controller.state.stale, false);
+    assert.equal(controller.state.error, null);
+    assert.equal(controller.ambiguousCriticalActionView(), null);
+    assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+    await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
+  }
+});
+
 test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {
   let event: RoadEventResponse = {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

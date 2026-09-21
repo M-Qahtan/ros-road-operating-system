@@ -957,6 +957,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AN AMBIGUOUS CRITICAL COMMAND CANNOT CROSS A BROWSER OR TRUSTED-SESSION BOUNDARY.** |
 | Next handoff | Prove that a critical response completing after page exit cannot repopulate cleared incident state, Timeline, or retry authority when the page is restored. |
 
+### Late critical responses cannot repopulate a restored browser page
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `3b51b4b79d5d067a33fddc726a29da244ff5b372` was one hundred and twelve commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added evidence | The authenticated browser race now holds a real closure-authorization POST open, discards the browser session, restores the queue through a fresh authenticated list read, and only then releases the old request. Both a successful mutation response and an ambiguous transport failure are exercised against that restored view. |
+| Fail-closed acceptance | Neither late result may select the originating incident, fetch its Timeline, mark the restored queue stale, expose an error from the abandoned session, retain an ambiguous command, or enable retry. The abandoned mutation must still have emitted exactly one POST, and its completion must be ignored by the newer browser intent. |
+| Local evidence | The focused operations-dashboard build and suite passed 44 of 44. Across both delayed outcomes, the restored view remained ready with no selected incident, empty Timeline, no stale/error state, no ambiguous-operation view, and no retry authority. Exactly one mutation was emitted and the only Timeline read was the original pre-exit selection. The full workspace passed 666 API, 44 dashboard, 36 mobile, and 8 domain tests (754 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Ignoring an abandoned browser response does not infer whether its server transaction committed. Subsequent decisions still require authenticated server state and version checks. This proof grants no reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous authority. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A LATE CRITICAL RESPONSE CANNOT REVIVE INCIDENT OR RETRY STATE AFTER THE BROWSER SESSION HAS BEEN DISCARDED.** |
+| Next handoff | Suspend periodic queue refresh while a critical mutation is in flight, then require one authenticated refresh after it settles so the dashboard timer cannot supersede a valid human command. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
