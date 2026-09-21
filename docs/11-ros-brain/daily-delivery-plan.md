@@ -897,6 +897,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A DELAYED CRITICAL COMPLETION CAN NO LONGER OVERWRITE OR STALE A NEWER INCIDENT VIEW.** |
 | Next handoff | Prove that a delayed critical failure after the operator changes selection leaves the newer view healthy and reports the failure as belonging only to the originating incident. |
 
+### Superseded critical failure remains incident-scoped
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `f92f4252ae7b1411557f746150b245b0b7d7975a` was one hundred and six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added behavior | If a closure-authorization or transition request fails after the operator has selected another incident, the controller now raises a sanitized incident-scoped failure carrying the originating incident ID and action type. It does not copy the old request's stale or error state into the newer incident view. |
+| Fail-closed acceptance | The delayed failure message must name only the initiating incident and action, omit the server's internal detail, and require reopening the originating incident to verify its outcome. The newer incident must remain selected, non-stale, error-free, and governed solely by its own controls. |
+| Local evidence | The focused operations-dashboard build and suite passed 39 of 39. The authenticated HTTP journey delayed an authorization failure until after a newer incident was selected and verified incident attribution, sanitization, and healthy newer-state isolation. The full workspace passed 666 API, 39 dashboard, 36 mobile, and 8 domain tests (749 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | This browser error type does not infer whether an ambiguous remote mutation committed. It grants no retry, reopening, collection, severity reduction, dispatch, activation, provider call, or autonomous authority; a fresh authenticated read remains required. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A FAILURE FROM AN ABANDONED INCIDENT VIEW CAN NO LONGER STALE OR MISLABEL THE INCIDENT THE OPERATOR IS CURRENTLY REVIEWING.** |
+| Next handoff | Make each critical dashboard action single-flight so repeated confirmation or rapid submission cannot emit duplicate mutation requests with distinct idempotency keys. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

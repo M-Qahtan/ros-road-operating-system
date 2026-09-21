@@ -29,6 +29,18 @@ const TERMINAL_STATUSES: ReadonlySet<RoadEventStatusContract> = new Set([
   'CLOSED', 'FALSE_POSITIVE', 'DUPLICATE'
 ]);
 
+export class SupersededCriticalActionError extends Error {
+  override readonly name = 'SupersededCriticalActionError';
+
+  constructor(
+    readonly incidentId: string,
+    readonly action: 'TRANSITION' | 'AUTHORIZE_CLOSURE'
+  ) {
+    const label = action === 'TRANSITION' ? 'انتقال الحالة' : 'تفويض الإغلاق';
+    super(`تعذر إكمال ${label} للحادث ${incidentId} بعد انتقال العرض. افتح الحادث مجددًا للتحقق من نتيجته.`);
+  }
+}
+
 export class OperationsDashboardController {
   private current: DashboardState = {
     phase: 'loading', events: [], selected: null, timeline: [], stale: false, error: null, lastUpdatedAt: null
@@ -147,6 +159,7 @@ export class OperationsDashboardController {
       return this.applyCriticalResult(updated, intent);
     } catch (error) {
       this.applyRemoteFailure(error, intent);
+      if (intent !== this.readIntent) throw new SupersededCriticalActionError(selected.id, 'TRANSITION');
       throw error;
     }
   }
@@ -166,6 +179,7 @@ export class OperationsDashboardController {
       return this.applyCriticalResult(updated, intent);
     } catch (error) {
       this.applyRemoteFailure(error, intent);
+      if (intent !== this.readIntent) throw new SupersededCriticalActionError(selected.id, 'AUTHORIZE_CLOSURE');
       throw error;
     }
   }

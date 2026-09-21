@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ApiEnvelope, RoadEventResponse } from '@ros/contracts';
 import { HttpRoadEventGateway, type AuditTimelineEntryContract } from './api-client.js';
-import { OperationsDashboardController } from './dashboard.js';
+import { OperationsDashboardController, SupersededCriticalActionError } from './dashboard.js';
 import { HumanSafetyCommandCenterController } from './human-safety-command-center.js';
 import {
   HttpHumanSafetyCommandCenterGateway,
@@ -182,6 +182,56 @@ test('newer authenticated selection supersedes delayed critical completion and f
   assert.equal(controller.state.selected?.id, newerEvent.id);
   assert.equal(controller.state.stale, false);
   assert.equal(paths.filter((path) => path === `GET /api/v1/road-events/${criticalEvent.id}/timeline`).length, 2);
+});
+
+test('delayed critical failure is attributed to its originating incident without staling the newer view', async () => {
+  const originatingEvent: RoadEventResponse = {
+    id: '77777777-7777-4777-8777-777777777777', status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-08-20T09:00:00.000Z', version: 7, closureAuthorization: null,
+    severity: { level: 'S4', score: 95, confidence: 0.96, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const newerEvent: RoadEventResponse = {
+    ...originatingEvent, id: '66666666-6666-4666-8666-666666666666', version: 2,
+    severity: { level: 'S2', score: 48, confidence: 0.9, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+  };
+  const failureBarrier = barrier();
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization')) {
+      await failureBarrier.wait;
+      const envelope: ApiEnvelope<never> = { success: false, data: null,
+        error: { code: 'DEPENDENCY_UNAVAILABLE', message: 'internal delayed authorization failure' },
+        traceId: 'trace-superseded-critical-failure' };
+      return new Response(JSON.stringify(envelope), { status: 503, headers: { 'content-type': 'application/json' } });
+    }
+    if (target.pathname === `/api/v1/road-events/${originatingEvent.id}`) return ok(originatingEvent);
+    if (target.pathname === `/api/v1/road-events/${newerEvent.id}`) return ok(newerEvent);
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    return ok({ items: [originatingEvent, newerEvent], total: 2, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-08-20T10:00:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(originatingEvent.id);
+  const authorization = controller.authorizeClosure('تحقق المشرف من سلامة الموقع');
+  await controller.select(newerEvent.id);
+  failureBarrier.release();
+  await assert.rejects(authorization, (error: unknown) => {
+    assert.ok(error instanceof SupersededCriticalActionError);
+    assert.equal(error.incidentId, originatingEvent.id);
+    assert.equal(error.action, 'AUTHORIZE_CLOSURE');
+    assert.match(error.message, new RegExp(originatingEvent.id));
+    assert.doesNotMatch(error.message, /internal delayed authorization failure/);
+    return true;
+  });
+  assert.equal(controller.state.selected?.id, newerEvent.id);
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.error, null);
+  assert.equal(controller.canTransition(), true);
 });
 
 test('authenticated RoadEvent browser workflow withholds closure until the exact authorized revision', async () => {
