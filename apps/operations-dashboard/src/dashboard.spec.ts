@@ -41,6 +41,18 @@ class ConflictGateway extends FakeGateway {
   }
 }
 
+class ClosedGateway extends FakeGateway {
+  private readonly closed = { ...roadEvent, status: 'CLOSED' as const, version: 11 };
+  override list(): Promise<RoadEventPageResponse> {
+    this.calls.push('list');
+    return Promise.resolve({ items: [this.closed], total: 1, limit: 100, offset: 0 });
+  }
+  override getById(id: string): Promise<RoadEventResponse> {
+    this.calls.push(`get:${id}`);
+    return Promise.resolve(this.closed);
+  }
+}
+
 test('renders Arabic-first queue, safety, signals, audit and accessible critical controls', async () => {
   const gateway = new FakeGateway();
   const controller = new OperationsDashboardController(gateway, { roles: ['SUPERVISOR'] }, () => new Date('2026-07-25T03:10:00.000Z'));
@@ -97,6 +109,33 @@ test('journal-withheld authorization keeps the incident reviewable and blocks cl
   assert.match(html, new RegExp(roadEvent.id));
   assert.match(html, /لا يوجد تفويض — الإغلاق غير متاح/);
   assert.match(html, /<option value="CLOSED" disabled>/);
+});
+
+test('terminal closed incident remains visible but blocks every critical control before gateway access', async () => {
+  const gateway = new ClosedGateway();
+  const controller = new OperationsDashboardController(
+    gateway,
+    { roles: ['SUPERVISOR'] },
+    () => new Date('2026-07-25T03:10:00.000Z')
+  );
+  await controller.load();
+  await controller.select(roadEvent.id);
+
+  assert.equal(controller.state.selected?.status, 'CLOSED');
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  await assert.rejects(() => controller.transition('RECOVERY', 'محاولة إعادة فتح'), /الحالة النهائية/);
+  await assert.rejects(() => controller.authorizeClosure('محاولة تفويض جديد'), /الحالة النهائية/);
+  assert.equal(gateway.calls.some((call) => call.startsWith('transition:') || call.startsWith('authorize:')), false);
+
+  const html = renderDashboard(controller.state, {
+    canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(),
+    now: new Date('2026-07-25T03:10:00.000Z')
+  });
+  assert.match(html, /تم استهلاك التفويض — الحالة مغلقة نهائيًا/);
+  assert.match(html, /<select name="nextStatus" disabled>/);
+  assert.match(html, /<form id="closure-form"[^>]*aria-disabled="true"/);
 });
 
 test('remote conflict makes the selected RoadEvent stale and disables critical controls', async () => {

@@ -100,6 +100,16 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   await controller.transition('CLOSED', 'اكتملت مراجعة الإغلاق');
   assert.equal(controller.state.selected?.status, 'CLOSED');
   assert.equal(controller.state.selected?.version, 9);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  const terminalPathCount = paths.length;
+  await assert.rejects(() => controller.transition('RECOVERY', 'محاولة إعادة فتح'), /الحالة النهائية/);
+  await assert.rejects(() => controller.authorizeClosure('محاولة تفويض جديد'), /الحالة النهائية/);
+  assert.equal(paths.length, terminalPathCount);
+  const terminalHtml = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), now: new Date('2026-08-20T10:00:00.000Z') });
+  assert.match(terminalHtml, /تم استهلاك التفويض — الحالة مغلقة نهائيًا/);
+  assert.match(terminalHtml, /<select name="nextStatus" disabled>/);
   assert.deepEqual(paths, [
     'GET /api/v1/road-events',
     `GET /api/v1/road-events/${event.id}`,

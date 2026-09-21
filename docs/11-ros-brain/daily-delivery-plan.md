@@ -789,6 +789,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE V33 RECEIPT IS NOW BLOCKED UNLESS THE CLOSED REVISION-11 INCIDENT REMAINS TERMINAL, ITS CONSUMED AUTHORIZATION REMAINS WITHHELD, AND ITS SINGLE AUDIT/OUTBOX WRITES AND `[8,10]` HISTORY SURVIVE A DISTINCT POSTGRESQL RESTART EXACTLY.** |
 | Next handoff | Run the clean `v33` journey on Docker or Podman and fix the first actual SQL, transaction, terminal-state, restart, or receipt discrepancy before accepting the receipt. |
 
+### Terminal incident controls in the authenticated dashboard
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `9c556bc94640f752c6ad6e9574f2c0b7cfba3a26` was ninety-seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty starting worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | A terminal RoadEvent (`CLOSED`, `FALSE_POSITIVE`, or `DUPLICATE`) remains visible in the operations dashboard, but the controller now disables every transition and closure-authorization capability. Direct method invocation fails locally before the authenticated HTTP gateway can emit a request. |
+| Operator presentation | A closed incident explicitly renders `تم استهلاك التفويض — الحالة مغلقة نهائيًا`; the transition selector and closure-authorization form are disabled. A retained authorization in an immediate closure response cannot make the terminal state actionable again. |
+| Local evidence | The focused operations-dashboard suite passed 36 of 36. The full workspace passed 666 API, 36 dashboard, 36 mobile, and 8 domain tests (746 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey still exits 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | This is a browser/controller fail-closed boundary. It does not reopen or mutate an incident, call an external service, dispatch, activate, or grant authority. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **A TERMINAL INCIDENT CAN STILL BE REVIEWED, BUT IT CANNOT EMIT A NEW TRANSITION OR CLOSURE-AUTHORIZATION REQUEST FROM THE OPERATIONS DASHBOARD.** |
+| Next handoff | Prove the same zero-request behavior after an explicit authenticated refresh returns the durable closed revision with `closureAuthorization=null`, preserving the visible audit timeline. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

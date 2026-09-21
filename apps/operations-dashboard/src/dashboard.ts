@@ -25,6 +25,9 @@ export interface OperationsSession {
 }
 
 const DEFAULT_STALE_AFTER_MS = 30_000;
+const TERMINAL_STATUSES: ReadonlySet<RoadEventStatusContract> = new Set([
+  'CLOSED', 'FALSE_POSITIVE', 'DUPLICATE'
+]);
 
 export class OperationsDashboardController {
   private current: DashboardState = {
@@ -40,10 +43,12 @@ export class OperationsDashboardController {
   get state(): DashboardState { return this.current; }
   canAuthorizeClosure(): boolean {
     return this.current.phase === 'ready' && this.current.selected !== null && !this.current.stale
+      && !TERMINAL_STATUSES.has(this.current.selected.status)
       && this.session.roles.includes('SUPERVISOR');
   }
   canTransition(): boolean {
     return this.current.phase === 'ready' && this.current.selected !== null && !this.current.stale
+      && !TERMINAL_STATUSES.has(this.current.selected.status)
       && this.session.roles.some((role) => role === 'OPERATOR' || role === 'SUPERVISOR');
   }
   canTransitionTo(nextStatus: RoadEventStatusContract): boolean {
@@ -99,6 +104,7 @@ export class OperationsDashboardController {
 
   async transition(nextStatus: RoadEventStatusContract, reason: string): Promise<DashboardState> {
     const selected = this.requireSelected();
+    if (TERMINAL_STATUSES.has(selected.status)) throw new Error('الحالة النهائية لا تقبل انتقالات جديدة');
     if (!this.canTransition()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تنفيذ قرار حرج' : 'لا تملك صلاحية تغيير حالة الحدث');
     if (!this.canTransitionTo(nextStatus)) throw new Error('لا يمكن إغلاق الحدث دون تفويض إغلاق موثّق');
     const normalizedReason = this.requireReason(reason);
@@ -114,6 +120,7 @@ export class OperationsDashboardController {
 
   async authorizeClosure(reason: string): Promise<DashboardState> {
     const selected = this.requireSelected();
+    if (TERMINAL_STATUSES.has(selected.status)) throw new Error('الحالة النهائية لا تقبل تفويض إغلاق جديد');
     if (!this.canAuthorizeClosure()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تفويض الإغلاق' : 'تفويض إغلاق S3/S4 متاح للمشرف فقط');
     const request: AuthorizeClosureRequest = {
       expectedVersion: selected.version,

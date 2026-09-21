@@ -36,6 +36,11 @@ function detail(state: DashboardState, canTransition: boolean, canAuthorize: boo
   const event = state.selected;
   if (event === null) return '<section class="panel detail" aria-labelledby="detail-title"><h2 id="detail-title">تفاصيل الحدث</h2><p class="muted">اختر حدثًا من القائمة.</p></section>';
   const signals = attachedSignalIds(state.timeline);
+  const closureStatus = event.status === 'CLOSED'
+    ? 'تم استهلاك التفويض — الحالة مغلقة نهائيًا'
+    : event.closureAuthorization === null
+      ? 'لا يوجد تفويض — الإغلاق غير متاح'
+      : event.closureAuthorization.reason;
   return `<section class="panel detail" aria-labelledby="detail-title">
     <div class="detail-heading"><div><h2 id="detail-title">الحدث ${escape(event.id)}</h2><p>${escape(STATUS_AR[event.status])} · الإصدار ${event.version}</p></div>
     <span class="badge severity-${event.severity.level}">${escape(event.severity.level)} · ${escape(SEVERITY_AR[event.severity.level])}</span></div>
@@ -43,7 +48,7 @@ function detail(state: DashboardState, canTransition: boolean, canAuthorize: boo
       <article><h3>سلامة الإنسان</h3><p>${escape(deriveHumanSafetyStatus(event, state.timeline))}</p><small>الثقة ${(event.severity.confidence * 100).toFixed(0)}٪ — المراجعة البشرية ${event.severity.requiresHumanReview ? 'مطلوبة' : 'غير مطلوبة'}</small></article>
       <article><h3>الإشارات المرتبطة</h3>${signals.length === 0 ? '<p class="muted">لا توجد إشارات معروضة في سجل التدقيق.</p>' : `<ul>${signals.map((id) => `<li><code>${escape(id)}</code></li>`).join('')}</ul>`}</article>
       <article><h3>الموقع</h3><p dir="ltr">${event.latitude.toFixed(6)}, ${event.longitude.toFixed(6)}</p></article>
-      <article><h3>تفويض الإغلاق</h3><p>${event.closureAuthorization === null ? 'لا يوجد تفويض — الإغلاق غير متاح' : escape(event.closureAuthorization.reason)}</p></article>
+      <article><h3>تفويض الإغلاق</h3><p>${escape(closureStatus)}</p></article>
     </div>
     <form id="transition-form" class="action-box" ${canTransition ? '' : 'aria-disabled="true"'}>
       <h3>تغيير الحالة</h3><label>الحالة التالية<select name="nextStatus" ${canTransition ? '' : 'disabled'}>${Object.entries(STATUS_AR).map(([value, label]) => `<option value="${value}"${value === 'CLOSED' && event.closureAuthorization === null ? ' disabled' : ''}>${escape(label)}</option>`).join('')}</select></label>
