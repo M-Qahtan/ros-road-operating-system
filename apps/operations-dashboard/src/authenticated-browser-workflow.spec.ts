@@ -199,6 +199,22 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
   assert.doesNotMatch(failedSelectionHtml, /road_event\.closure_authorized|road_event\.closed/);
   assert.doesNotMatch(failedSelectionHtml, /internal active incident read failed/);
 
+  await controller.retrySelection();
+  const failedRetryPathCount = paths.length;
+  assert.equal(failedRetryPathCount, failedSelectionPathCount + 2);
+  assert.equal(controller.state.phase, 'failure');
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  const failedRetryHtml = renderDashboard(controller.state, { canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(), canRetrySelection: controller.canRetrySelection(),
+    now: new Date('2026-08-20T10:04:00.000Z') });
+  assert.match(failedRetryHtml, /id="retry-selection-button"/);
+  assert.doesNotMatch(failedRetryHtml, /road_event\.closure_authorized|road_event\.closed|internal active incident read failed/);
+
   failActiveSelection = false;
   const recovered = await controller.retrySelection();
   const recoveredSelectionPathCount = paths.length;
@@ -231,6 +247,8 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
     `GET /api/v1/road-events/${activeEvent.id}/timeline`,
     `GET /api/v1/road-events/${event.id}`,
     `GET /api/v1/road-events/${event.id}/timeline`,
+    `GET /api/v1/road-events/${activeEvent.id}`,
+    `GET /api/v1/road-events/${activeEvent.id}/timeline`,
     `GET /api/v1/road-events/${activeEvent.id}`,
     `GET /api/v1/road-events/${activeEvent.id}/timeline`,
     `GET /api/v1/road-events/${activeEvent.id}`,
