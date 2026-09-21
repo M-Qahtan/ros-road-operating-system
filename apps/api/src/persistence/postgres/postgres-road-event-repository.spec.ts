@@ -274,6 +274,138 @@ test('update rejects a stale expected version before writing audit or outbox', a
   assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
 });
 
+test('stale closure rollback is followed only by an exact-revision journaled replacement authorization', async () => {
+  const current = new RoadEvent({
+    id: EVENT_ID,
+    occurredAt: new Date('2026-07-25T02:55:00.000Z'),
+    latitude: 24.7136,
+    longitude: 46.6753,
+    status: RoadEventStatus.Recovery,
+    version: 9,
+    severity: {
+      level: SeverityLevel.High, score: 82, confidence: 0.91,
+      reasonCodes: ['verified_impact'], requiresHumanReview: true
+    }
+  });
+  let storedRow: Record<string, unknown> = {
+    ...row(9),
+    status: RoadEventStatus.Recovery,
+    severity: SeverityLevel.High,
+    severity_score: 82,
+    confidence: '0.910',
+    reason_codes: ['verified_impact'],
+    closure_authorization_journal_current: false
+  };
+  const ledger = new Map([
+    ['CASE', { revision: 5, digest: roadEventRevisionDigest(current, SCOPE, 'CASE') }],
+    ['SEVERITY', { revision: 3, digest: roadEventRevisionDigest(current, SCOPE, 'SEVERITY') }]
+  ]);
+  const journalVersions: number[] = [8];
+  const auditVersions: number[] = [8];
+  const client = new FakeClient((text, values) => {
+    if (text.includes('FROM road_events') && text.includes('FOR UPDATE')) {
+      return { rows: [storedRow], rowCount: 1 };
+    }
+    if (text.includes('FROM road_events') && !text.includes('FOR UPDATE')) {
+      return { rows: [storedRow], rowCount: 1 };
+    }
+    if (text.includes('SELECT revision, digest FROM road_event_revision_ledger')) {
+      const receipt = ledger.get(String(values[3]));
+      return receipt === undefined ? { rows: [], rowCount: 0 } : { rows: [receipt], rowCount: 1 };
+    }
+    if (text.includes('UPDATE road_events')) {
+      storedRow = {
+        ...storedRow,
+        status: values[4], severity: values[5], severity_score: values[6], confidence: values[7],
+        reason_codes: values[8], severity_requires_human_review: values[9],
+        longitude: values[10], latitude: values[11], occurred_at: values[12], version: values[13],
+        closure_authorized_by: values[14], closure_authorized_at: values[15],
+        closure_authorization_reason: values[16], closure_source_input_version: values[17],
+        closure_source_snapshot_digest: values[18], closure_cognitive_policy_version: values[19],
+        closure_cognitive_revision: values[20], closure_cognitive_digest: values[21],
+        closure_authorization_journal_current: false
+      };
+      return { rows: [{ version: values[13] }], rowCount: 1 };
+    }
+    if (text.includes('INSERT INTO road_event_revision_ledger')) {
+      ledger.set(String(values[3]), { revision: Number(values[4]), digest: String(values[5]) });
+      return { rows: [], rowCount: 1 };
+    }
+    if (text.includes('INSERT INTO road_event_closure_authorization_journal')) {
+      journalVersions.push(Number(values[3]));
+      storedRow = { ...storedRow, closure_authorization_journal_current: true };
+      return { rows: [], rowCount: 1 };
+    }
+    if (text.includes('INSERT INTO audit_logs')) {
+      auditVersions.push(Number((values[5] as { version: number }).version));
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  });
+  const repository = new PostgresRoadEventRepository(new FakePool(client));
+
+  const staleClosure = new RoadEvent({
+    id: EVENT_ID,
+    occurredAt: current.occurredAt,
+    latitude: current.latitude,
+    longitude: current.longitude,
+    status: RoadEventStatus.Recovery,
+    version: 8,
+    severity: current.severity,
+    closureAuthorization: {
+      actorId: ACTOR_ID,
+      reason: 'invalidated revision-8 authorization',
+      authorizedAt: new Date('2026-07-25T03:00:00.000Z'),
+      sourceSnapshot: {
+        inputVersion: 37, sourceSnapshotDigest: SNAPSHOT_DIGEST,
+        cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2',
+        cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64)
+      }
+    }
+  });
+  staleClosure.transitionTo(RoadEventStatus.Closed);
+  await assert.rejects(() => repository.update(staleClosure, 8, {
+    ...context, actorType: 'SUPERVISOR', action: 'road_event.closed', eventType: 'RoadEventClosed'
+  }), RoadEventConcurrencyError);
+  const staleAttemptQueries = client.queries.map((query) => query.text);
+  assert.equal(staleAttemptQueries.some((text) => text.includes('UPDATE road_events')), false);
+  assert.equal(staleAttemptQueries.some((text) => text.includes('INSERT INTO road_event_closure_authorization_journal')), false);
+  assert.equal(staleAttemptQueries.some((text) => text.includes('INSERT INTO audit_logs')), false);
+  assert.equal(staleAttemptQueries.some((text) => text.includes('INSERT INTO outbox_events')), false);
+  assert.deepEqual(journalVersions, [8]);
+  assert.deepEqual(auditVersions, [8]);
+  assert.equal(client.queries.at(-1)?.text, 'ROLLBACK');
+
+  const refreshed = await repository.findById(EVENT_ID, SCOPE);
+  assert.equal(refreshed?.version, 9);
+  assert.equal(refreshed?.closureAuthorization, undefined);
+  refreshed!.authorizeClosure({
+    actorId: ACTOR_ID,
+    reason: 'replacement review for revision 9',
+    authorizedAt: new Date('2026-07-25T03:12:00.000Z'),
+    sourceSnapshot: {
+      inputVersion: 38, sourceSnapshotDigest: 'f'.repeat(64),
+      cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2',
+      cognitiveRevision: 17, cognitiveDigest: 'a'.repeat(64)
+    }
+  });
+  await repository.update(refreshed!, 9, {
+    ...context,
+    actorType: 'SUPERVISOR',
+    action: 'road_event.closure_authorized',
+    eventType: 'RoadEventClosureAuthorized',
+    reason: 'replacement review for revision 9'
+  });
+
+  const replacement = await repository.findById(EVENT_ID, SCOPE);
+  assert.equal(replacement?.version, 10);
+  assert.equal(replacement?.closureAuthorization?.reason, 'replacement review for revision 9');
+  assert.deepEqual(journalVersions, [8, 10]);
+  assert.deepEqual(auditVersions, [8, 10]);
+  assert.equal(client.queries.filter((query) => query.text === 'ROLLBACK').length, 1);
+  assert.equal(client.queries.filter((query) => query.text === 'COMMIT').length, 1);
+});
+
 test('closure authorization is journaled in the same transaction before audit and outbox', async () => {
   const before = new RoadEvent({
     id: EVENT_ID,

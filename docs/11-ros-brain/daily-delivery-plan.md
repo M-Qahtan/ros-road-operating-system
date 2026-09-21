@@ -725,6 +725,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE REAL API HANDLER NOW FAILS A STALE CLOSURE WITH 409, RETURNS REVISION 9 WITH AUTHORIZATION WITHHELD, AND ACCEPTS ONLY A NEW REVISION-9 SUPERVISOR AUTHORIZATION TO PRODUCE REVISION 10.** |
 | Next handoff | Drive the same HTTP-handler sequence through the PostgreSQL repository adapter so the 409, withheld refresh, replacement authorization journal, and two-entry audit history are proven in one transaction-backed integration test. |
 
+### PostgreSQL-adapter rollback and exact reauthorization proof
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `4dc99092c20a8c65783f579916aea989a3855031` was ninety-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The production `PostgresRoadEventRepository` orchestration now proves that a revision-8 closure attempt rolls back after the stored row has advanced to revision 9. The subsequent scoped read returns revision 9 with authorization withheld, and only a replacement supervisor authorization bound to expected revision 9 produces revision 10 and appends the current authorization journal entry. |
+| Fail-closed acceptance | The stale attempt issues no RoadEvent update, authorization-journal append, audit append, or outbox append and ends in exactly one rollback. The replacement path commits once, preserves the historical revision-8 authorization, and appends revision 10 to both the authorization journal and audit history with versioned v2 source evidence. |
+| Local evidence | The focused PostgreSQL-repository suite passed 21 of 21. The full workspace passed 662 API, 35 dashboard, 36 mobile, and 8 domain tests (741 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
+| Safety limits | This exercises the real repository transaction and SQL orchestration against a stateful deterministic PostgreSQL client double; it is not evidence from a live PostgreSQL engine or restart. No external call, incident closure, dispatch, activation, or autonomous action occurs. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **A STALE CLOSURE ROLLS BACK WITHOUT PARTIAL WRITES; REVISION 9 REMAINS REVIEWABLE WITH AUTHORIZATION WITHHELD, AND ONLY AN EXACT REVISION-9 REAUTHORIZATION COMMITS REVISION 10 WHILE PRESERVING THE REVISION-8 HISTORY.** |
+| Next handoff | Add this rollback-withheld-reauthorize sequence to the local PostgreSQL journey and its next receipt, then prove it after restart on an available Docker or Podman engine. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
