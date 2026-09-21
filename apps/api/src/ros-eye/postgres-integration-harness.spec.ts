@@ -12,6 +12,10 @@ const contactClosureRace = readFileSync('scripts/run-postgres-contact-closure-ra
 const cognitiveClosureDrift = readFileSync('scripts/run-postgres-cognitive-closure-drift.sh', 'utf8');
 const cognitiveClosureRecovery = readFileSync('scripts/run-postgres-cognitive-closure-recovery.sh', 'utf8');
 const closureAuthorizationRead = readFileSync('scripts/run-postgres-closure-authorization-read.sh', 'utf8');
+const closureReauthorizationRecovery = readFileSync(
+  'scripts/run-postgres-closure-reauthorization-recovery.sh',
+  'utf8',
+);
 
 test('PostgreSQL integration runner fails explicitly before claiming an unexecuted test', () => {
   assert.match(runner, /command -v "\$required_command"/);
@@ -96,7 +100,7 @@ test('live journey receipt is bound to a clean candidate and emitted only after 
   assert.match(localHarness, /postmasterStartedAtBeforeRestart/);
   assert.match(localHarness, /postmasterStartedAtAfterRestart/);
   assert.match(localHarness, /restartVerified: true/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v29/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v30/);
   assert.match(localHarness, /externalArchiveReceipt: null/);
   assert.ok(
     localHarness.indexOf('bash scripts/run-postgres-integration.sh') <
@@ -176,7 +180,7 @@ test('forward retry after rollback commits once and duplicate retry is rejected'
   assert.match(contactClosureRace, /DUPLICATE_RETRY REJECTED/);
 });
 
-test('v29 receipt consumes contact races, rollback and exact forward retry proof', () => {
+test('v30 receipt consumes contact races, rollback and exact forward retry proof', () => {
   assert.match(localHarness, /contact_closure_race_proof_file="\$\(mktemp\)"/);
   assert.match(localHarness, /contact_closure_race_proof\[0\].*CONTACT_COMMAND/);
   assert.match(localHarness, /contact_closure_race_proof\[3\].*SOURCE_SNAPSHOT_CHANGED/);
@@ -190,10 +194,10 @@ test('v29 receipt consumes contact races, rollback and exact forward retry proof
   assert.match(localHarness, /contactAtomicRollback/);
   assert.match(localHarness, /contactForwardRetry/);
   assert.match(localHarness, /contactDuplicateRetry/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v29/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v30/);
 });
 
-test('v29 recovers cognitive closure drift rejection state after restart', () => {
+test('v30 recovers cognitive closure drift rejection state after restart', () => {
   assert.match(cognitiveClosureDrift, /BEGIN;/);
   assert.match(cognitiveClosureDrift, /ORDER BY cognitive_latest\.input_version DESC LIMIT 1/);
   assert.match(cognitiveClosureDrift, /COGNITIVE_CLOSURE_SNAPSHOT_CHANGED/);
@@ -210,10 +214,10 @@ test('v29 recovers cognitive closure drift rejection state after restart', () =>
   assert.match(localHarness, /cognitiveClosureRecoveryRestartVerified: true/);
   assert.match(localHarness, /cognitiveClosureStateBeforeRestart/);
   assert.match(localHarness, /cognitiveClosureStateAfterRestart/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v29/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v30/);
 });
 
-test('v29 retries cognitive closure after restart and rejects without durable writes', () => {
+test('v30 retries cognitive closure after restart and rejects without durable writes', () => {
   assert.match(cognitiveClosureRecovery, /BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE/);
   assert.match(cognitiveClosureRecovery, /FOR UPDATE/);
   assert.match(cognitiveClosureRecovery, /ORDER BY cognitive_latest\.input_version DESC LIMIT 1/);
@@ -230,10 +234,10 @@ test('v29 retries cognitive closure after restart and rejects without durable wr
     localHarness.indexOf('wait_for_postgres "after contact recovery restart"') <
       localHarness.indexOf('bash scripts/run-postgres-cognitive-closure-recovery.sh'),
   );
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v29/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v30/);
 });
 
-test('v29 persists and consumes one exact append-only closure authorization journal row across restart', () => {
+test('v30 persists and consumes one exact append-only closure authorization journal row across restart', () => {
   assert.match(cognitiveClosureDrift, /INSERT INTO road_event_closure_authorization_journal/);
   assert.match(cognitiveClosureDrift, /UPDATE road_event_closure_authorization_journal/);
   assert.match(cognitiveClosureDrift, /DELETE FROM road_event_closure_authorization_journal/);
@@ -245,10 +249,10 @@ test('v29 persists and consumes one exact append-only closure authorization jour
   assert.match(localHarness, /closureAuthorizationJournalMutation/);
   assert.match(localHarness, /closureAuthorizationJournalStateBeforeRestart/);
   assert.match(localHarness, /closureAuthorizationJournalStateAfterRestart/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v29/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v30/);
 });
 
-test('v29 withholds a mismatched closure authorization read after restart without durable writes', () => {
+test('v30 withholds a mismatched closure authorization read after restart without durable writes', () => {
   assert.match(closureAuthorizationRead, /BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ/);
   assert.match(closureAuthorizationRead, /road_event_closure_authorization_journal authorization_journal/);
   assert.match(closureAuthorizationRead, /SET closure_authorization_reason=closure_authorization_reason \|\| '-mismatch'/);
@@ -262,10 +266,10 @@ test('v29 withholds a mismatched closure authorization read after restart withou
   assert.match(localHarness, /closureAuthorizationReadAfterRestartVerified: true/);
   assert.match(localHarness, /closureAuthorizationReadMismatch/);
   assert.match(localHarness, /closureAuthorizationReadWriteSet/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v29/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v30/);
 });
 
-test('v29 withholds a closure authorization whose independent journal row is missing', () => {
+test('v30 withholds a closure authorization whose independent journal row is missing', () => {
   assert.match(closureAuthorizationRead, /SAVEPOINT missing_journal_read/);
   assert.match(closureAuthorizationRead, /missing_closure_authorization_journal/);
   assert.match(closureAuthorizationRead, /Legacy authorization without independent journal evidence/);
@@ -273,7 +277,28 @@ test('v29 withholds a closure authorization whose independent journal row is mis
   assert.match(localHarness, /closure_authorization_read_proof\[2\].*MISSING_JOURNAL/);
   assert.match(localHarness, /closure_authorization_read_proof\[3\].*WITHHELD/);
   assert.match(localHarness, /closureAuthorizationReadMissingJournal/);
-  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v29/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v30/);
+});
+
+test('v30 rolls back stale closure and commits only exact-revision replacement authorization', () => {
+  assert.match(closureReauthorizationRecovery, /BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE/);
+  assert.match(closureReauthorizationRecovery, /SAVEPOINT stale_closure_attempt/);
+  assert.match(closureReauthorizationRecovery, /AND version=8/);
+  assert.match(closureReauthorizationRecovery, /ROLLBACK TO SAVEPOINT stale_closure_attempt/);
+  assert.match(closureReauthorizationRecovery, /Stale revision-8 closure changed the durable write-set/);
+  assert.match(closureReauthorizationRecovery, /Revision 9 exposed the historical revision-8 authorization/);
+  assert.match(closureReauthorizationRecovery, /AND version=9/);
+  assert.match(closureReauthorizationRecovery, /journal_versions<>ARRAY\[8,10\]/);
+  assert.match(closureReauthorizationRecovery, /audit_versions<>ARRAY\[8,10\]/);
+  assert.match(closureReauthorizationRecovery, /current_historical_hash<>baseline\.historical_journal_hash/);
+  assert.match(localHarness, /bash scripts\/run-postgres-closure-reauthorization-recovery\.sh/);
+  assert.match(localHarness, /closureReauthorizationRecoveryVerified: true/);
+  assert.match(localHarness, /closureReauthorizationStaleRollback/);
+  assert.match(localHarness, /closureReauthorizationRefresh/);
+  assert.match(localHarness, /closureReauthorizationReplacement/);
+  assert.match(localHarness, /closureReauthorizationHistory/);
+  assert.match(localHarness, /closureReauthorizationCurrentVersion/);
+  assert.match(localHarness, /ros-brain\.local-postgres-journey-receipt\.v30/);
 });
 
 test('forward contact recovery survives a second PostgreSQL restart exactly', () => {

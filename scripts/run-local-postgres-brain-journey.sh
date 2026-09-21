@@ -37,6 +37,7 @@ readonly journey_manifest_sha256="$(
     scripts/run-postgres-cognitive-closure-drift.sh \
     scripts/run-postgres-cognitive-closure-recovery.sh \
     scripts/run-postgres-closure-authorization-read.sh \
+    scripts/run-postgres-closure-reauthorization-recovery.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -51,6 +52,7 @@ readonly contact_closure_race_proof_file="$(mktemp)"
 readonly cognitive_closure_proof_file="$(mktemp)"
 readonly cognitive_closure_recovery_proof_file="$(mktemp)"
 readonly closure_authorization_read_proof_file="$(mktemp)"
+readonly closure_reauthorization_proof_file="$(mktemp)"
 readonly post_restart_duplicate_log="$(mktemp)"
 readonly post_restart_wrong_purpose_log="$(mktemp)"
 readonly post_restart_wrong_tenant_log="$(mktemp)"
@@ -66,6 +68,7 @@ cleanup() {
   rm -f "$cognitive_closure_proof_file"
   rm -f "$cognitive_closure_recovery_proof_file"
   rm -f "$closure_authorization_read_proof_file"
+  rm -f "$closure_reauthorization_proof_file"
   rm -f "$post_restart_duplicate_log"
   rm -f "$post_restart_wrong_purpose_log"
   rm -f "$post_restart_wrong_tenant_log"
@@ -232,6 +235,25 @@ if [[ "${#closure_authorization_read_proof[@]}" -ne 10 \
   || "${closure_authorization_read_proof[8]}" != "ROAD_EVENT_AUDIT_OUTBOX_JOURNAL" \
   || "${closure_authorization_read_proof[9]}" != "UNCHANGED" ]]; then
   echo "Post-restart closure authorization read proof was incomplete or unsafe: ${closure_authorization_read_proof[*]}" >&2
+  exit 2
+fi
+export ROS_POSTGRES_CLOSURE_REAUTHORIZATION_PROOF_FILE="$closure_reauthorization_proof_file"
+bash scripts/run-postgres-closure-reauthorization-recovery.sh
+mapfile -t closure_reauthorization_proof < "$closure_reauthorization_proof_file"
+if [[ "${#closure_reauthorization_proof[@]}" -ne 12 \
+  || "${closure_reauthorization_proof[0]}" != "CLOSURE_REAUTHORIZATION_RECOVERY" \
+  || "${closure_reauthorization_proof[1]}" != "VERIFIED" \
+  || "${closure_reauthorization_proof[2]}" != "STALE_CLOSURE_ROLLBACK" \
+  || "${closure_reauthorization_proof[3]}" != "UNCHANGED" \
+  || "${closure_reauthorization_proof[4]}" != "REFRESH_AUTHORIZATION" \
+  || "${closure_reauthorization_proof[5]}" != "WITHHELD" \
+  || "${closure_reauthorization_proof[6]}" != "REPLACEMENT_AUTHORIZATION" \
+  || "${closure_reauthorization_proof[7]}" != "COMMITTED" \
+  || "${closure_reauthorization_proof[8]}" != "AUTHORIZATION_HISTORY" \
+  || "${closure_reauthorization_proof[9]}" != "8,10" \
+  || "${closure_reauthorization_proof[10]}" != "CURRENT_VERSION" \
+  || "${closure_reauthorization_proof[11]}" != "10" ]]; then
+  echo "Post-restart closure reauthorization proof was incomplete or unsafe: ${closure_reauthorization_proof[*]}" >&2
   exit 2
 fi
 readonly contact_recovery_state="$(
@@ -843,9 +865,14 @@ ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_MISSING="${closure_authorization_read_pro
 ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_MISMATCH="${closure_authorization_read_proof[5]}" \
 ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_ROLLBACK="${closure_authorization_read_proof[7]}" \
 ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_WRITE_SET="${closure_authorization_read_proof[9]}" \
+ROS_RECEIPT_CLOSURE_REAUTHORIZATION_STALE_ROLLBACK="${closure_reauthorization_proof[3]}" \
+ROS_RECEIPT_CLOSURE_REAUTHORIZATION_REFRESH="${closure_reauthorization_proof[5]}" \
+ROS_RECEIPT_CLOSURE_REAUTHORIZATION_REPLACEMENT="${closure_reauthorization_proof[7]}" \
+ROS_RECEIPT_CLOSURE_REAUTHORIZATION_HISTORY="${closure_reauthorization_proof[9]}" \
+ROS_RECEIPT_CLOSURE_REAUTHORIZATION_CURRENT_VERSION="${closure_reauthorization_proof[11]}" \
 node -e '
   const receipt = {
-    schemaVersion: "ros-brain.local-postgres-journey-receipt.v29",
+    schemaVersion: "ros-brain.local-postgres-journey-receipt.v30",
     candidateSha: process.env.ROS_RECEIPT_CANDIDATE_SHA,
     journeyManifestSha256: process.env.ROS_RECEIPT_JOURNEY_MANIFEST_SHA256,
     containerEngine: process.env.ROS_RECEIPT_CONTAINER_ENGINE,
@@ -961,6 +988,17 @@ node -e '
       process.env.ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_ROLLBACK,
     closureAuthorizationReadWriteSet:
       process.env.ROS_RECEIPT_CLOSURE_AUTHORIZATION_READ_WRITE_SET,
+    closureReauthorizationRecoveryVerified: true,
+    closureReauthorizationStaleRollback:
+      process.env.ROS_RECEIPT_CLOSURE_REAUTHORIZATION_STALE_ROLLBACK,
+    closureReauthorizationRefresh:
+      process.env.ROS_RECEIPT_CLOSURE_REAUTHORIZATION_REFRESH,
+    closureReauthorizationReplacement:
+      process.env.ROS_RECEIPT_CLOSURE_REAUTHORIZATION_REPLACEMENT,
+    closureReauthorizationHistory:
+      process.env.ROS_RECEIPT_CLOSURE_REAUTHORIZATION_HISTORY,
+    closureReauthorizationCurrentVersion:
+      process.env.ROS_RECEIPT_CLOSURE_REAUTHORIZATION_CURRENT_VERSION,
     result: "PASS",
     externalArchiveReceipt: null,
   };

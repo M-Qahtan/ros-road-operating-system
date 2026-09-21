@@ -737,6 +737,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A STALE CLOSURE ROLLS BACK WITHOUT PARTIAL WRITES; REVISION 9 REMAINS REVIEWABLE WITH AUTHORIZATION WITHHELD, AND ONLY AN EXACT REVISION-9 REAUTHORIZATION COMMITS REVISION 10 WHILE PRESERVING THE REVISION-8 HISTORY.** |
 | Next handoff | Add this rollback-withheld-reauthorize sequence to the local PostgreSQL journey and its next receipt, then prove it after restart on an available Docker or Podman engine. |
 
+### PostgreSQL journey contract for exact closure reauthorization
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-21, GitHub candidate `c62dff25a756fcfa5a351fa91278547fb576a343` was ninety-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The disposable PostgreSQL journey now establishes an append-only revision-8 authorization, keeps the current revision 9 authorization withheld, rejects a stale revision-8 closure through an explicit savepoint rollback, and accepts only a replacement supervisor authorization bound to revision 9 to create revision 10. |
+| Fail-closed acceptance | The stale attempt must leave the RoadEvent, Audit, Outbox, and authorization journal unchanged. The replacement commits one current authorization, one audit entry, and one outbox entry; journal and audit histories must remain exactly `[8, 10]`, and the hash of the historical revision-8 journal row must remain unchanged. |
+| Receipt boundary | Receipt `ros-brain.local-postgres-journey-receipt.v30` is withheld unless the stale rollback is unchanged, refresh is `WITHHELD`, replacement is `COMMITTED`, authorization history is `8,10`, and current version is `10`. The journey manifest binds the new proof script; `externalArchiveReceipt` remains null. |
+| Local evidence | Shell syntax checks and the focused PostgreSQL harness contract passed 37 of 37. The full workspace passed 663 API, 35 dashboard, 36 mobile, and 8 domain tests (742 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live journey exited 127 before execution because neither Docker nor Podman is installed; therefore no PostgreSQL `v30` receipt or live transaction result is claimed. |
+| Safety limits | The fixture exercises scoped human authorization provenance only. It grants no collection, severity reduction, incident closure, dispatch, provider call, activation, or autonomous action; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. A local receipt would not satisfy REL-013 external immutable archival. |
+| Result | **THE V30 CONTRACT NOW REQUIRES A ZERO-WRITE STALE ROLLBACK, A WITHHELD REVISION-9 READ, AND ONE EXACT REVISION-9 REAUTHORIZATION THAT PRESERVES THE REVISION-8 HISTORY. LIVE ENGINE EXECUTION REMAINS OPEN.** |
+| Next handoff | Run the clean `v30` journey on Docker or Podman and fix the first actual SQL, transaction, or receipt discrepancy before accepting the receipt. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
