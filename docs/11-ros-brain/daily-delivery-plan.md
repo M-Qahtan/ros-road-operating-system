@@ -1017,6 +1017,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A HUMAN-CONFIRMED CLOSURE FROM THE RECOVERED AUTHORIZED REVISION OCCURS ONCE AND REMAINS TERMINAL AFTER FRESH RECONCILIATION.** |
 | Next handoff | Force the terminal detail or Timeline read after closure to fail, prove the dashboard remains fail-closed without replay, then recover `CLOSED@14` and both audit records through one explicit authenticated retry. |
 
+### Terminal Timeline outage fails closed and recovers without replay
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-22, GitHub candidate `0df05cb29b39e09939154840eb7be4567728cbcd` was one hundred and seventeen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local candidate, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The approved cadence remains hourly. |
+| Added evidence | After the human-confirmed closure and fresh reconciliation, the authenticated journey now forces the terminal Timeline read to return 503. The dashboard discards the concurrently returned detail, clears the Timeline, enters `failure/stale`, and exposes only the explicit selection retry. A successful retry re-reads both resources and restores `CLOSED@14` with the two append-only records. |
+| Fail-closed acceptance | A terminal detail may not be displayed without its matching Timeline. The dependency message must remain sanitized, no transition or authorization control may be enabled, and blocked commands must stop before HTTP. Recovery must require a new authenticated detail/Timeline pair and must not replay either prior POST. |
+| Local evidence | The focused operations-dashboard build and suite passed 46 of 46. Timeline reads advanced from five to six on the failed terminal pair and to seven only after explicit retry. The failed view had no selected incident or Timeline and both critical control predicates were false; the recovered view contained `CLOSED@14`, `closureAuthorization=null`, and `road_event.closure_authorized` followed by `road_event.closed`. Authorization and transition requests remained exactly one each. The full workspace passed 666 API, 46 dashboard, 36 mobile, and 8 domain tests (756 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | This verifies browser fail-closed recovery against an authenticated test gateway, not a live PostgreSQL transaction or REL-013 archive. It grants no command replay, reopening, severity reduction, dispatch, activation, collection, provider call, or autonomous authority. Tenant, purpose, role, exact version, human confirmation, and append-only history remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A TERMINAL TIMELINE OUTAGE CANNOT LEAVE A PARTIAL INCIDENT VIEW OR REPLAY A CRITICAL COMMAND; EXPLICIT AUTHENTICATED RETRY RESTORES THE COMPLETE TERMINAL PAIR.** |
+| Next handoff | Reject a terminal detail whose Timeline lacks the matching `road_event.closed` record for version 14, then accept it only after a complete authoritative detail/Timeline pair is returned. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

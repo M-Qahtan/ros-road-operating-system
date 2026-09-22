@@ -89,7 +89,7 @@ test('periodic queue refresh waits for a critical command and performs one authe
   assert.equal(controller.state.selected, null);
 });
 
-test('failed post-command reconciliation recovers and reopens the authoritative outcome without replay', async () => {
+test('reconciled closure remains terminal through a failed Timeline read and explicit retry without replay', async () => {
   let event: RoadEventResponse = {
     id: '50505050-5050-4050-8050-505050505050',
     status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
@@ -101,6 +101,7 @@ test('failed post-command reconciliation recovers and reopens the authoritative 
   const closureStarted = barrier();
   const closureResponse = barrier();
   let failQueueReconciliation = false;
+  let failTerminalTimelineRead = false;
   let listReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
@@ -149,6 +150,14 @@ test('failed post-command reconciliation recovers and reopens the authoritative 
     }
     if (target.pathname.endsWith('/timeline')) {
       timelineReads += 1;
+      if (failTerminalTimelineRead && event.status === 'CLOSED') {
+        const envelope: ApiEnvelope<never> = { success: false, data: null,
+          error: { code: 'DEPENDENCY_UNAVAILABLE', message: 'internal terminal timeline read failed' },
+          traceId: 'trace-terminal-timeline-read' };
+        return new Response(JSON.stringify(envelope), {
+          status: 503, headers: { 'content-type': 'application/json' }
+        });
+      }
       return ok(timeline);
     }
     if (target.pathname === `/api/v1/road-events/${event.id}`) return ok(event);
@@ -242,6 +251,41 @@ test('failed post-command reconciliation recovers and reopens the authoritative 
   await assert.rejects(() => controller.transition('RECOVERY', 'محاولة إعادة فتح'), /الحالة النهائية/);
   await assert.rejects(() => controller.authorizeClosure('محاولة تفويض جديد'), /الحالة النهائية/);
   assert.equal(transitionRequests, requestCount);
+  assert.equal(mutationRequests, 1);
+
+  failTerminalTimelineRead = true;
+  const failedTerminalRead = await controller.select(event.id);
+  assert.equal(timelineReads, 6);
+  assert.equal(failedTerminalRead.phase, 'failure');
+  assert.equal(failedTerminalRead.stale, true);
+  assert.equal(failedTerminalRead.selected, null);
+  assert.deepEqual(failedTerminalRead.timeline, []);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.doesNotMatch(failedTerminalRead.error ?? '', /internal terminal timeline read failed/);
+  const failedReadTransitionCount = transitionRequests;
+  const failedReadAuthorizationCount = mutationRequests;
+  await assert.rejects(() => controller.transition('RECOVERY', 'محاولة أثناء فشل القراءة'), /اختر حدثًا/);
+  await assert.rejects(() => controller.authorizeClosure('محاولة تفويض أثناء فشل القراءة'), /اختر حدثًا/);
+  assert.equal(transitionRequests, failedReadTransitionCount);
+  assert.equal(mutationRequests, failedReadAuthorizationCount);
+
+  failTerminalTimelineRead = false;
+  const retriedTerminal = await controller.retrySelection();
+  assert.equal(timelineReads, 7);
+  assert.equal(retriedTerminal.phase, 'ready');
+  assert.equal(retriedTerminal.stale, false);
+  assert.equal(retriedTerminal.selected?.status, 'CLOSED');
+  assert.equal(retriedTerminal.selected?.version, 14);
+  assert.equal(retriedTerminal.selected?.closureAuthorization, null);
+  assert.deepEqual(retriedTerminal.timeline.map((entry) => entry.action), [
+    'road_event.closure_authorized', 'road_event.closed'
+  ]);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(transitionRequests, 1);
   assert.equal(mutationRequests, 1);
 });
 
