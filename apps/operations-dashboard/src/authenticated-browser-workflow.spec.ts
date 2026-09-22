@@ -103,7 +103,7 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   let failQueueReconciliation = false;
   let failTerminalTimelineRead = false;
   let withholdTerminalClosureRecord = false;
-  let terminalTimelineFault: 'NONE' | 'DISCONTINUOUS' | 'REORDERED' | 'ACTOR_MISMATCH' | 'LATE_APPEND' = 'NONE';
+  let terminalTimelineFault: 'NONE' | 'DISCONTINUOUS' | 'REORDERED' | 'ACTOR_MISMATCH' | 'REVERSED_TIME' | 'LATE_APPEND' = 'NONE';
   let listReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
@@ -174,6 +174,11 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
       if (terminalTimelineFault === 'ACTOR_MISMATCH' && event.status === 'CLOSED') {
         return ok(timeline.map((entry) => entry.action === 'road_event.closed'
           ? { ...entry, actorId: 'supervisor-other' }
+          : entry));
+      }
+      if (terminalTimelineFault === 'REVERSED_TIME' && event.status === 'CLOSED') {
+        return ok(timeline.map((entry) => entry.action === 'road_event.closed'
+          ? { ...entry, occurredAt: '2026-08-20T09:59:59.000Z' }
           : entry));
       }
       if (terminalTimelineFault === 'LATE_APPEND' && event.status === 'CLOSED') {
@@ -397,9 +402,23 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   assert.equal(transitionRequests, 1);
   assert.equal(mutationRequests, 1);
 
+  terminalTimelineFault = 'REVERSED_TIME';
+  const reversedTimeTerminal = await controller.retrySelection();
+  assert.equal(timelineReads, 14);
+  assert.equal(reversedTimeTerminal.phase, 'failure');
+  assert.equal(reversedTimeTerminal.stale, true);
+  assert.equal(reversedTimeTerminal.selected, null);
+  assert.deepEqual(reversedTimeTerminal.timeline, []);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.match(reversedTimeTerminal.error ?? '', /التسلسل الزمني/);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
   terminalTimelineFault = 'LATE_APPEND';
   const terminalWithLateEvidence = await controller.retrySelection();
-  assert.equal(timelineReads, 14);
+  assert.equal(timelineReads, 15);
   assert.equal(terminalWithLateEvidence.phase, 'ready');
   assert.equal(terminalWithLateEvidence.selected?.status, 'CLOSED');
   assert.deepEqual(terminalWithLateEvidence.timeline.map((entry) => entry.action), [

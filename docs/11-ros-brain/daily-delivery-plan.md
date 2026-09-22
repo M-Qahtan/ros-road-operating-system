@@ -1067,6 +1067,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A HIGH-RISK TERMINAL VIEW CANNOT COMBINE AUTHORIZATION AND CLOSURE RECORDS FROM DIFFERENT SUPERVISOR IDENTITIES.** |
 | Next handoff | Bind authorization and closure chronology to their trusted timestamps, rejecting a close that predates its matching authorization while preserving later append-only evidence. |
 
+### Terminal closure enforces trusted chronology
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-22, GitHub candidate `7592138c0b28164c421bcfd5a8a07fdd81547415` was one hundred and twenty-one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its remote tree matched the tested local tree, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. An unrelated unstaged edit to `.github/workflows/operational-readiness.yml` remained excluded. The approved cadence remains hourly. |
+| Added behavior | After version, audit order, role, and actor identity are matched, the terminal S3/S4 boundary now requires both authorization and closure timestamps to parse and forbids the closure timestamp from preceding its matching authorization. Invalid or reversed trusted time clears the partial view and fails closed. |
+| Append-only preservation | An explicit authenticated retry may recover only from a fresh chronologically consistent pair. Evidence appended after that valid authorization/closure pair remains visible without reopening the incident or enabling critical controls. |
+| Fail-closed acceptance | Mutating only the closure timestamp to one second before its matching authorization must produce `failure/stale` with no selected incident or Timeline. Recovery must require fresh detail and Timeline reads, retain later append-only evidence, and must not replay either human POST. |
+| Local evidence | The focused operations-dashboard build and suite passed 46 of 46. Timeline read fourteen rejected the reversed timestamp after the prior actor-mismatch check; explicit read fifteen restored the chronologically valid authorization/closure pair plus later evidence. Authorization and transition requests remained exactly one each. The full workspace passed 666 API, 46 dashboard, 36 mobile, and 8 domain tests (756 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey still exits 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | This browser chronology proof does not replace server timestamp authority, transaction integrity, a live PostgreSQL journey, or REL-013 external immutable archival. It grants no replay, reopening, severity reduction, dispatch, activation, collection, provider call, or autonomous authority. Tenant, purpose, role, exact version, human confirmation, and append-only history remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A HIGH-RISK TERMINAL VIEW CANNOT ACCEPT AN INVALID OR BACKDATED CLOSURE RELATIVE TO ITS MATCHING AUTHORIZATION.** |
+| Next handoff | Bind the terminal authorization and closure records to one continuous trace/correlation lineage and reject cross-operation audit splicing while preserving later append-only evidence. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

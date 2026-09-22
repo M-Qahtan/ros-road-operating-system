@@ -358,6 +358,11 @@ function assertTerminalTimelineConsistency(
     ) {
       throw new Error('تعذر التحقق من تطابق هوية المشرف بين التفويض والإغلاق');
     }
+    const authorizationTime = Date.parse(authorization.occurredAt);
+    const closureTime = Date.parse(closure.occurredAt);
+    if (!Number.isFinite(authorizationTime) || !Number.isFinite(closureTime) || closureTime < authorizationTime) {
+      throw new Error('تعذر التحقق من التسلسل الزمني بين تفويض الإغلاق وتنفيذه');
+    }
   }
 }
 
