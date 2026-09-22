@@ -103,6 +103,7 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   let failQueueReconciliation = false;
   let failTerminalTimelineRead = false;
   let withholdTerminalClosureRecord = false;
+  let terminalTimelineFault: 'NONE' | 'DISCONTINUOUS' | 'REORDERED' | 'LATE_APPEND' = 'NONE';
   let listReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
@@ -161,6 +162,21 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
       }
       if (withholdTerminalClosureRecord && event.status === 'CLOSED') {
         return ok(timeline.filter((entry) => entry.action !== 'road_event.closed'));
+      }
+      if (terminalTimelineFault === 'DISCONTINUOUS' && event.status === 'CLOSED') {
+        return ok(timeline.map((entry) => entry.action === 'road_event.closed'
+          ? { ...entry, beforeState: { version: 12 } }
+          : entry));
+      }
+      if (terminalTimelineFault === 'REORDERED' && event.status === 'CLOSED') {
+        return ok([...timeline].reverse());
+      }
+      if (terminalTimelineFault === 'LATE_APPEND' && event.status === 'CLOSED') {
+        return ok([...timeline, {
+          action: 'road_event.late_evidence_attached', actorType: 'SYSTEM', actorId: 'evidence-worker',
+          beforeState: { version: 14 }, afterState: { version: 14 }, reason: 'دليل متأخر محفوظ دون إعادة فتح',
+          traceId: 'trace-late-evidence', occurredAt: '2026-08-20T10:02:00.000Z'
+        }]);
       }
       return ok(timeline);
     }
@@ -317,6 +333,59 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
     'road_event.closure_authorized', 'road_event.closed'
   ]);
   assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
+  terminalTimelineFault = 'DISCONTINUOUS';
+  const discontinuousTerminal = await controller.select(event.id);
+  assert.equal(timelineReads, 10);
+  assert.equal(discontinuousTerminal.phase, 'failure');
+  assert.equal(discontinuousTerminal.stale, true);
+  assert.equal(discontinuousTerminal.selected, null);
+  assert.deepEqual(discontinuousTerminal.timeline, []);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.match(discontinuousTerminal.error ?? '', /تسلسل سجل الإغلاق/);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
+  terminalTimelineFault = 'REORDERED';
+  const reorderedTerminal = await controller.retrySelection();
+  assert.equal(timelineReads, 11);
+  assert.equal(reorderedTerminal.phase, 'failure');
+  assert.equal(reorderedTerminal.stale, true);
+  assert.equal(reorderedTerminal.selected, null);
+  assert.deepEqual(reorderedTerminal.timeline, []);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.match(reorderedTerminal.error ?? '', /ترتيب تفويض الإغلاق/);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
+  terminalTimelineFault = 'NONE';
+  const continuousTerminal = await controller.retrySelection();
+  assert.equal(timelineReads, 12);
+  assert.equal(continuousTerminal.phase, 'ready');
+  assert.equal(continuousTerminal.stale, false);
+  assert.equal(continuousTerminal.selected?.status, 'CLOSED');
+  assert.equal(continuousTerminal.selected?.version, 14);
+  assert.deepEqual(continuousTerminal.timeline.map((entry) => entry.action), [
+    'road_event.closure_authorized', 'road_event.closed'
+  ]);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
+  terminalTimelineFault = 'LATE_APPEND';
+  const terminalWithLateEvidence = await controller.select(event.id);
+  assert.equal(timelineReads, 13);
+  assert.equal(terminalWithLateEvidence.phase, 'ready');
+  assert.equal(terminalWithLateEvidence.selected?.status, 'CLOSED');
+  assert.deepEqual(terminalWithLateEvidence.timeline.map((entry) => entry.action), [
+    'road_event.closure_authorized', 'road_event.closed', 'road_event.late_evidence_attached'
+  ]);
   assert.equal(controller.canTransition(), false);
   assert.equal(controller.canAuthorizeClosure(), false);
   assert.equal(transitionRequests, 1);

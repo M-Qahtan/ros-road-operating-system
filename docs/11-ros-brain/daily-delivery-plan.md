@@ -1041,6 +1041,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A TERMINAL INCIDENT CANNOT BE DISPLAYED AS AUTHORITATIVE WITHOUT ITS UNIQUE VERSION-MATCHED CLOSURE RECORD.** |
 | Next handoff | Bind the matching closure record to the exact terminal transition continuity (`beforeState.version=13` and `afterState.version=14`) and reject a reordered or discontinuous terminal audit pair. |
 
+### Terminal closure preserves version continuity and audit order
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-22, GitHub candidate `aa2daa583387002394554e0c0d95c8d398a36167` was one hundred and nineteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its remote tree matched local `HEAD`, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. An unrelated unstaged edit to `.github/workflows/operational-readiness.yml` remained excluded. The approved cadence remains hourly. |
+| Added behavior | The terminal detail/Timeline boundary now requires the unique closure record to advance exactly from version 13 to `CLOSED@14`. For S3/S4 incidents it also requires exactly one matching closure authorization at version 13 that occurs before the closure record. A discontinuous or reversed pair clears the partial view and fails closed. |
+| Append-only preservation | Audit entries appended after a valid closure remain visible and do not invalidate or reopen the terminal incident. The authenticated journey accepted a late evidence record after the valid authorization/closure pair while keeping every critical control disabled. |
+| Fail-closed acceptance | A closure record claiming `beforeState.version=12` for `CLOSED@14`, or a Timeline ordering the closure before its matching authorization, must produce `failure/stale` with no selected incident or Timeline. Explicit retries may recover only from fresh consistent reads and may not replay either human POST. |
+| Local evidence | The focused operations-dashboard build and suite passed 46 of 46. Timeline reads ten and eleven rejected the discontinuous and reordered views; read twelve restored the valid pair, and read thirteen retained a later append-only evidence record without reopening the incident. Authorization and transition requests remained exactly one each. The full workspace passed 666 API, 46 dashboard, 36 mobile, and 8 domain tests (756 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey still exits 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | This browser consistency proof does not replace server transaction integrity, a live PostgreSQL journey, or REL-013 external immutable archival. It grants no replay, reopening, severity reduction, dispatch, activation, collection, provider call, or autonomous authority. Tenant, purpose, role, exact version, human confirmation, and append-only history remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A HIGH-RISK TERMINAL VIEW NOW REQUIRES A CONTINUOUS, CORRECTLY ORDERED AUTHORIZATION/CLOSURE HISTORY WHILE PRESERVING LATER APPEND-ONLY EVIDENCE.** |
+| Next handoff | Bind the accepted closure and authorization records to the same authenticated supervisor identity and reject an actor mismatch without hiding later append-only evidence. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

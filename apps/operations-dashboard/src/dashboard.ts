@@ -335,6 +335,22 @@ function assertTerminalTimelineConsistency(
   if (matchingClosures.length !== 1) {
     throw new Error('تعذر التحقق من سجل الإغلاق المطابق للإصدار النهائي للحادث');
   }
+  const closure = matchingClosures[0];
+  const priorVersion = selected.version - 1;
+  if (closure?.beforeState?.version !== priorVersion) {
+    throw new Error('تعذر التحقق من تسلسل سجل الإغلاق النهائي للحادث');
+  }
+  if (selected.severity.level === 'S3' || selected.severity.level === 'S4') {
+    const closureIndex = timeline.indexOf(closure);
+    const matchingAuthorizations = timeline
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) =>
+        entry.action === 'road_event.closure_authorized' && entry.afterState?.version === priorVersion
+      );
+    if (matchingAuthorizations.length !== 1 || (matchingAuthorizations[0]?.index ?? closureIndex) >= closureIndex) {
+      throw new Error('تعذر التحقق من ترتيب تفويض الإغلاق وسجله النهائي');
+    }
+  }
 }
 
 export function slaAgeMinutes(event: RoadEventResponse, now: Date): number {
