@@ -1054,6 +1054,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A HIGH-RISK TERMINAL VIEW NOW REQUIRES A CONTINUOUS, CORRECTLY ORDERED AUTHORIZATION/CLOSURE HISTORY WHILE PRESERVING LATER APPEND-ONLY EVIDENCE.** |
 | Next handoff | Bind the accepted closure and authorization records to the same authenticated supervisor identity and reject an actor mismatch without hiding later append-only evidence. |
 
+### Terminal closure binds one supervisor identity
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-22, GitHub candidate `e0063eb2e8a9fa34057145e265e4d06e607cac1c` was one hundred and twenty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its remote tree matched local `HEAD`, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. An unrelated unstaged edit to `.github/workflows/operational-readiness.yml` remained excluded. The approved cadence remains hourly. |
+| Added behavior | A terminal S3/S4 detail/Timeline pair is accepted only when the unique version-matched authorization and closure records both identify a `SUPERVISOR` and carry the same authenticated actor identifier. An actor or role mismatch clears the partial view and fails closed. |
+| Append-only preservation | An explicit authenticated retry may recover only from a fresh identity-consistent pair. Evidence appended after that valid authorization/closure pair remains visible without reopening the incident or enabling critical controls. |
+| Fail-closed acceptance | Mutating only the closure record to a different supervisor identifier must produce `failure/stale` with no selected incident or Timeline. Recovery must require fresh detail and Timeline reads, retain later append-only evidence, and must not replay either human POST. |
+| Local evidence | The focused operations-dashboard build and suite passed 46 of 46. Timeline read thirteen rejected the actor mismatch; explicit read fourteen restored the identity-consistent authorization/closure pair plus later evidence. Authorization and transition requests remained exactly one each. The full workspace passed 666 API, 46 dashboard, 36 mobile, and 8 domain tests (756 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey still exits 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | This browser identity-consistency proof does not replace server authorization, transaction integrity, a live PostgreSQL journey, or REL-013 external immutable archival. It grants no replay, reopening, severity reduction, dispatch, activation, collection, provider call, or autonomous authority. Tenant, purpose, role, exact version, human confirmation, and append-only history remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A HIGH-RISK TERMINAL VIEW CANNOT COMBINE AUTHORIZATION AND CLOSURE RECORDS FROM DIFFERENT SUPERVISOR IDENTITIES.** |
+| Next handoff | Bind authorization and closure chronology to their trusted timestamps, rejecting a close that predates its matching authorization while preserving later append-only evidence. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

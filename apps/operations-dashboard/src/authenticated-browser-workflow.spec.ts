@@ -103,7 +103,7 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   let failQueueReconciliation = false;
   let failTerminalTimelineRead = false;
   let withholdTerminalClosureRecord = false;
-  let terminalTimelineFault: 'NONE' | 'DISCONTINUOUS' | 'REORDERED' | 'LATE_APPEND' = 'NONE';
+  let terminalTimelineFault: 'NONE' | 'DISCONTINUOUS' | 'REORDERED' | 'ACTOR_MISMATCH' | 'LATE_APPEND' = 'NONE';
   let listReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
@@ -170,6 +170,11 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
       }
       if (terminalTimelineFault === 'REORDERED' && event.status === 'CLOSED') {
         return ok([...timeline].reverse());
+      }
+      if (terminalTimelineFault === 'ACTOR_MISMATCH' && event.status === 'CLOSED') {
+        return ok(timeline.map((entry) => entry.action === 'road_event.closed'
+          ? { ...entry, actorId: 'supervisor-other' }
+          : entry));
       }
       if (terminalTimelineFault === 'LATE_APPEND' && event.status === 'CLOSED') {
         return ok([...timeline, {
@@ -378,14 +383,29 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   assert.equal(transitionRequests, 1);
   assert.equal(mutationRequests, 1);
 
-  terminalTimelineFault = 'LATE_APPEND';
-  const terminalWithLateEvidence = await controller.select(event.id);
+  terminalTimelineFault = 'ACTOR_MISMATCH';
+  const mismatchedActorTerminal = await controller.select(event.id);
   assert.equal(timelineReads, 13);
+  assert.equal(mismatchedActorTerminal.phase, 'failure');
+  assert.equal(mismatchedActorTerminal.stale, true);
+  assert.equal(mismatchedActorTerminal.selected, null);
+  assert.deepEqual(mismatchedActorTerminal.timeline, []);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.match(mismatchedActorTerminal.error ?? '', /تطابق هوية المشرف/);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
+  terminalTimelineFault = 'LATE_APPEND';
+  const terminalWithLateEvidence = await controller.retrySelection();
+  assert.equal(timelineReads, 14);
   assert.equal(terminalWithLateEvidence.phase, 'ready');
   assert.equal(terminalWithLateEvidence.selected?.status, 'CLOSED');
   assert.deepEqual(terminalWithLateEvidence.timeline.map((entry) => entry.action), [
     'road_event.closure_authorized', 'road_event.closed', 'road_event.late_evidence_attached'
   ]);
+  assert.equal(controller.canRetrySelection(), false);
   assert.equal(controller.canTransition(), false);
   assert.equal(controller.canAuthorizeClosure(), false);
   assert.equal(transitionRequests, 1);

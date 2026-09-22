@@ -350,6 +350,14 @@ function assertTerminalTimelineConsistency(
     if (matchingAuthorizations.length !== 1 || (matchingAuthorizations[0]?.index ?? closureIndex) >= closureIndex) {
       throw new Error('تعذر التحقق من ترتيب تفويض الإغلاق وسجله النهائي');
     }
+    const authorization = matchingAuthorizations[0]?.entry;
+    if (
+      authorization?.actorType !== 'SUPERVISOR'
+      || closure.actorType !== 'SUPERVISOR'
+      || authorization.actorId !== closure.actorId
+    ) {
+      throw new Error('تعذر التحقق من تطابق هوية المشرف بين التفويض والإغلاق');
+    }
   }
 }
 
