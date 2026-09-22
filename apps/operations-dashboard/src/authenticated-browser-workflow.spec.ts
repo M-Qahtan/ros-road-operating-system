@@ -102,6 +102,7 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   const closureResponse = barrier();
   let failQueueReconciliation = false;
   let failTerminalTimelineRead = false;
+  let withholdTerminalClosureRecord = false;
   let listReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
@@ -157,6 +158,9 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
         return new Response(JSON.stringify(envelope), {
           status: 503, headers: { 'content-type': 'application/json' }
         });
+      }
+      if (withholdTerminalClosureRecord && event.status === 'CLOSED') {
+        return ok(timeline.filter((entry) => entry.action !== 'road_event.closed'));
       }
       return ok(timeline);
     }
@@ -280,6 +284,36 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   assert.equal(retriedTerminal.selected?.version, 14);
   assert.equal(retriedTerminal.selected?.closureAuthorization, null);
   assert.deepEqual(retriedTerminal.timeline.map((entry) => entry.action), [
+    'road_event.closure_authorized', 'road_event.closed'
+  ]);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
+  withholdTerminalClosureRecord = true;
+  const incompleteTerminal = await controller.select(event.id);
+  assert.equal(timelineReads, 8);
+  assert.equal(incompleteTerminal.phase, 'failure');
+  assert.equal(incompleteTerminal.stale, true);
+  assert.equal(incompleteTerminal.selected, null);
+  assert.deepEqual(incompleteTerminal.timeline, []);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.match(incompleteTerminal.error ?? '', /سجل الإغلاق المطابق/);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
+  withholdTerminalClosureRecord = false;
+  const completeTerminal = await controller.retrySelection();
+  assert.equal(timelineReads, 9);
+  assert.equal(completeTerminal.phase, 'ready');
+  assert.equal(completeTerminal.stale, false);
+  assert.equal(completeTerminal.selected?.status, 'CLOSED');
+  assert.equal(completeTerminal.selected?.version, 14);
+  assert.deepEqual(completeTerminal.timeline.map((entry) => entry.action), [
     'road_event.closure_authorized', 'road_event.closed'
   ]);
   assert.equal(controller.canRetrySelection(), false);

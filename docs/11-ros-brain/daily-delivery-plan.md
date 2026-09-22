@@ -1029,6 +1029,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A TERMINAL TIMELINE OUTAGE CANNOT LEAVE A PARTIAL INCIDENT VIEW OR REPLAY A CRITICAL COMMAND; EXPLICIT AUTHENTICATED RETRY RESTORES THE COMPLETE TERMINAL PAIR.** |
 | Next handoff | Reject a terminal detail whose Timeline lacks the matching `road_event.closed` record for version 14, then accept it only after a complete authoritative detail/Timeline pair is returned. |
 
+### Terminal detail requires its matching closure record
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-22, GitHub candidate `12af51af25236c7c642c344e9ec617271c0e326d` was one hundred and eighteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its remote tree matched local `HEAD`, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. An unrelated unstaged edit to `.github/workflows/operational-readiness.yml` was present and explicitly excluded from this cycle. The approved cadence remains hourly. |
+| Added behavior | A fetched `CLOSED` incident is no longer accepted into the ready dashboard state unless its authenticated Timeline contains exactly one `road_event.closed` entry whose `afterState.version` matches the incident version. A missing or duplicate matching closure entry clears the partial pair and fails closed. |
+| Fail-closed acceptance | With `CLOSED@14` returned by detail but only the prior authorization record returned by Timeline, the controller must expose `failure/stale`, no selected incident, no Timeline, and no critical controls. One explicit retry may accept the terminal view only after fresh detail and Timeline reads return the matching closure record, without replaying authorization or transition POSTs. |
+| Local evidence | The focused operations-dashboard build and suite passed 46 of 46. The authenticated journey withheld `road_event.closed`, observed Timeline read eight fail closed, then restored the complete pair on explicit read nine; the recovered view contained `CLOSED@14` and the authorization/closure records while authorization and transition requests remained exactly one each. The full workspace passed 666 API, 46 dashboard, 36 mobile, and 8 domain tests (756 total), plus 32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | Timeline consistency is a browser fail-closed check, not proof of a live PostgreSQL transaction or REL-013 immutable archive. It grants no replay, reopening, severity reduction, dispatch, activation, collection, provider call, or autonomous authority. Tenant, purpose, role, exact version, human confirmation, and append-only history remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A TERMINAL INCIDENT CANNOT BE DISPLAYED AS AUTHORITATIVE WITHOUT ITS UNIQUE VERSION-MATCHED CLOSURE RECORD.** |
+| Next handoff | Bind the matching closure record to the exact terminal transition continuity (`beforeState.version=13` and `afterState.version=14`) and reject a reordered or discontinuous terminal audit pair. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

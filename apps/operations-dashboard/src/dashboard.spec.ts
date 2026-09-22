@@ -51,6 +51,14 @@ class ClosedGateway extends FakeGateway {
     this.calls.push(`get:${id}`);
     return Promise.resolve(this.closed);
   }
+  override timeline(id: string): Promise<readonly AuditTimelineEntryContract[]> {
+    this.calls.push(`timeline:${id}`);
+    return Promise.resolve([{
+      action: 'road_event.closed', actorType: 'SUPERVISOR', actorId: 'supervisor-1',
+      beforeState: { version: 10 }, afterState: { version: 11 }, reason: 'إغلاق بشري موثق',
+      traceId: 'trace-closed-1', occurredAt: '2026-07-25T03:05:00.000Z'
+    }]);
+  }
 }
 
 test('renders Arabic-first queue, safety, signals, audit and accessible critical controls', async () => {

@@ -129,6 +129,7 @@ export class OperationsDashboardController {
     try {
       const [selected, timeline] = await Promise.all([this.gateway.getById(id), this.gateway.timeline(id)]);
       if (intent !== this.readIntent) return this.current;
+      assertTerminalTimelineConsistency(selected, timeline);
       this.current = {
         ...this.current,
         phase: 'ready',
@@ -320,6 +321,19 @@ export class OperationsDashboardController {
     const normalized = reason.trim();
     if (normalized.length < 3 || normalized.length > 500) throw new Error('يجب إدخال سبب واضح من 3 إلى 500 حرف');
     return normalized;
+  }
+}
+
+function assertTerminalTimelineConsistency(
+  selected: RoadEventResponse,
+  timeline: readonly AuditTimelineEntryContract[]
+): void {
+  if (selected.status !== 'CLOSED') return;
+  const matchingClosures = timeline.filter((entry) =>
+    entry.action === 'road_event.closed' && entry.afterState?.version === selected.version
+  );
+  if (matchingClosures.length !== 1) {
+    throw new Error('تعذر التحقق من سجل الإغلاق المطابق للإصدار النهائي للحادث');
   }
 }
 
