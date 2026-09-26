@@ -2,6 +2,7 @@ import {
   RoadEvent,
   RoadEventAccessScope,
   RoadEventAlreadyExistsError,
+  RoadEventClosureSourceSnapshotChangedError,
   RoadEventConcurrencyError,
   RoadEventListQuery,
   RoadEventNotFoundError,
@@ -203,6 +204,18 @@ export class MemoryRoadEventRepository implements RoadEventRepository, AuditTime
     afterState: Readonly<Record<string, unknown>> | null
   ): void {
     const entries = this.audit.get(roadEventId) ?? [];
+    let causationId = context.causationId ?? null;
+    if (context.action === 'road_event.closed' && beforeState?.closureAuthorization !== null && causationId === null) {
+      const authorization = entries.filter((entry) =>
+        entry.action === 'road_event.closure_authorized'
+        && entry.afterState?.version === beforeState?.version
+        && JSON.stringify(entry.afterState?.closureAuthorization) === JSON.stringify(beforeState?.closureAuthorization)
+      );
+      if (authorization.length !== 1) {
+        throw new RoadEventClosureSourceSnapshotChangedError('Closure authorization causation is missing or ambiguous');
+      }
+      causationId = authorization[0]!.traceId;
+    }
     entries.push({
       action: context.action,
       actorType: context.actorType,
@@ -211,6 +224,8 @@ export class MemoryRoadEventRepository implements RoadEventRepository, AuditTime
       afterState,
       reason: context.reason ?? null,
       traceId: context.traceId,
+      correlationId: context.correlationId,
+      causationId,
       occurredAt: (context.occurredAt ?? new Date()).toISOString()
     });
     this.audit.set(roadEventId, entries);

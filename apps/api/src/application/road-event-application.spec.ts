@@ -200,7 +200,7 @@ test('S3 closure remains blocked until supervisor authorization is persisted', a
     authorizedAt: '2026-07-25T03:10:00.000Z',
     sourceSnapshot: { inputVersion: 37, sourceSnapshotDigest: 'd'.repeat(64),
       cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16, cognitiveDigest: 'e'.repeat(64) }
-  }, context('authorize-0002', supervisor));
+  }, { ...context('authorize-0002', supervisor), traceId: 'trace-authorization-002' });
   assert.equal(authorized.version, 2);
   assert.deepEqual(authorized.closureAuthorization?.sourceSnapshot, {
     inputVersion: 37,
@@ -210,8 +210,15 @@ test('S3 closure remains blocked until supervisor authorization is persisted', a
 
   const closed = await service.transition({
     roadEventId: EVENT_ID, expectedVersion: 2, nextStatus: RoadEventStatus.Closed, reason: 'all gates passed'
-  }, context('close-event-0002'));
+  }, { ...context('close-event-0002'), traceId: 'trace-closure-002' });
   assert.equal(closed.status, RoadEventStatus.Closed);
+  const timeline = await repository.listForRoadEvent(EVENT_ID, SCOPE);
+  const authorizationAudit = timeline.find((entry) => entry.action === 'road_event.closure_authorized');
+  const closureAudit = timeline.find((entry) => entry.action === 'road_event.closed');
+  assert.equal(authorizationAudit?.correlationId, EVENT_ID);
+  assert.equal(authorizationAudit?.causationId, null);
+  assert.equal(closureAudit?.correlationId, EVENT_ID);
+  assert.equal(closureAudit?.causationId, authorizationAudit?.traceId);
 });
 
 test('signal attachment is idempotent and checks event existence', async () => {

@@ -32,6 +32,8 @@ interface AuditRow {
   readonly after_state: Readonly<Record<string, unknown>> | null;
   readonly reason: string | null;
   readonly trace_id: string;
+  readonly correlation_id: string;
+  readonly causation_id: string | null;
   readonly occurred_at: Date | string;
 }
 
@@ -252,7 +254,8 @@ export class PostgresAuditTimelineAdapter implements AuditTimelinePort {
     const client = await this.pool.connect();
     try {
       const result = await client.query<AuditRow>(
-        `SELECT a.action, a.actor_type, a.actor_id, a.before_state, a.after_state, a.reason, a.trace_id, a.occurred_at
+        `SELECT a.action, a.actor_type, a.actor_id, a.before_state, a.after_state, a.reason,
+                a.trace_id, a.correlation_id, a.causation_id, a.occurred_at
            FROM audit_logs a
            JOIN road_events r ON r.id = a.resource_id
           WHERE a.resource_type = 'RoadEvent'
@@ -270,6 +273,8 @@ export class PostgresAuditTimelineAdapter implements AuditTimelinePort {
         afterState: row.after_state,
         reason: row.reason,
         traceId: row.trace_id,
+        correlationId: row.correlation_id,
+        causationId: row.causation_id,
         occurredAt: asIso(row.occurred_at)
       }));
     } finally {

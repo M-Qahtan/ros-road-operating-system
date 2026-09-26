@@ -66,6 +66,8 @@ export interface AuditTimelineEntry {
   readonly afterState: Readonly<Record<string, unknown>> | null;
   readonly reason: string | null;
   readonly traceId: string;
+  readonly correlationId: string;
+  readonly causationId: string | null;
   readonly occurredAt: string;
 }
 

@@ -432,6 +432,9 @@ test('closure authorization is journaled in the same transaction before audit an
         ? { rows: [{ revision: 1, digest: caseDigest }], rowCount: 1 }
         : { rows: [{ revision: 1, digest: severityDigest }], rowCount: 1 };
     }
+    if (text.includes('SELECT trace_id') && text.includes("road_event.closure_authorized")) {
+      return { rows: [{ trace_id: '55555555-5555-4555-8555-555555555555' }], rowCount: 1 };
+    }
     return { rows: [], rowCount: 1 };
   });
   const authorized = new RoadEvent({
@@ -489,6 +492,9 @@ test('high-risk closure validates the persisted snapshot inside a serializable u
         ? { rows: [{ revision: 2, digest: caseDigest }], rowCount: 1 }
         : { rows: [{ revision: 1, digest: severityDigest }], rowCount: 1 };
     }
+    if (text.includes('SELECT trace_id') && text.includes("road_event.closure_authorized")) {
+      return { rows: [{ trace_id: '55555555-5555-4555-8555-555555555555' }], rowCount: 1 };
+    }
     return { rows: [], rowCount: 1 };
   });
   const closed = authorizedRecovery();
@@ -509,6 +515,21 @@ test('high-risk closure validates the persisted snapshot inside a serializable u
   assert.deepEqual(client.queries[verificationIndex]!.values.slice(-6), [
     16, 'e'.repeat(64), 2, ACTOR_ID,
     new Date('2026-07-25T03:00:00.000Z'), 'verified current source snapshot'
+  ]);
+  const causalRead = client.queries.find((query) => query.text.includes('SELECT trace_id'));
+  assert.deepEqual(causalRead?.values, [EVENT_ID, '2', JSON.stringify({
+    actorId: ACTOR_ID,
+    reason: 'verified current source snapshot',
+    authorizedAt: '2026-07-25T03:00:00.000Z',
+    sourceSnapshot: {
+      inputVersion: 37, sourceSnapshotDigest: SNAPSHOT_DIGEST,
+      cognitiveSnapshotPolicyVersion: 'ros-eye.input-snapshot.v2', cognitiveRevision: 16,
+      cognitiveDigest: 'e'.repeat(64)
+    }
+  })]);
+  const auditInsert = client.queries.find((query) => query.text.includes('INSERT INTO audit_logs'));
+  assert.deepEqual(auditInsert?.values.slice(7, 10), [
+    context.traceId, context.correlationId, '55555555-5555-4555-8555-555555555555'
   ]);
   assert.equal(client.queries.at(-1)?.text, 'COMMIT');
 });
@@ -699,6 +720,13 @@ test('closure authorization journal is scoped, cognitive-bound and append-only',
   assert.match(migration, /BEFORE UPDATE OR DELETE ON road_event_closure_authorization_journal/);
   assert.match(migration, /closure authorization journal is append-only/);
   assert.match(migration, /no row grants autonomous closure or activation authority/);
+  const causationMigration = readFileSync('database/migrations/0027_road_event_audit_causation.sql', 'utf8');
+  assert.match(causationMigration, /ADD COLUMN correlation_id uuid/);
+  assert.match(causationMigration, /ADD COLUMN causation_id uuid/);
+  assert.match(causationMigration, /HAVING count\(\*\) = 1/);
+  assert.match(causationMigration, /authorization\.after_state -> 'closureAuthorization' = closure\.before_state -> 'closureAuthorization'/);
+  assert.match(causationMigration, /road_event_audit_correlation_required/);
+  assert.match(causationMigration, /road_event_closure_audit_causation_required/);
 });
 
 test('list scopes in SQL before filters, pagination and total count', async () => {

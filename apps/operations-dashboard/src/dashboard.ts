@@ -363,6 +363,10 @@ function assertTerminalTimelineConsistency(
     if (!Number.isFinite(authorizationTime) || !Number.isFinite(closureTime) || closureTime < authorizationTime) {
       throw new Error('تعذر التحقق من التسلسل الزمني بين تفويض الإغلاق وتنفيذه');
     }
+    if (authorization.correlationId !== selected.id || closure.correlationId !== selected.id
+      || authorization.causationId !== null || closure.causationId !== authorization.traceId) {
+      throw new Error('تعذر التحقق من سببية تفويض الإغلاق وسجل تنفيذه');
+    }
     const authorizedSnapshot = authorization.afterState?.closureAuthorization;
     const consumedSnapshot = closure.beforeState?.closureAuthorization;
     if (!isJsonObject(authorizedSnapshot) || !isJsonObject(consumedSnapshot)

@@ -50,6 +50,7 @@ interface RoadEventRow {
 interface VersionRow { readonly version: number; }
 interface RevisionLedgerRow { readonly revision: number | string; readonly digest: string; }
 interface ClosureSnapshotVerificationRow { readonly closure_snapshot_current: boolean; }
+interface AuditCausationRow { readonly trace_id: string; }
 interface PostgresErrorLike { readonly code?: string; }
 
 export class InvalidPersistenceIdentifierError extends Error {
@@ -586,12 +587,31 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
     context: RoadEventWriteContext,
     occurredAt: Date
   ): Promise<void> {
+    let causationId = context.causationId ?? null;
+    if (context.action === 'road_event.closed' && beforeState?.closureAuthorization !== null && causationId === null) {
+      const authorization = await client.query<AuditCausationRow>(
+        `SELECT trace_id
+           FROM audit_logs
+          WHERE resource_type = 'RoadEvent'
+            AND resource_id = $1::uuid
+            AND action = 'road_event.closure_authorized'
+            AND after_state -> 'version' = $2::jsonb
+            AND after_state -> 'closureAuthorization' = $3::jsonb
+          ORDER BY occurred_at ASC, id ASC`,
+        [event.id, JSON.stringify(beforeState?.version), JSON.stringify(beforeState?.closureAuthorization)]
+      );
+      if (authorization.rowCount !== 1 || authorization.rows[0] === undefined) {
+        throw new RoadEventClosureSourceSnapshotChangedError('Closure authorization causation is missing or ambiguous');
+      }
+      causationId = authorization.rows[0].trace_id;
+    }
     await client.query(
       `INSERT INTO audit_logs (
         actor_type, actor_id, action, resource_type, resource_id,
-        before_state, after_state, reason, trace_id, occurred_at
-      ) VALUES ($1, $2::uuid, $3, 'RoadEvent', $4::uuid, $5::jsonb, $6::jsonb, $7, $8::uuid, $9)`,
-      [context.actorType, context.actorId ?? null, context.action, event.id, beforeState, afterState, context.reason ?? null, context.traceId, occurredAt]
+        before_state, after_state, reason, trace_id, correlation_id, causation_id, occurred_at
+      ) VALUES ($1, $2::uuid, $3, 'RoadEvent', $4::uuid, $5::jsonb, $6::jsonb, $7, $8::uuid, $9::uuid, $10::uuid, $11)`,
+      [context.actorType, context.actorId ?? null, context.action, event.id, beforeState, afterState,
+        context.reason ?? null, context.traceId, context.correlationId, causationId, occurredAt]
     );
     await client.query(
       `INSERT INTO outbox_events (
@@ -603,7 +623,7 @@ export class PostgresRoadEventRepository implements RoadEventRepository {
         context.eventType,
         afterState,
         context.correlationId,
-        context.causationId ?? null,
+        causationId,
         occurredAt,
         context.tenantId,
         context.purpose

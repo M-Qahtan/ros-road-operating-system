@@ -149,6 +149,8 @@ test('audit timeline adapter scopes the join before returning ordered projection
       after_state: { version: 2 },
       reason: 'validated',
       trace_id: UUIDS.trace,
+      correlation_id: UUIDS.event,
+      causation_id: null,
       occurred_at: '2026-08-19T10:00:00.000Z'
     }],
     rowCount: 1
@@ -163,6 +165,8 @@ test('audit timeline adapter scopes the join before returning ordered projection
     afterState: { version: 2 },
     reason: 'validated',
     traceId: UUIDS.trace,
+    correlationId: UUIDS.event,
+    causationId: null,
     occurredAt: '2026-08-19T10:00:00.000Z'
   }]);
   assert.match(client.queries[0]!.text, /JOIN road_events r ON r.id = a.resource_id/);
