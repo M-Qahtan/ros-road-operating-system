@@ -727,6 +727,18 @@ test('closure authorization journal is scoped, cognitive-bound and append-only',
   assert.match(causationMigration, /authorization\.after_state -> 'closureAuthorization' = closure\.before_state -> 'closureAuthorization'/);
   assert.match(causationMigration, /road_event_audit_correlation_required/);
   assert.match(causationMigration, /road_event_closure_audit_causation_required/);
+  const lineageMigration = readFileSync('database/migrations/0028_road_event_audit_lineage_guard.sql', 'utf8');
+  assert.match(lineageMigration, /NEW\.correlation_id IS DISTINCT FROM NEW\.resource_id/);
+  assert.match(lineageMigration, /authorization\.resource_id = NEW\.resource_id/);
+  assert.match(lineageMigration, /authorization\.trace_id = NEW\.causation_id/);
+  assert.match(lineageMigration, /authorization\.after_state -> 'version' = NEW\.before_state -> 'version'/);
+  assert.match(lineageMigration, /authorization\.after_state -> 'closureAuthorization' = closure_authorization/);
+  assert.match(lineageMigration, /authorization\.actor_id IS NOT DISTINCT FROM NEW\.actor_id/);
+  assert.match(lineageMigration, /IF authorization_matches <> 1 THEN/);
+  assert.match(lineageMigration, /Existing RoadEvent closure audit lineage is missing, ambiguous, or cross-incident/);
+  assert.match(lineageMigration, /authorization\.trace_id = closure\.causation_id/);
+  assert.match(lineageMigration, /authorization\.actor_id IS NOT DISTINCT FROM closure\.actor_id/);
+  assert.match(lineageMigration, /BEFORE INSERT ON audit_logs/);
 });
 
 test('list scopes in SQL before filters, pagination and total count', async () => {
