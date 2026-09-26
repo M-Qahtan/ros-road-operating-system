@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 55673)
-Total output lines: 1146
-
 # ROS Brain delivery plan
 
 Status: **HOURLY ENGINEERING CADENCE — SHADOW_ONLY — WIP LIMIT 1**
@@ -579,7 +576,126 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Added behavior | The disposable cognitive-closure journey now writes the exact scoped v1/v2-bound human authorization into `road_event_closure_authorization_journal`. It then attempts both UPDATE and DELETE, accepts only the migration trigger's append-only rejection, records the exact row identity, restarts PostgreSQL, and requires the same identity to remain singular and unchanged. |
 | Receipt boundary | Receipt `ros-brain.local-postgres-journey-receipt.v26` is withheld unless mutation rejection, pre-restart state, and post-restart state are all present and exact. The manifest digest includes the migration and journey scripts, while `externalArchiveReceipt` remains null. |
 | Local evidence | The focused repository and PostgreSQL harness contract passed 51 of 51. The full workspace passed 654 API, 33 dashboard, 36 mobile, and 8 domain tests (731 total). Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live journey exited 127 before execution because neither Docker nor Podman is installed; therefore no PostgreSQL `v26` receipt is claimed. |
-| Safety limits | The fixture stores and reads human authorization provenance only. It grants no collection, severity reduction, dispatch, pr…5673 tokens truncated… passed. |
+| Safety limits | The fixture stores and reads human authorization provenance only. It grants no collection, severity reduction, dispatch, provider call, activation, or autonomous closure authority; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. A local receipt would not satisfy REL-013 external immutable archival. |
+| Result | **THE NEXT LIVE RECEIPT IS BLOCKED UNLESS POSTGRESQL ENFORCES THE JOURNAL'S APPEND-ONLY TRIGGER AND PRESERVES THE EXACT SOURCE-BOUND ROW ACROSS RESTART.** |
+| Next handoff | Run the clean `v26` journey on Docker or Podman and fix the first actual migration, trigger, or restart-persistence discrepancy before accepting its receipt. |
+
+### Journal-bound high-risk closure gate
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `f497731cd5c9ff1fb6d85052689fa31795bfdee0` was seventy-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. The approved cadence remains hourly. |
+| Added behavior | The serializable high-risk closure check now requires the exact independent authorization-journal row as well as the RoadEvent authorization fields, governed v1 snapshot, and current non-abstaining cognitive v2 receipt. The journal match covers Tenant + Purpose + Case + authorized event version, human actor, authorization time and reason, and the exact v1/v2 source identity. A missing or mismatched journal rejects closure before RoadEvent, audit, or outbox writes. |
+| Journey contract | Both the pre-restart drift attempt and the post-restart retry consume the exact journal row in their closure gates. Receipt `ros-brain.local-postgres-journey-receipt.v27` is withheld unless those rejection and unchanged-write-set proofs succeed. |
+| Local evidence | The focused PostgreSQL repository and harness contract passed 52 of 52. The full workspace passed 655 API, 33 dashboard, 36 mobile, and 8 domain tests (732 total). Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live journey exited 127 before execution because neither Docker nor Podman is installed; therefore no PostgreSQL `v27` receipt is claimed. |
+| Safety limits | The journal is evidence of prior explicit human authorization, not a source of authority. The change grants no collection, severity reduction, dispatch, provider call, activation, or autonomous closure; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **HIGH-RISK CLOSURE NOW FAILS CLOSED WHEN ITS INDEPENDENT APPEND-ONLY AUTHORIZATION RECORD IS ABSENT OR DOES NOT EXACTLY MATCH THE CURRENT GOVERNED SOURCE.** |
+| Next handoff | Run the clean `v27` journey on Docker or Podman and fix the first actual journal-gate, transaction, or restart-persistence discrepancy before accepting its receipt. |
+
+### Journal-verified closure authorization read model
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `3b04c5d5dc2bd55b98f6b801e54d6360238db2f0` was eighty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | PostgreSQL RoadEvent reads now expose a closure authorization only when an independent journal row exactly matches the current Tenant + Purpose + Case + Version, human actor, authorization time and reason, and complete v1/v2 source identity. If the row is absent or mismatched, the authorization is withheld from the application and operator read model while the underlying append-only history remains untouched. |
+| Fail-closed acceptance | An exact journal match restores the governed authorization. A missing journal row returns no authorization, so a non-closed high-risk case remains in human review instead of appearing resolved. The same scoped query is used by single-case and list reads; no caller can self-assert the journal match. |
+| Local evidence | The focused PostgreSQL repository suite passed 19 of 19 after building all workspace dependencies. The full workspace passed 656 API, 33 dashboard, 36 mobile, and 8 domain tests (733 total). Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live PostgreSQL journey remains unclaimed without Docker or Podman. |
+| Safety limits | This is visibility hardening only. It neither creates authorization nor closes an incident, and grants no collection, severity reduction, dispatch, provider call, activation, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **AN AUTHORIZATION STORED ONLY ON THE ROAD EVENT CAN NO LONGER APPEAR ACTIONABLE TO OPERATORS WITHOUT ITS EXACT INDEPENDENT APPEND-ONLY JOURNAL RECORD.** |
+| Next handoff | Add the journal-match disposition to the disposable PostgreSQL operator-read journey and require it to remain withheld after restart when the journal row is absent or mismatched. |
+
+### Post-restart closure-authorization read proof
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `7aeef1686f8c989e6fe680175e51289872d0ec3a` was eighty-one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The disposable PostgreSQL journey now evaluates the exact operator-read journal match after the database restart. It requires the intact event and journal to produce `AUTHORIZED`, temporarily changes the RoadEvent authorization reason inside a savepoint, requires that mismatch to produce `WITHHELD`, rolls the savepoint back, and requires `AUTHORIZED` to be restored. |
+| Atomic acceptance | The proof hashes the RoadEvent and independent journal and counts RoadEvent audit and outbox rows before the mismatch. Receipt `ros-brain.local-postgres-journey-receipt.v28` is withheld unless rollback restores the exact event and the event, audit, outbox, and journal write-set remains unchanged. The journey manifest now binds the new proof script. |
+| Local evidence | The focused PostgreSQL harness contract passed 35 of 35. The full workspace passed 657 API, 33 dashboard, 36 mobile, and 8 domain tests (734 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. The live journey remains unclaimed until Docker or Podman is available. |
+| Safety limits | This proves a read-time visibility boundary only; it does not create authorization, close an incident, collect data, change severity, dispatch, call a provider, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. A local receipt would not satisfy REL-013 external immutable archival. |
+| Result | **THE NEXT LIVE RECEIPT IS BLOCKED UNLESS A POST-RESTART JOURNAL MISMATCH IS WITHHELD AND ITS ROLLBACK LEAVES NO DURABLE WRITE.** |
+| Next handoff | Run the clean `v28` journey on Docker or Podman and fix the first actual mismatch-disposition, rollback, or restart-persistence discrepancy before accepting its receipt. |
+
+### Missing-journal closure-authorization read proof
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `525481f3699972e04c964066f01556e89ae9c80f` was eighty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The post-restart operator-read proof now creates a transaction-scoped legacy RoadEvent carrying human authorization fields but no independent journal row. The read disposition must be `WITHHELD`, then the savepoint is rolled back before the existing mismatch and restoration checks continue. |
+| Fail-closed acceptance | Receipt `ros-brain.local-postgres-journey-receipt.v29` is withheld unless exact journal evidence reads `AUTHORIZED`, missing journal evidence reads `WITHHELD`, mismatched evidence reads `WITHHELD`, rollback restores `AUTHORIZED`, and the RoadEvent, audit, outbox, and journal write-set remains unchanged. |
+| Local evidence | The focused PostgreSQL harness contract passed 36 of 36. The full workspace passed 658 API, 33 dashboard, 36 mobile, and 8 domain tests (735 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. The live journey remains unclaimed until Docker or Podman is available. |
+| Safety limits | The temporary fixture is rolled back and does not create durable authorization or history. The change grants no collection, severity reduction, dispatch, provider call, activation, or autonomous closure; `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. Local evidence does not satisfy REL-013 external immutable archival. |
+| Result | **BOTH MISSING AND MISMATCHED INDEPENDENT JOURNAL EVIDENCE ARE NOW REQUIRED TO REMAIN NON-ACTIONABLE IN THE NEXT POST-RESTART RECEIPT.** |
+| Next handoff | Run the clean `v29` journey on Docker or Podman and fix the first actual missing-journal, mismatch, rollback, or restart-persistence discrepancy before accepting its receipt. |
+
+### Journal verification across the operator queue
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `3b8930f39a8be3de89a609fcbc090171913116c6` was eighty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The PostgreSQL list path that feeds the operator queue is now directly covered with matched and missing-journal rows in one page. It preserves an authorization only for the exact journal match and withholds the other row without hiding the incident itself or changing pagination. |
+| Fail-closed acceptance | The list query must perform the same Tenant + Purpose + Case + Version journal check as the single-case read. One unsafe row cannot inherit another row's match, and the withheld incident remains visible for human review. |
+| Local evidence | The focused PostgreSQL repository suite passed 20 of 20. The full workspace passed 659 API, 33 dashboard, 36 mobile, and 8 domain tests (736 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build dependencies were regenerated before the focused test. |
+| Safety limits | This adds queue-path regression evidence and no execution authority. It does not collect data, change severity, close an incident, dispatch, call a provider, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **A MISSING JOURNAL ROW CAN NO LONGER BE REGRESSED INTO AN ACTIONABLE CLOSURE AUTHORIZATION THROUGH THE PAGINATED OPERATOR LIST PATH.** |
+| Next handoff | Carry the same withheld disposition through the authenticated RoadEvent HTTP list response and prove that operator clients receive the incident without executable closure authorization. |
+
+### Journal-withheld authorization at the authenticated HTTP boundary
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `8c026b77c44959710738ec34784e70822c5cc4ba` was eighty-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The authenticated RoadEvent list boundary is now directly covered for the persistence-withheld shape: the incident remains in the operator page while `closureAuthorization` is explicitly `null`. The HTTP envelope cannot turn the absence of an exact journal-verified authorization into an executable closure capability. |
+| Fail-closed acceptance | An authenticated operator with matching Tenant + Purpose receives the case identity and review data, but no closure actor, reason, timestamp, or governed source binding when persistence withholds authorization. The existing authorization and scope checks remain in force. |
+| Local evidence | The focused HTTP suite passed 5 of 5. The full workspace passed 660 API, 33 dashboard, 36 mobile, and 8 domain tests (737 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed, so no live `v29` receipt is claimed. |
+| Safety limits | This is boundary regression evidence only. It neither creates authorization nor closes an incident, and grants no collection, severity reduction, dispatch, provider call, activation, or autonomous action. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **A JOURNAL-WITHHELD INCIDENT REMAINS VISIBLE THROUGH THE AUTHENTICATED HTTP LIST WITHOUT AN EXECUTABLE CLOSURE AUTHORIZATION.** |
+| Next handoff | Carry the explicit null authorization through the operations-dashboard gateway and rendering path, proving that the incident remains reviewable while closure controls stay unavailable. |
+
+### Journal-withheld authorization in operator closure controls
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `f3a5005285799bad7d8a537b14fa6ab17e85e854` was eighty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, or overlapping local process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The operations dashboard now keeps a journal-withheld RoadEvent visible for review while explicitly marking closure unavailable. The `CLOSED` option is disabled when `closureAuthorization` is null, and a direct controller call fails before any gateway request. Other authorized lifecycle transitions remain available. |
+| Fail-closed acceptance | A null authorization cannot be converted into a closure attempt by DOM manipulation or direct controller invocation. Once a supervisor creates a visible authorization through the existing governed path, the close option becomes available again; the dashboard still grants no authority beyond the server-side checks. |
+| Local evidence | The focused dashboard suite passed 34 of 34. The full workspace passed 660 API, 34 dashboard, 36 mobile, and 8 domain tests (738 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. The live PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed, so no live `v29` receipt is claimed. |
+| Safety limits | This is a defense-in-depth operator boundary; PostgreSQL and API remain authoritative. It does not create authorization, close an incident, collect data, change severity, dispatch, call a provider, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **A JOURNAL-WITHHELD CASE REMAINS REVIEWABLE, BUT THE DASHBOARD CANNOT SUBMIT OR DISPLAY AN AVAILABLE CLOSE ACTION UNTIL GOVERNED HUMAN AUTHORIZATION IS PRESENT.** |
+| Next handoff | Add the withheld-versus-authorized closure-control state to the authenticated browser workflow across the real HTTP gateway, proving no closure request is emitted before authorization and that the exact authorized revision restores the control. |
+
+### Exact authorization revision across the authenticated dashboard gateway
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `e2214dd664d316f5010be3101a8ae564fe3da8a1` was eighty-seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The authenticated dashboard workflow now proves that a journal-withheld RoadEvent renders with `CLOSED` disabled and rejects a direct closure attempt before the HTTP gateway emits any transition request. Supervisor authorization returns revision 8; only that exact revision re-enables the control and is sent as `expectedVersion: 8` in the subsequent authenticated closure request. |
+| Fail-closed acceptance | Before authorization, no `POST /transition` exists in the observed request sequence. After authorization, the gateway carries trusted Bearer, Tenant, and Purpose context without self-asserted identity headers, and the closure request is accepted only with the exact authorized revision. |
+| Local evidence | The focused dashboard suite passed 34 of 34. The full workspace passed 660 API, 34 dashboard, 36 mobile, and 8 domain tests (738 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
+| Safety limits | The HTTP endpoint is exercised through the production `HttpRoadEventGateway` request contract with a deterministic in-process fetch boundary; no external service, real incident, dispatch, or closure was invoked. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **THE AUTHENTICATED DASHBOARD EMITS ZERO CLOSURE REQUESTS WHILE AUTHORIZATION IS WITHHELD AND RESTORES THE CONTROL ONLY FOR THE EXACT SUPERVISOR-AUTHORIZED REVISION.** |
+| Next handoff | Add authenticated HTTP conflict evidence showing that cognitive or event revision drift after authorization returns 409, marks the selected view stale, disables closure, and emits no automatic retry. |
+
+### Authorization drift conflict at the authenticated dashboard boundary
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `71380fcf0360f4c6132aa9c23cefbe6daeabe803` was eighty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | The authenticated dashboard workflow now exercises an authorized revision that conflicts at closure time. HTTP 409 is sanitized, marks the selected case stale, disables every transition including `CLOSED`, and emits exactly one transition request with no automatic retry. |
+| Fail-closed acceptance | A cognitive or RoadEvent revision conflict cannot retain an actionable closure control or leak the server's internal conflict reason. The operator receives a bounded refresh instruction, while the selected incident and human-review context remain visible. |
+| Local evidence | The focused dashboard suite passed 35 of 35. The full workspace passed 660 API, 35 dashboard, 36 mobile, and 8 domain tests (739 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
+| Safety limits | This verifies fail-closed client behavior against the production HTTP gateway contract with a deterministic in-process response. It performs no external call or incident mutation and grants no collection, dispatch, severity reduction, activation, or autonomous closure. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
+| Result | **AN AUTHORIZATION-REVISION CONFLICT NOW FAILS CLOSED IN THE AUTHENTICATED OPERATOR PATH WITHOUT RETRY, INTERNAL-DATA LEAKAGE, OR A REMAINING CLOSURE CONTROL.** |
+| Next handoff | Prove that an explicit operator refresh after the 409 reads the newer revision, keeps the incident reviewable with authorization withheld, and never reuses or retries the stale closure request. |
+
+### Explicit recovery from a stale closure conflict
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-20, GitHub candidate `85f818ca88e7dd41ad055f3f96c4cacfc98d1a05` was eighty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch PR, workflow run, dirty worktree, or overlapping test process. Both delivery documents remained present and the approved cadence remained hourly. |
+| Added behavior | After an authenticated closure request conflicts, only an explicit operator refresh reads the newer revision. The refreshed incident remains visible at revision 9 with `closureAuthorization=null`; ordinary review transitions remain available, while `CLOSED` remains disabled. |
+| Fail-closed acceptance | The stale request is emitted exactly once and is never retried or rebound to revision 9. Refresh performs only authenticated list, detail, and timeline reads, clears the stale transport state, and cannot revive the invalidated authorization. |
+| Local evidence | The focused dashboard suite passed 35 of 35. The full workspace passed 660 API, 35 dashboard, 36 mobile, and 8 domain tests (739 total), plus 32 perception, benchmark, certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and eight external-evidence policy checks passed. |
 | Safety limits | This validates client recovery over the production HTTP gateway contract with deterministic in-process responses. It does not create a replacement authorization, close an incident, call an external service, dispatch, activate, or act autonomously. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged; local evidence is not REL-013 external immutable archival. |
 | Result | **A CONFLICTED CLOSURE REQUEST CANNOT BE REPLAYED OR REVIVED: EXPLICIT REFRESH RECOVERS THE NEWER INCIDENT ONLY WITH AUTHORIZATION WITHHELD.** |
 | Next handoff | Require a new governed supervisor authorization against revision 9 and prove that only its returned revision can re-enable closure; the invalidated revision-8 authorization must remain historical and unusable. |
