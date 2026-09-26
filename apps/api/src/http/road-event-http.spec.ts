@@ -243,16 +243,29 @@ test('HTTP conflict recovery requires a new exact-revision closure authorization
   assert.equal(replacementData.version, 10);
   assert.equal(replacementData.closureAuthorization?.reason, 'replacement review for current revision');
 
+  const closed = await handle(request({
+    method: 'POST',
+    path: `/api/v1/road-events/${EVENT_ID}/transition`,
+    headers: supervisorHeaders('close-version-10'),
+    body: { expectedVersion: 10, nextStatus: RoadEventStatus.Closed, reason: 'close bound authorization' }
+  }));
+  assert.equal(closed.status, 200);
+
   const timelineResponse = await handle(request({
     method: 'GET',
     path: `/api/v1/road-events/${EVENT_ID}/timeline`,
     headers: actorHeaders('SUPERVISOR')
   }));
   assert.equal(timelineResponse.status, 200);
-  const authorizationHistory = (timelineResponse.body as {
-    data: Array<{ action: string; afterState: { version?: number } | null }>;
-  }).data.filter((entry) => entry.action === 'road_event.closure_authorized');
+  const timeline = (timelineResponse.body as {
+    data: Array<{ action: string; beforeState: Record<string, unknown> | null;
+      afterState: Record<string, unknown> | null }>;
+  }).data;
+  const authorizationHistory = timeline.filter((entry) => entry.action === 'road_event.closure_authorized');
   assert.deepEqual(authorizationHistory.map((entry) => entry.afterState?.version), [8, 10]);
+  const replacementAuthorization = authorizationHistory[1]?.afterState?.closureAuthorization;
+  const closure = timeline.find((entry) => entry.action === 'road_event.closed');
+  assert.deepEqual(closure?.beforeState?.closureAuthorization, replacementAuthorization);
 });
 
 test('HTTP authorization, validation, conflict and not-found errors are explicit', async () => {

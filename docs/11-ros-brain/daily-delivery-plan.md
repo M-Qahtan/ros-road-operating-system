@@ -1080,6 +1080,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A HIGH-RISK TERMINAL VIEW CANNOT ACCEPT AN INVALID OR BACKDATED CLOSURE RELATIVE TO ITS MATCHING AUTHORIZATION.** |
 | Next handoff | Bind the terminal authorization and closure records to one continuous trace/correlation lineage and reject cross-operation audit splicing while preserving later append-only evidence. |
 
+### Terminal closure consumes the exact authorized snapshot
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-26, GitHub candidate `d16075d50d2d6f09c59dd49d004569e80fc21bb0` remained one hundred and twenty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its remote tree matched the tested local base, both delivery documents remained present, and no overlapping test process, branch pull request, or candidate workflow run existed. The unrelated unstaged edit to `.github/workflows/operational-readiness.yml` remained excluded. The approved cadence remains hourly. |
+| Added behavior | The API memory boundary now records the complete closure-authorization snapshot in audit before/after state, matching the persistent adapter's existing snapshot shape. The dashboard accepts a terminal S3/S4 pair only when the authorization record's `afterState.closureAuthorization` exactly equals the closure record's `beforeState.closureAuthorization`, including any governed source-snapshot binding. This material lineage prevents combining otherwise plausible authorization and closure records from different operations. |
+| Fail-closed acceptance | Mutating only the authorization material consumed by the closure must produce `failure/stale`, no selected incident, no Timeline, and no critical controls. A later explicit authenticated read may recover from an exact pair, retain append-only evidence after closure, and must not replay either human POST. Missing lineage material also fails closed. |
+| Local evidence | The new negative browser check failed before the controller change because the spliced pair was accepted, then passed after the invariant was added. Focused API and browser boundary checks passed, followed by 666/666 API, 46/46 dashboard, 36/36 mobile, and 8/8 domain tests (756/756 total), plus 32/32 perception, benchmark, adapter-certification, and epistemic-coverage contract checks. Build, no-emit TypeScript, repository/runtime composition, retention, negative-gate, archive conditional-write, and 8/8 external-evidence policy checks passed. The PostgreSQL journey exited 127 before execution because neither Docker nor Podman is installed; no live `v33` receipt is claimed. |
+| Safety limits | This is a material audit-lineage check across API and browser seams, not a new durable correlation identifier, a live PostgreSQL execution, or REL-013 external immutable archival. It grants no replay, reopening, severity reduction, dispatch, activation, collection, provider call, or autonomous authority. Tenant, purpose, role, exact version, human confirmation, governed source binding, and append-only history remain authoritative. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A HIGH-RISK TERMINAL VIEW CANNOT SPLICE AN AUTHORIZATION AND CLOSURE THAT DO NOT SHARE THE EXACT AUTHORIZED SNAPSHOT.** |
+| Next handoff | Persist an explicit causation identifier on the authorization and closure audit records and require the closure to reference the exact authorization event, without replacing the material snapshot check or hiding later append-only evidence. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

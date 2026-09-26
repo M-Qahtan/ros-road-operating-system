@@ -363,7 +363,30 @@ function assertTerminalTimelineConsistency(
     if (!Number.isFinite(authorizationTime) || !Number.isFinite(closureTime) || closureTime < authorizationTime) {
       throw new Error('تعذر التحقق من التسلسل الزمني بين تفويض الإغلاق وتنفيذه');
     }
+    const authorizedSnapshot = authorization.afterState?.closureAuthorization;
+    const consumedSnapshot = closure.beforeState?.closureAuthorization;
+    if (!isJsonObject(authorizedSnapshot) || !isJsonObject(consumedSnapshot)
+      || !sameJsonValue(authorizedSnapshot, consumedSnapshot)) {
+      throw new Error('تعذر التحقق من ارتباط تفويض الإغلاق بسجل تنفيذه');
+    }
   }
+}
+
+function isJsonObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => sameJsonValue(value, right[index]));
+  }
+  if (!isJsonObject(left) || !isJsonObject(right)) return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index] && sameJsonValue(left[key], right[key]));
 }
 
 export function slaAgeMinutes(event: RoadEventResponse, now: Date): number {

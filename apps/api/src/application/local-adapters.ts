@@ -112,12 +112,19 @@ function cloneEvent(event: RoadEvent): RoadEvent {
 }
 
 function eventSnapshot(event: RoadEvent): Readonly<Record<string, unknown>> {
+  const authorization = event.closureAuthorization;
   return {
     id: event.id,
     status: event.status,
     severity: event.severity.level,
     version: event.version,
-    occurredAt: event.occurredAt.toISOString()
+    occurredAt: event.occurredAt.toISOString(),
+    closureAuthorization: authorization === undefined ? null : {
+      actorId: authorization.actorId,
+      reason: authorization.reason,
+      authorizedAt: authorization.authorizedAt.toISOString(),
+      ...(authorization.sourceSnapshot === undefined ? {} : { sourceSnapshot: authorization.sourceSnapshot })
+    }
   };
 }
 

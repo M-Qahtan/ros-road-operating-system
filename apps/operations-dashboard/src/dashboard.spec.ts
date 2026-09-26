@@ -56,12 +56,17 @@ class ClosedGateway extends FakeGateway {
     return Promise.resolve([
       {
         action: 'road_event.closure_authorized', actorType: 'SUPERVISOR', actorId: 'supervisor-1',
-        beforeState: { version: 9 }, afterState: { version: 10 }, reason: 'تفويض إغلاق بشري موثق',
+        beforeState: { version: 9, closureAuthorization: null },
+        afterState: { version: 10, closureAuthorization: {
+          actorId: 'supervisor-1', reason: 'تفويض إغلاق بشري موثق', authorizedAt: '2026-07-25T03:04:00.000Z'
+        } }, reason: 'تفويض إغلاق بشري موثق',
         traceId: 'trace-authorized-1', occurredAt: '2026-07-25T03:04:00.000Z'
       },
       {
         action: 'road_event.closed', actorType: 'SUPERVISOR', actorId: 'supervisor-1',
-        beforeState: { version: 10 }, afterState: { version: 11 }, reason: 'إغلاق بشري موثق',
+        beforeState: { version: 10, closureAuthorization: {
+          actorId: 'supervisor-1', reason: 'تفويض إغلاق بشري موثق', authorizedAt: '2026-07-25T03:04:00.000Z'
+        } }, afterState: { version: 11 }, reason: 'إغلاق بشري موثق',
         traceId: 'trace-closed-1', occurredAt: '2026-07-25T03:05:00.000Z'
       }
     ]);

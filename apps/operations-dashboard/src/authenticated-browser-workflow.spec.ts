@@ -103,7 +103,8 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   let failQueueReconciliation = false;
   let failTerminalTimelineRead = false;
   let withholdTerminalClosureRecord = false;
-  let terminalTimelineFault: 'NONE' | 'DISCONTINUOUS' | 'REORDERED' | 'ACTOR_MISMATCH' | 'REVERSED_TIME' | 'LATE_APPEND' = 'NONE';
+  let terminalTimelineFault: 'NONE' | 'DISCONTINUOUS' | 'REORDERED' | 'ACTOR_MISMATCH' | 'REVERSED_TIME'
+    | 'AUTHORIZATION_BINDING_MISMATCH' | 'LATE_APPEND' = 'NONE';
   let listReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
@@ -121,7 +122,10 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
       } };
       timeline.push({
         action: 'road_event.closure_authorized', actorType: 'SUPERVISOR', actorId,
-        beforeState: { version: 12 }, afterState: { version: 13 },
+        beforeState: { version: 12, closureAuthorization: null },
+        afterState: { version: 13, closureAuthorization: {
+          actorId, reason: 'تفويض لا يعاد عند فشل المصالحة', authorizedAt: '2026-08-20T10:00:00.000Z'
+        } },
         reason: 'تفويض لا يعاد عند فشل المصالحة', traceId: 'trace-authoritative-recovery',
         occurredAt: '2026-08-20T10:00:00.000Z'
       });
@@ -144,7 +148,10 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
       event = { ...event, status: 'CLOSED', version: 14, closureAuthorization: null };
       timeline.push({
         action: 'road_event.closed', actorType: 'SUPERVISOR', actorId,
-        beforeState: { version: 13 }, afterState: { version: 14 },
+        beforeState: { version: 13, closureAuthorization: {
+          actorId, reason: 'تفويض لا يعاد عند فشل المصالحة', authorizedAt: '2026-08-20T10:00:00.000Z'
+        } },
+        afterState: { version: 14, closureAuthorization: null },
         reason: body.reason, traceId: 'trace-recovered-closure',
         occurredAt: '2026-08-20T10:01:00.000Z'
       });
@@ -179,6 +186,13 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
       if (terminalTimelineFault === 'REVERSED_TIME' && event.status === 'CLOSED') {
         return ok(timeline.map((entry) => entry.action === 'road_event.closed'
           ? { ...entry, occurredAt: '2026-08-20T09:59:59.000Z' }
+          : entry));
+      }
+      if (terminalTimelineFault === 'AUTHORIZATION_BINDING_MISMATCH' && event.status === 'CLOSED') {
+        return ok(timeline.map((entry) => entry.action === 'road_event.closed'
+          ? { ...entry, beforeState: { ...entry.beforeState, closureAuthorization: {
+            actorId, reason: 'تفويض من عملية مستقلة', authorizedAt: '2026-08-20T10:00:00.000Z'
+          } } }
           : entry));
       }
       if (terminalTimelineFault === 'LATE_APPEND' && event.status === 'CLOSED') {
@@ -247,7 +261,9 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   assert.equal(recovered.selected?.closureAuthorization?.actorId, actorId);
   assert.equal(recovered.timeline.length, 1);
   assert.equal(recovered.timeline[0]?.action, 'road_event.closure_authorized');
-  assert.deepEqual(recovered.timeline[0]?.afterState, { version: 13 });
+  assert.deepEqual(recovered.timeline[0]?.afterState, { version: 13, closureAuthorization: {
+    actorId, reason: 'تفويض لا يعاد عند فشل المصالحة', authorizedAt: '2026-08-20T10:00:00.000Z'
+  } });
   assert.equal(controller.canTransitionTo('CLOSED'), true);
 
   const closure = controller.transition('CLOSED', 'إغلاق بشري بعد استعادة التفويض');
@@ -416,9 +432,23 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
   assert.equal(transitionRequests, 1);
   assert.equal(mutationRequests, 1);
 
+  terminalTimelineFault = 'AUTHORIZATION_BINDING_MISMATCH';
+  const mismatchedAuthorizationBinding = await controller.retrySelection();
+  assert.equal(timelineReads, 15);
+  assert.equal(mismatchedAuthorizationBinding.phase, 'failure');
+  assert.equal(mismatchedAuthorizationBinding.stale, true);
+  assert.equal(mismatchedAuthorizationBinding.selected, null);
+  assert.deepEqual(mismatchedAuthorizationBinding.timeline, []);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.match(mismatchedAuthorizationBinding.error ?? '', /ارتباط تفويض الإغلاق/);
+  assert.equal(transitionRequests, 1);
+  assert.equal(mutationRequests, 1);
+
   terminalTimelineFault = 'LATE_APPEND';
   const terminalWithLateEvidence = await controller.retrySelection();
-  assert.equal(timelineReads, 15);
+  assert.equal(timelineReads, 16);
   assert.equal(terminalWithLateEvidence.phase, 'ready');
   assert.equal(terminalWithLateEvidence.selected?.status, 'CLOSED');
   assert.deepEqual(terminalWithLateEvidence.timeline.map((entry) => entry.action), [
@@ -987,14 +1017,18 @@ test('authenticated RoadEvent browser workflow withholds closure until the exact
       const body = JSON.parse(String(init?.body)) as { readonly reason: string; readonly authorizedAt: string };
       event = { ...event, version: 8, closureAuthorization: { actorId, reason: body.reason, authorizedAt: body.authorizedAt } };
       timeline.push({ action: 'road_event.closure_authorized', actorType: 'SUPERVISOR', actorId, beforeState: null,
-        afterState: { version: 8 }, reason: body.reason, traceId: 'trace-closure', occurredAt: body.authorizedAt });
+        afterState: { version: 8, closureAuthorization: {
+          actorId, reason: body.reason, authorizedAt: body.authorizedAt
+        } }, reason: body.reason, traceId: 'trace-closure', occurredAt: body.authorizedAt });
       return ok(event);
     }
     if (target.pathname.endsWith('/transition')) {
       const body = JSON.parse(String(init?.body)) as { readonly expectedVersion: number; readonly nextStatus: string; readonly reason: string };
       assert.deepEqual(body, { expectedVersion: 8, nextStatus: 'CLOSED', reason: 'اكتملت مراجعة الإغلاق' });
       event = { ...event, status: 'CLOSED', version: 9 };
-      timeline.push({ action: 'road_event.closed', actorType: 'SUPERVISOR', actorId, beforeState: { version: 8 },
+      timeline.push({ action: 'road_event.closed', actorType: 'SUPERVISOR', actorId, beforeState: {
+        version: 8, closureAuthorization: event.closureAuthorization
+      },
         afterState: { version: 9 }, reason: body.reason, traceId: 'trace-closed', occurredAt: '2026-08-20T10:00:30.000Z' });
       return ok(event);
     }
