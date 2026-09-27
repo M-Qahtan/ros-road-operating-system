@@ -79,6 +79,11 @@ export interface RoadEventResponse {
       readonly sourceSnapshotDigest: string;
     };
   } | null;
+  readonly reconciliation?: {
+    readonly state: 'HUMAN_REVIEW_REQUIRED';
+    readonly automaticRetryAuthorized: false;
+    readonly closureAuthorized: false;
+  } | null;
 }
 
 export interface RoadEventPageResponse {

@@ -79,11 +79,13 @@ export class OperationsDashboardController {
   }
   canAuthorizeClosure(): boolean {
     return this.current.phase === 'ready' && this.current.selected !== null && !this.current.stale
+      && !requiresHumanReconciliationReview(this.current.selected)
       && !TERMINAL_STATUSES.has(this.current.selected.status)
       && this.session.roles.includes('SUPERVISOR');
   }
   canTransition(): boolean {
     return this.current.phase === 'ready' && this.current.selected !== null && !this.current.stale
+      && !requiresHumanReconciliationReview(this.current.selected)
       && !TERMINAL_STATUSES.has(this.current.selected.status)
       && this.session.roles.some((role) => role === 'OPERATOR' || role === 'SUPERVISOR');
   }
@@ -179,6 +181,7 @@ export class OperationsDashboardController {
     const selected = this.requireSelected();
     const intent = this.readIntent;
     if (TERMINAL_STATUSES.has(selected.status)) throw new Error('الحالة النهائية لا تقبل انتقالات جديدة');
+    if (requiresHumanReconciliationReview(selected)) throw new Error('الحادث يتطلب مراجعة بشرية؛ جميع الإجراءات الحرجة محجوبة');
     if (!this.canTransition()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تنفيذ قرار حرج' : 'لا تملك صلاحية تغيير حالة الحدث');
     if (!this.canTransitionTo(nextStatus)) throw new Error('لا يمكن إغلاق الحدث دون تفويض إغلاق موثّق');
     const normalizedReason = this.requireReason(reason);
@@ -195,6 +198,7 @@ export class OperationsDashboardController {
     const selected = this.requireSelected();
     const intent = this.readIntent;
     if (TERMINAL_STATUSES.has(selected.status)) throw new Error('الحالة النهائية لا تقبل تفويض إغلاق جديد');
+    if (requiresHumanReconciliationReview(selected)) throw new Error('الحادث يتطلب مراجعة بشرية؛ جميع الإجراءات الحرجة محجوبة');
     if (!this.canAuthorizeClosure()) throw new Error(this.current.stale ? 'حدّث البيانات قبل تفويض الإغلاق' : 'تفويض إغلاق S3/S4 متاح للمشرف فقط');
     const normalizedReason = this.requireReason(reason);
     const operation: CriticalOperation = {
@@ -322,6 +326,10 @@ export class OperationsDashboardController {
     if (normalized.length < 3 || normalized.length > 500) throw new Error('يجب إدخال سبب واضح من 3 إلى 500 حرف');
     return normalized;
   }
+}
+
+export function requiresHumanReconciliationReview(event: RoadEventResponse): boolean {
+  return event.reconciliation !== null && event.reconciliation !== undefined;
 }
 
 function assertTerminalTimelineConsistency(

@@ -25,6 +25,51 @@ const session = {
   getAccessToken: () => Promise.resolve('trusted-browser-token')
 };
 
+test('validated exhausted reconciliation requires human review and exposes no critical retry path', async () => {
+  const incident = {
+    id: '47474747-4747-4747-8747-474747474747',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-09-27T06:00:00.000Z', version: 14, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true },
+    reconciliation: {
+      state: 'HUMAN_REVIEW_REQUIRED', automaticRetryAuthorized: false, closureAuthorized: false
+    }
+  } as RoadEventResponse;
+  const paths: string[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    paths.push(`${init?.method ?? 'GET'} ${target.pathname}`);
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${incident.id}`) return ok(incident);
+    return ok({ items: [{ ...incident, reconciliation: null }], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-27T06:01:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(incident.id);
+  const html = renderDashboard(controller.state, {
+    canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(),
+    ambiguousCriticalAction: controller.ambiguousCriticalActionView(),
+    now: new Date('2026-09-27T06:01:00.000Z')
+  });
+
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+  assert.match(html, /تتطلب مراجعة بشرية/);
+  assert.match(html, /استنفدت محاولات المصالحة الآلية/);
+  assert.match(html, /<select name="nextStatus" disabled>/);
+  assert.doesNotMatch(html, /retry-critical-action-button|إعادة إرسال الأمر الأصلي/);
+  await assert.rejects(() => controller.transition('ROAD_CLEARANCE', 'مراجعة بشرية'), /مراجعة بشرية/);
+  await assert.rejects(() => controller.authorizeClosure('مراجعة بشرية'), /مراجعة بشرية/);
+  assert.deepEqual(paths.filter((path) => path.startsWith('POST')), []);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

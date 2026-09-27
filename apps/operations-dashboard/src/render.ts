@@ -4,6 +4,7 @@ import {
   type AmbiguousCriticalActionView,
   DashboardState,
   deriveHumanSafetyStatus,
+  requiresHumanReconciliationReview,
   slaAgeMinutes
 } from './dashboard.js';
 
@@ -41,6 +42,9 @@ function timeline(state: DashboardState): string {
 function detail(state: DashboardState, canTransition: boolean, canAuthorize: boolean): string {
   const event = state.selected;
   if (event === null) return '<section class="panel detail" aria-labelledby="detail-title"><h2 id="detail-title">تفاصيل الحدث</h2><p class="muted">اختر حدثًا من القائمة.</p></section>';
+  const reconciliationBlocked = requiresHumanReconciliationReview(event);
+  const transitionEnabled = canTransition && !reconciliationBlocked;
+  const authorizationEnabled = canAuthorize && !reconciliationBlocked;
   const signals = attachedSignalIds(state.timeline);
   const closureStatus = event.status === 'CLOSED'
     ? 'تم استهلاك التفويض — الحالة مغلقة نهائيًا'
@@ -56,15 +60,15 @@ function detail(state: DashboardState, canTransition: boolean, canAuthorize: boo
       <article><h3>الموقع</h3><p dir="ltr">${event.latitude.toFixed(6)}, ${event.longitude.toFixed(6)}</p></article>
       <article><h3>تفويض الإغلاق</h3><p>${escape(closureStatus)}</p></article>
     </div>
-    <form id="transition-form" class="action-box" ${canTransition ? '' : 'aria-disabled="true"'}>
-      <h3>تغيير الحالة</h3><label>الحالة التالية<select name="nextStatus" ${canTransition ? '' : 'disabled'}>${Object.entries(STATUS_AR).map(([value, label]) => `<option value="${value}"${value === 'CLOSED' && event.closureAuthorization === null ? ' disabled' : ''}>${escape(label)}</option>`).join('')}</select></label>
-      <label>سبب القرار<textarea name="reason" minlength="3" maxlength="500" required ${canTransition ? '' : 'disabled'}></textarea></label>
-      <button type="submit" class="primary" ${canTransition ? '' : 'disabled'}>مراجعة وتنفيذ الانتقال</button>
+    <form id="transition-form" class="action-box" ${transitionEnabled ? '' : 'aria-disabled="true"'}>
+      <h3>تغيير الحالة</h3><label>الحالة التالية<select name="nextStatus" ${transitionEnabled ? '' : 'disabled'}>${Object.entries(STATUS_AR).map(([value, label]) => `<option value="${value}"${value === 'CLOSED' && event.closureAuthorization === null ? ' disabled' : ''}>${escape(label)}</option>`).join('')}</select></label>
+      <label>سبب القرار<textarea name="reason" minlength="3" maxlength="500" required ${transitionEnabled ? '' : 'disabled'}></textarea></label>
+      <button type="submit" class="primary" ${transitionEnabled ? '' : 'disabled'}>مراجعة وتنفيذ الانتقال</button>
     </form>
-    <form id="closure-form" class="action-box critical" ${canAuthorize ? '' : 'aria-disabled="true"'}>
+    <form id="closure-form" class="action-box critical" ${authorizationEnabled ? '' : 'aria-disabled="true"'}>
       <h3>تفويض إغلاق S3/S4</h3><p>إجراء حرج لا يتوفر إلا للمشرف، ويُسجل في سجل تدقيق غير قابل للتعديل.</p>
-      <label>سبب التفويض<textarea name="reason" minlength="3" maxlength="500" required ${canAuthorize ? '' : 'disabled'}></textarea></label>
-      <button type="submit" ${canAuthorize ? '' : 'disabled'}>مراجعة وتفويض الإغلاق</button>
+      <label>سبب التفويض<textarea name="reason" minlength="3" maxlength="500" required ${authorizationEnabled ? '' : 'disabled'}></textarea></label>
+      <button type="submit" ${authorizationEnabled ? '' : 'disabled'}>مراجعة وتفويض الإغلاق</button>
     </form>
     <section aria-labelledby="timeline-title"><h3 id="timeline-title">التسلسل الزمني وسجل التدقيق</h3>${timeline(state)}</section>
   </section>`;
@@ -95,6 +99,9 @@ export function renderDashboard(state: DashboardState, options: {
   readonly now: Date;
 }): string {
   const banner = state.stale ? '<div class="alert warning" role="status">البيانات قديمة. حدّث الشاشة قبل اتخاذ قرار حرج.</div>' : '';
+  const reconciliationBanner = state.selected !== null && requiresHumanReconciliationReview(state.selected)
+    ? '<div class="alert warning" role="alert">الحالة تتطلب مراجعة بشرية: استنفدت محاولات المصالحة الآلية، وجميع الإجراءات الحرجة محجوبة.</div>'
+    : '';
   const error = state.error === null ? '' : `<div class="alert error" role="alert">${escape(state.error)}</div>`;
   const retry = options.canRetrySelection === true
     ? '<button id="retry-selection-button" type="button">إعادة تحميل الحدث المحدد</button>'
@@ -104,7 +111,7 @@ export function renderDashboard(state: DashboardState, options: {
     : state.events.map((event) => eventRow(event, options.now, state.selected?.id ?? null)).join('');
   return `<main id="main-content" tabindex="-1">
     <header class="topbar"><div><p class="eyebrow">ROS — مركز العمليات</p><h1>إدارة أحداث الطريق</h1></div><button id="refresh-button" type="button">تحديث البيانات</button></header>
-    ${banner}${error}${retry}${ambiguousCriticalAction(options.ambiguousCriticalAction)}
+    ${banner}${reconciliationBanner}${error}${retry}${ambiguousCriticalAction(options.ambiguousCriticalAction)}
     <div class="layout"><section class="panel queue" aria-labelledby="queue-title"><div class="section-title"><h2 id="queue-title">قائمة الأحداث</h2><span>${state.events.length}</span></div>${listContent}</section>
     ${detail(state, options.canTransition, options.canAuthorizeClosure)}</div>
   </main>`;
