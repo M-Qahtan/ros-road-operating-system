@@ -1380,6 +1380,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A REPEATED UNTRUSTED RESPONSE CANNOT TURN COALESCED EXPLICIT RECOVERY INTO AN AUTOMATIC READ LOOP, COMMAND RECREATION, OR MUTATION REPLAY.** |
 | Next handoff | Discard the trusted session while a coalesced recovery read is in flight and prove its late success or rejection cannot repopulate incident state or recreate command authority. |
 
+### Session discard invalidates in-flight coalesced recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-28, GitHub candidate `281d10fc917f3b306d0c09bc022b543a6a21015d` was one hundred and forty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Discarding the trusted browser session while two explicit recovery callers share one pending read invalidates that read before either a trusted success or an untrusted rejection arrives. After the queue is restored, the late completion returns the current state and cannot repopulate incident detail, Timeline, error, stale status, or retry eligibility. |
+| No authority acceptance | Before the race, an untrusted authenticated read disposes the ambiguous command. During and after both late outcomes, the operation identity and retry paths remain absent, detail/Timeline counts remain bounded at `3/3`, and the original critical mutation count remains one. |
+| Local evidence | A new authenticated browser journey covers both late outcomes and the dashboard suite passed **51/51**. Build and no-emit TypeScript passed, followed by **765/765** workspace tests (API 670, dashboard 51, mobile 36, domain 8), repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed, so no live database recovery is claimed. |
+| Safety limits | The change strengthens race evidence only and creates no durable or cross-session command capability. It grants no collection, retry authority, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **SESSION DISCARD NOW HAS DIRECT EVIDENCE THAT BOTH LATE RECOVERY SUCCESS AND REJECTION ARE OBSOLETE AND CANNOT RESTORE INCIDENT OR COMMAND STATE.** |
+| Next handoff | Prove a new-session failed selection cannot coalesce onto the obsolete prior-session recovery promise while that old read remains in flight. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

@@ -243,6 +243,106 @@ test('coalesced recovery stays fail-closed on repeated untrusted detail and late
   assert.equal(mutationRequests, 1);
 });
 
+test('session discard invalidates late coalesced recovery success or rejection without restoring command authority', async () => {
+  for (const lateOutcome of ['TRUSTED_SUCCESS', 'UNTRUSTED_RESPONSE'] as const) {
+    const incident: RoadEventResponse = {
+      id: lateOutcome === 'TRUSTED_SUCCESS'
+        ? '51515151-5151-4151-8151-515151515151'
+        : '52525252-5252-4252-8252-525252525252',
+      status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+      occurredAt: '2026-09-28T00:00:00.000Z', version: 14, closureAuthorization: null,
+      severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+    };
+    let detailMode: 'TRUSTED' | 'UNTRUSTED' = 'TRUSTED';
+    let recoveryBarrier: ReturnType<typeof barrier> | null = null;
+    let recoveryStarted: ReturnType<typeof barrier> | null = null;
+    let listReads = 0;
+    let detailReads = 0;
+    let timelineReads = 0;
+    let mutationRequests = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      assertTrustedRequest(init);
+      const target = new URL(String(input), 'https://dashboard.example.test');
+      if (target.pathname.endsWith('/closure-authorization')) {
+        mutationRequests += 1;
+        throw new TypeError('connection reset after send');
+      }
+      if (target.pathname.endsWith('/timeline')) {
+        timelineReads += 1;
+        return ok([]);
+      }
+      if (target.pathname === `/api/v1/road-events/${incident.id}`) {
+        detailReads += 1;
+        if (recoveryBarrier !== null) {
+          recoveryStarted?.release();
+          await recoveryBarrier.wait;
+        }
+        if (detailMode === 'TRUSTED') return ok(incident);
+        return new Response(JSON.stringify({
+          success: true,
+          data: { ...incident, internalSecret: 'must-not-leak-after-session-discard' },
+          error: null,
+          traceId: 'trace-late-untrusted-recovery'
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      listReads += 1;
+      return ok({ items: [incident], total: 1, limit: 100, offset: 0 });
+    };
+    const controller = new OperationsDashboardController(
+      new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+      () => new Date('2026-09-28T00:01:00.000Z')
+    );
+
+    await controller.load();
+    await controller.select(incident.id);
+    await assert.rejects(() => controller.authorizeClosure('أمر يجب إبطاله عند إلغاء الجلسة'),
+      /تعذر التحقق من نتيجة الإجراء/);
+    assert.equal(controller.ambiguousCriticalActionView()?.status, 'REFRESH_REQUIRED');
+
+    detailMode = 'UNTRUSTED';
+    const rejected = await controller.select(incident.id);
+    assert.equal(rejected.phase, 'failure');
+    assert.equal(rejected.stale, true);
+    assert.equal(controller.ambiguousCriticalActionView(), null);
+
+    detailMode = lateOutcome === 'TRUSTED_SUCCESS' ? 'TRUSTED' : 'UNTRUSTED';
+    recoveryBarrier = barrier();
+    recoveryStarted = barrier();
+    const recovery = controller.retrySelection();
+    const duplicateRecovery = controller.retrySelection();
+    assert.equal(duplicateRecovery, recovery);
+    await recoveryStarted.wait;
+    assert.equal(detailReads, 3);
+    assert.equal(timelineReads, 3);
+
+    controller.discardBrowserSession();
+    const restored = await controller.load();
+    assert.equal(restored.phase, 'ready');
+    assert.equal(restored.selected, null);
+    assert.deepEqual(restored.timeline, []);
+    assert.equal(restored.stale, false);
+    assert.equal(restored.error, null);
+    recoveryBarrier.release();
+    const [lateResult, duplicateLateResult] = await Promise.all([recovery, duplicateRecovery]);
+
+    assert.equal(duplicateLateResult, lateResult);
+    assert.equal(controller.state.phase, 'ready');
+    assert.equal(controller.state.selected, null);
+    assert.deepEqual(controller.state.timeline, []);
+    assert.equal(controller.state.stale, false);
+    assert.equal(controller.state.error, null);
+    assert.equal(controller.ambiguousCriticalActionView(), null);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+    assert.throws(() => controller.retrySelection(), /لا توجد محاولة تحميل فاشلة/);
+    await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
+    assert.equal(listReads, 2);
+    assert.equal(detailReads, 3);
+    assert.equal(timelineReads, 3);
+    assert.equal(mutationRequests, 1);
+  }
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',
