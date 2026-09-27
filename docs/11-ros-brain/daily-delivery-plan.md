@@ -1212,6 +1212,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS A COMMITTED CLOSURE WITH A LOST CLIENT ACKNOWLEDGEMENT IS RECONCILED BY TRACE WITHOUT REPLAYING THE MUTATION.** |
 | Next handoff | Restart PostgreSQL after the ambiguous reconciliation and prove the same committed trace remains singular and recoverable without replay. |
 
+### Post-restart ambiguous trace recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `8c0895dd5d2a9f31f64a397886b6f2229d00b624` was one hundred and thirty-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | After the first read-only reconciliation of the committed-but-unacknowledged closure, the fixture restarts only the ephemeral PostgreSQL container, waits for readiness, and reconciles the exact closure trace again without issuing another mutation. |
+| Recovery acceptance | Recovery must preserve the database system identifier, replace the postmaster, bind both timestamps into the receipt chain, find the same exact trace after restart, record both replay decisions as `NOT_ATTEMPTED`, and keep the causal state exactly `1|1|1|1` before reconciliation, after reconciliation, and after restart. |
+| Local evidence | The focused harness failed first because restart recovery and receipt bindings were absent, then passed **41/41** after implementation. Fresh direct-package build and no-emit TypeScript passed, followed by **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live restart or durable trace result is claimed. |
+| Safety limits | The fixture restarts only its ephemeral local test container and performs SELECT-only reconciliation after the original closure. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS THE AMBIGUOUSLY COMMITTED TRACE SURVIVES A DISTINCT POSTGRESQL RESTART AS ONE EXACT CAUSAL PAIR WITHOUT REPLAY.** |
+| Next handoff | Prove that a post-restart reconciliation read failure fails closed, then recovers on one explicit read retry without issuing the closure mutation. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

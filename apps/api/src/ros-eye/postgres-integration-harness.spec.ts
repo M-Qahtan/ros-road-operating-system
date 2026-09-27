@@ -109,6 +109,12 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(auditLineageAmbiguousCommit, /COMMITTED_TRACE_FOUND/);
   assert.match(auditLineageAmbiguousCommit, /REPLAY/);
   assert.match(auditLineageAmbiguousCommit, /NOT_ATTEMPTED/);
+  assert.match(
+    auditLineageAmbiguousCommit,
+    /restart -- "\$ROS_POSTGRES_RESTART_CONTAINER"/,
+  );
+  assert.match(auditLineageAmbiguousCommit, /POST_RESTART_RECONCILIATION/);
+  assert.match(auditLineageAmbiguousCommit, /STATE_AFTER_RESTART/);
   assert.ok(
     auditLineageAmbiguousCommit.indexOf('COMMIT;') <
       auditLineageAmbiguousCommit.indexOf('SELECT pg_sleep(30)'),
@@ -127,6 +133,9 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /causationAmbiguousCommitResult/);
   assert.match(localHarness, /causationAmbiguousReconciliation/);
   assert.match(localHarness, /causationAmbiguousReplay/);
+  assert.match(localHarness, /causationAmbiguousRestartVerified/);
+  assert.match(localHarness, /causationAmbiguousPostRestartReconciliation/);
+  assert.match(localHarness, /causationAmbiguousPostRestartReplay/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);
   assert.match(localHarness, /auditLineageStateBeforeRestart/);
   assert.match(localHarness, /auditLineageStateAfterRestart/);
@@ -658,7 +667,11 @@ test('live receipt consumes the exact validated before-and-after restart proof',
   );
   assert.match(
     localHarness,
-    /closure_finalization_postmaster_started_at_after_restart" != "\$postmaster_started_at/,
+    /closure_finalization_postmaster_started_at_after_restart" != "\$\{audit_lineage_ambiguous_proof\[17\]\}/,
+  );
+  assert.match(
+    localHarness,
+    /\$\{audit_lineage_ambiguous_proof\[19\]\}" != "\$postmaster_started_at/,
   );
 });
 

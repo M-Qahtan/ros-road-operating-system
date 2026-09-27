@@ -492,7 +492,7 @@ fi
 export ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE="$audit_lineage_ambiguous_proof_file"
 bash scripts/run-postgres-audit-lineage-ambiguous-commit.sh
 mapfile -t audit_lineage_ambiguous_proof < "$audit_lineage_ambiguous_proof_file"
-if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 12 \
+if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 26 \
   || "${audit_lineage_ambiguous_proof[0]}" != "POST_COMMIT_RESULT" \
   || "${audit_lineage_ambiguous_proof[1]}" != "AMBIGUOUS" \
   || "${audit_lineage_ambiguous_proof[2]}" != "CLIENT_ACK" \
@@ -504,8 +504,23 @@ if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 12 \
   || "${audit_lineage_ambiguous_proof[8]}" != "REPLAY" \
   || "${audit_lineage_ambiguous_proof[9]}" != "NOT_ATTEMPTED" \
   || "${audit_lineage_ambiguous_proof[10]}" != "STATE_AFTER_RECONCILIATION" \
-  || "${audit_lineage_ambiguous_proof[11]}" != "1|1|1|1" ]]; then
-  echo "PostgreSQL journey passed without exact post-commit ambiguity reconciliation proof" >&2
+  || "${audit_lineage_ambiguous_proof[11]}" != "1|1|1|1" \
+  || "${audit_lineage_ambiguous_proof[12]}" != "CLUSTER_IDENTITY" \
+  || "${audit_lineage_ambiguous_proof[13]}" != "PRESERVED" \
+  || "${audit_lineage_ambiguous_proof[14]}" != "POSTMASTER" \
+  || "${audit_lineage_ambiguous_proof[15]}" != "REPLACED" \
+  || "${audit_lineage_ambiguous_proof[16]}" != "POSTMASTER_STARTED_AT_BEFORE_RESTART" \
+  || -z "${audit_lineage_ambiguous_proof[17]}" \
+  || "${audit_lineage_ambiguous_proof[18]}" != "POSTMASTER_STARTED_AT_AFTER_RESTART" \
+  || -z "${audit_lineage_ambiguous_proof[19]}" \
+  || "${audit_lineage_ambiguous_proof[17]}" == "${audit_lineage_ambiguous_proof[19]}" \
+  || "${audit_lineage_ambiguous_proof[20]}" != "POST_RESTART_RECONCILIATION" \
+  || "${audit_lineage_ambiguous_proof[21]}" != "COMMITTED_TRACE_FOUND" \
+  || "${audit_lineage_ambiguous_proof[22]}" != "POST_RESTART_REPLAY" \
+  || "${audit_lineage_ambiguous_proof[23]}" != "NOT_ATTEMPTED" \
+  || "${audit_lineage_ambiguous_proof[24]}" != "STATE_AFTER_RESTART" \
+  || "${audit_lineage_ambiguous_proof[25]}" != "1|1|1|1" ]]; then
+  echo "PostgreSQL journey passed without exact restartable post-commit ambiguity reconciliation proof" >&2
   exit 2
 fi
 readonly contact_recovery_state="$(
@@ -1062,7 +1077,9 @@ if [[ ! "$candidate_sha" =~ ^[a-f0-9]{40}$ \
   || "$closure_reauthorization_postmaster_started_at_before_restart" == "$closure_reauthorization_postmaster_started_at_after_restart" \
   || "$closure_reauthorization_postmaster_started_at_after_restart" != "$closure_finalization_postmaster_started_at_before_restart" \
   || "$closure_finalization_postmaster_started_at_before_restart" == "$closure_finalization_postmaster_started_at_after_restart" \
-  || "$closure_finalization_postmaster_started_at_after_restart" != "$postmaster_started_at" ]]; then
+  || "$closure_finalization_postmaster_started_at_after_restart" != "${audit_lineage_ambiguous_proof[17]}" \
+  || "${audit_lineage_ambiguous_proof[17]}" == "${audit_lineage_ambiguous_proof[19]}" \
+  || "${audit_lineage_ambiguous_proof[19]}" != "$postmaster_started_at" ]]; then
   echo "PostgreSQL journey passed but its local receipt provenance is incomplete" >&2
   exit 2
 fi
@@ -1177,6 +1194,13 @@ ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_BEFORE="${audit_lineage_ambiguous_proof[5]
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_RECONCILIATION="${audit_lineage_ambiguous_proof[7]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_REPLAY="${audit_lineage_ambiguous_proof[9]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER="${audit_lineage_ambiguous_proof[11]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_CLUSTER_IDENTITY="${audit_lineage_ambiguous_proof[13]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POSTMASTER="${audit_lineage_ambiguous_proof[15]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POSTMASTER_BEFORE="${audit_lineage_ambiguous_proof[17]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POSTMASTER_AFTER="${audit_lineage_ambiguous_proof[19]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECONCILIATION="${audit_lineage_ambiguous_proof[21]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[23]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[25]}" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1406,6 +1430,21 @@ node -e '
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_REPLAY,
     causationAmbiguousStateAfter:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER,
+    causationAmbiguousRestartVerified: true,
+    causationAmbiguousClusterIdentity:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_CLUSTER_IDENTITY,
+    causationAmbiguousPostmaster:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POSTMASTER,
+    causationAmbiguousPostmasterStartedAtBeforeRestart:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POSTMASTER_BEFORE,
+    causationAmbiguousPostmasterStartedAtAfterRestart:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POSTMASTER_AFTER,
+    causationAmbiguousPostRestartReconciliation:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECONCILIATION,
+    causationAmbiguousPostRestartReplay:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY,
+    causationAmbiguousStateAfterRestart:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART,
     auditLineageRestartVerified: true,
     auditLineageStateBeforeRestart:
       process.env.ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART,

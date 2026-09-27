@@ -2,6 +2,8 @@
 set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL must be set}"
+: "${ROS_POSTGRES_CONTAINER_ENGINE:?container engine must be set}"
+: "${ROS_POSTGRES_RESTART_CONTAINER:?restart container must be set}"
 : "${ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE:?ambiguous commit proof file must be set}"
 
 if [[ ! -f "$ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE" \
@@ -10,8 +12,8 @@ if [[ ! -f "$ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE" \
   echo "Audit lineage ambiguous proof target must be a new empty regular file" >&2
   exit 2
 fi
-if ! declare -F psql >/dev/null; then
-  echo "Container-owned PostgreSQL client function must be exported" >&2
+if ! declare -F psql >/dev/null || ! declare -F pg_isready >/dev/null; then
+  echo "Container-owned PostgreSQL client functions must be exported" >&2
   exit 2
 fi
 
@@ -118,6 +120,53 @@ if [[ "$state_after_reconciliation" != "$state_before_reconciliation" ]]; then
   exit 2
 fi
 
+readonly cluster_identity_before_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+)"
+"$ROS_POSTGRES_CONTAINER_ENGINE" restart -- "$ROS_POSTGRES_RESTART_CONTAINER" >/dev/null
+
+postgres_ready=false
+for _attempt in $(seq 1 30); do
+  if pg_isready -d "$DATABASE_URL" >/dev/null 2>&1; then
+    postgres_ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$postgres_ready" != true ]]; then
+  echo "PostgreSQL did not recover after the ambiguous commit reconciliation" >&2
+  exit 2
+fi
+
+readonly cluster_identity_after_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+)"
+readonly system_identifier_before_restart="${cluster_identity_before_restart%%|*}"
+readonly postmaster_started_at_before_restart="${cluster_identity_before_restart#*|}"
+readonly system_identifier_after_restart="${cluster_identity_after_restart%%|*}"
+readonly postmaster_started_at_after_restart="${cluster_identity_after_restart#*|}"
+if [[ "$system_identifier_before_restart" != "$system_identifier_after_restart" \
+  || "$postmaster_started_at_before_restart" == "$postmaster_started_at_after_restart" ]]; then
+  echo "Ambiguous reconciliation restart did not preserve the cluster while replacing the postmaster" >&2
+  exit 2
+fi
+
+readonly post_restart_reconciliation_result="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT CASE WHEN count(*)=1 THEN 'COMMITTED_TRACE_FOUND' ELSE 'COMMITTED_TRACE_NOT_UNIQUE' END FROM audit_logs WHERE trace_id='$closure_trace_id' AND action='road_event.closed' AND resource_type='RoadEvent' AND resource_id='$authorization_event_id' AND correlation_id='$authorization_event_id' AND causation_id='$authorization_trace_id'"
+)"
+readonly state_after_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$closure_trace_id') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
+)"
+if [[ "$post_restart_reconciliation_result" != 'COMMITTED_TRACE_FOUND' \
+  || "$state_after_restart" != "$state_after_reconciliation" ]]; then
+  echo "Restarted read-only reconciliation did not preserve one exact committed closure: $state_after_restart" >&2
+  exit 2
+fi
+
 printf '%s\n' \
   'POST_COMMIT_RESULT' \
   'AMBIGUOUS' \
@@ -131,4 +180,18 @@ printf '%s\n' \
   'NOT_ATTEMPTED' \
   'STATE_AFTER_RECONCILIATION' \
   "$state_after_reconciliation" \
+  'CLUSTER_IDENTITY' \
+  'PRESERVED' \
+  'POSTMASTER' \
+  'REPLACED' \
+  'POSTMASTER_STARTED_AT_BEFORE_RESTART' \
+  "$postmaster_started_at_before_restart" \
+  'POSTMASTER_STARTED_AT_AFTER_RESTART' \
+  "$postmaster_started_at_after_restart" \
+  'POST_RESTART_RECONCILIATION' \
+  "$post_restart_reconciliation_result" \
+  'POST_RESTART_REPLAY' \
+  'NOT_ATTEMPTED' \
+  'STATE_AFTER_RESTART' \
+  "$state_after_restart" \
   > "$ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE"
