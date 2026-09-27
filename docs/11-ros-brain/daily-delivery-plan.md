@@ -1320,6 +1320,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AUTHENTICATED EXHAUSTION NOW REMOVES THE PREVIOUS AMBIGUOUS COMMAND INSTEAD OF LEAVING A DISABLED BUT INSPECTABLE REPLAY IDENTITY.** |
 | Next handoff | Require the authenticated dashboard detail boundary to reject a missing or malformed reconciliation field, preventing response-field omission from downgrading a human-review lock to ordinary control eligibility. |
 
+### Strict dashboard reconciliation response boundary
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `85cb97e804d7717907782ca563a15811c8f7edfd` was one hundred and forty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | The authenticated dashboard detail gateway now treats `reconciliation` as an authority-bearing response boundary. It accepts only explicit `null` or the exact three-field `HUMAN_REVIEW_REQUIRED` projection with both retry and closure authority false; omission, `undefined`, non-object values, altered authority, and extra fields fail closed with a sanitized local `UNTRUSTED_RESPONSE`. |
+| Compatibility boundary | Queue reads remain backward-compatible because they grant no critical execution authority. The strict check occurs only on the authenticated detail read used to derive critical-control eligibility; existing trusted workflow fixtures now explicitly default detail responses to `reconciliation: null`. |
+| Local evidence | The focused test failed first because an omitted field was accepted, then the dashboard suite passed **49/49** after implementation. Build and no-emit TypeScript passed, followed by **763/763** workspace tests (API 670, dashboard 49, mobile 36, domain 8), repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed, so no live database round trip is claimed. |
+| Safety limits | Validation only narrows trusted detail responses. It grants no collection, retry, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A MISSING OR MALFORMED RECONCILIATION FIELD CAN NO LONGER DOWNGRADE A HUMAN-REVIEW LOCK INTO ORDINARY DASHBOARD CONTROL ELIGIBILITY.** |
+| Next handoff | When a reconciliation detail response is rejected, destroy any same-incident ambiguous command identity and expose only the sanitized stale failure, without mutation replay. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

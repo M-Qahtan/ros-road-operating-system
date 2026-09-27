@@ -56,6 +56,53 @@ test('RoadEvent browser fails closed before fetch when token or transport is uns
   assert.equal(requests, 0);
 });
 
+test('RoadEvent detail rejects omitted or malformed reconciliation authority and accepts only the exact projection', async () => {
+  const detail = {
+    id: '51515151-5151-4151-8151-515151515151',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-09-27T06:00:00.000Z', version: 14, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const invalid = [
+    detail,
+    { ...detail, reconciliation: undefined },
+    { ...detail, reconciliation: 'HUMAN_REVIEW_REQUIRED' },
+    { ...detail, reconciliation: { state: 'HUMAN_REVIEW_REQUIRED', automaticRetryAuthorized: true, closureAuthorized: false } },
+    { ...detail, reconciliation: { state: 'HUMAN_REVIEW_REQUIRED', automaticRetryAuthorized: false, closureAuthorized: false, retryToken: 'secret' } }
+  ];
+
+  for (const data of invalid) {
+    const gateway = new HttpRoadEventGateway('', session, async () => envelopeResponse(200, {
+      success: true, data, error: null, traceId: 'trace-invalid-detail'
+    }));
+    await assert.rejects(() => gateway.getById(detail.id), (error: unknown) => {
+      assert.ok(error instanceof ApiRequestError);
+      assert.equal(error.code, 'UNTRUSTED_RESPONSE');
+      assert.equal(error.status, 502);
+      assert.equal(error.outcomeAmbiguous, false);
+      assert.doesNotMatch(error.message, /retryToken|secret/);
+      return true;
+    });
+  }
+
+  const absent = await new HttpRoadEventGateway('', session, async () => envelopeResponse(200, {
+    success: true, data: { ...detail, reconciliation: null }, error: null, traceId: 'trace-detail-null'
+  })).getById(detail.id);
+  assert.equal(absent.reconciliation, null);
+
+  const exhausted = await new HttpRoadEventGateway('', session, async () => envelopeResponse(200, {
+    success: true,
+    data: { ...detail, reconciliation: {
+      state: 'HUMAN_REVIEW_REQUIRED', automaticRetryAuthorized: false, closureAuthorized: false
+    } },
+    error: null,
+    traceId: 'trace-detail-exhausted'
+  })).getById(detail.id);
+  assert.deepEqual(exhausted.reconciliation, {
+    state: 'HUMAN_REVIEW_REQUIRED', automaticRetryAuthorized: false, closureAuthorized: false
+  });
+});
+
 for (const example of [
   { status: 401, code: 'AUTHENTICATION_REQUIRED', message: /تسجيل الدخول/ },
   { status: 403, code: 'FORBIDDEN', message: /صلاحية/ },

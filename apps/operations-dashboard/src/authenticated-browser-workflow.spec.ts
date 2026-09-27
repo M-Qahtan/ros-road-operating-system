@@ -579,8 +579,16 @@ test('reconciled closure remains terminal through a failed Timeline read and exp
 });
 
 function ok<T>(data: T): Response {
-  const envelope: ApiEnvelope<T> = { success: true, data, error: null, traceId: 'trace-http-workflow' };
+  const trustedData = withTrustedDetailReconciliation(data);
+  const envelope: ApiEnvelope<T> = { success: true, data: trustedData, error: null, traceId: 'trace-http-workflow' };
   return new Response(JSON.stringify(envelope), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
+function withTrustedDetailReconciliation<T>(data: T): T {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)
+    || !('id' in data) || !('status' in data) || !('version' in data) || !('severity' in data)
+    || Object.prototype.hasOwnProperty.call(data, 'reconciliation')) return data;
+  return { ...data, reconciliation: null };
 }
 
 function assertTrustedRequest(init: RequestInit | undefined): void {
