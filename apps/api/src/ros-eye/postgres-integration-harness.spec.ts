@@ -122,10 +122,22 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_EXPLICIT_RETRY/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_EXPLICIT_RETRY_COUNT/);
   assert.match(auditLineageAmbiguousCommit, /ros-causation-reconciliation-retry/);
-  assert.match(auditLineageAmbiguousCommit, /kill "\$reconciliation_retry_pid"/);
+  assert.match(auditLineageAmbiguousCommit, /RECONCILIATION_RETRY_CLUSTER_IDENTITY/);
+  assert.match(auditLineageAmbiguousCommit, /RECONCILIATION_RETRY_POSTMASTER/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_INTERRUPTED_RETRY/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_RECOVERY_READ/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_RECOVERY_READ_COUNT/);
+  assert.ok(
+    auditLineageAmbiguousCommit.indexOf('reconciliation_retry_hold=true') <
+      auditLineageAmbiguousCommit.lastIndexOf(
+        'restart -- "$ROS_POSTGRES_RESTART_CONTAINER"',
+      ),
+  );
+  assert.ok(
+    auditLineageAmbiguousCommit.lastIndexOf(
+      'restart -- "$ROS_POSTGRES_RESTART_CONTAINER"',
+    ) < auditLineageAmbiguousCommit.indexOf('wait "$reconciliation_retry_pid"'),
+  );
   assert.ok(
     auditLineageAmbiguousCommit.indexOf("SET statement_timeout='1ms'") <
       auditLineageAmbiguousCommit.indexOf(
@@ -157,6 +169,7 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /causationAmbiguousPostRestartFailClosedState/);
   assert.match(localHarness, /causationAmbiguousPostRestartExplicitRetryCount/);
   assert.match(localHarness, /causationAmbiguousPostRestartInterruptedRetry/);
+  assert.match(localHarness, /causationAmbiguousReconciliationRetryRestartVerified/);
   assert.match(localHarness, /causationAmbiguousPostRestartRecoveryReadCount/);
   assert.match(localHarness, /causationAmbiguousPostRestartReplay/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);

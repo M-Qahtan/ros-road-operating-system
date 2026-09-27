@@ -1248,6 +1248,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS AN INTERRUPTED RECONCILIATION READ REMAINS NON-MUTATING AND ONE LATER READ RECOVERS THE SAME TRACE.** |
 | Next handoff | Restart PostgreSQL while the reconciliation retry is held, then prove recovery under postmaster replacement without replay or duplicate read loops. |
 
+### Reconciliation retry postmaster replacement
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `ca8c383cc445547a59c499bec03ff4afdb336b97` was one hundred and thirty-seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | Once the single explicit read-only reconciliation retry reaches its held state, the fixture records the cluster identity and restarts PostgreSQL instead of killing the client. It requires that session to fail, waits for readiness, proves the same `system_identifier` with a new postmaster start time, and permits exactly one later trace recovery read. |
+| Recovery acceptance | The restart-held retry count and later recovery-read count must each equal one. The restart must preserve the cluster and replace the postmaster, the interrupted retry must remain ambiguous, the later read must return `COMMITTED_TRACE_FOUND`, causal state must remain `1|1|1|1`, and replay must remain `NOT_ATTEMPTED`. |
+| Local evidence | The focused harness failed first because postmaster-bound retry evidence was absent, then passed **41/41** after implementation. The integrated candidate passed build and TypeScript checks plus **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** contract tests, repository and staging-composition verification, archive conditional-write and retention checks, negative evidence gates, and **8/8** external-evidence tests. The live journey exited `127` because neither Docker nor Podman is available; no live PostgreSQL restart-held retry or recovery result is claimed. |
+| Safety limits | The interrupted attempt and recovery are SELECT-only and use fixed synthetic identifiers in the ephemeral local fixture. They grant no collection, closure, control, dispatch, operational, or activation authority, create no cloud resource, and do not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS A POSTMASTER REPLACEMENT INTERRUPTS THE HELD RETRY AND ONE BOUNDED READ RECOVERS THE SAME TRACE WITHOUT REPLAY.** |
+| Next handoff | Interrupt the bounded recovery read again and prove retry-budget exhaustion remains fail-closed with no third automatic read or closure replay. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

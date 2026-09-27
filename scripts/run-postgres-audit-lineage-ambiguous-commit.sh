@@ -206,7 +206,12 @@ if [[ "$reconciliation_retry_hold" != true ]]; then
   exit 2
 fi
 
-kill "$reconciliation_retry_pid"
+readonly reconciliation_retry_cluster_identity_before_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+)"
+"$ROS_POSTGRES_CONTAINER_ENGINE" restart -- "$ROS_POSTGRES_RESTART_CONTAINER" >/dev/null
+
 set +e
 wait "$reconciliation_retry_pid"
 readonly reconciliation_retry_status=$?
@@ -214,6 +219,33 @@ set -e
 reconciliation_retry_pid=''
 if [[ "$reconciliation_retry_status" -eq 0 ]]; then
   echo "Interrupted reconciliation retry unexpectedly completed successfully" >&2
+  exit 2
+fi
+
+postgres_ready=false
+for _attempt in $(seq 1 30); do
+  if pg_isready -d "$DATABASE_URL" >/dev/null 2>&1; then
+    postgres_ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$postgres_ready" != true ]]; then
+  echo "PostgreSQL did not recover after interrupting the reconciliation retry" >&2
+  exit 2
+fi
+
+readonly reconciliation_retry_cluster_identity_after_restart="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT system_identifier::text || '|' || pg_postmaster_start_time()::text FROM pg_control_system()"
+)"
+readonly reconciliation_retry_system_identifier_before="${reconciliation_retry_cluster_identity_before_restart%%|*}"
+readonly reconciliation_retry_postmaster_started_at_before="${reconciliation_retry_cluster_identity_before_restart#*|}"
+readonly reconciliation_retry_system_identifier_after="${reconciliation_retry_cluster_identity_after_restart%%|*}"
+readonly reconciliation_retry_postmaster_started_at_after="${reconciliation_retry_cluster_identity_after_restart#*|}"
+if [[ "$reconciliation_retry_system_identifier_before" != "$reconciliation_retry_system_identifier_after" \
+  || "$reconciliation_retry_postmaster_started_at_before" == "$reconciliation_retry_postmaster_started_at_after" ]]; then
+  echo "Interrupted reconciliation retry restart did not preserve the cluster while replacing the postmaster" >&2
   exit 2
 fi
 
@@ -275,6 +307,14 @@ printf '%s\n' \
   'INTERRUPTED' \
   'POST_RESTART_EXPLICIT_RETRY_COUNT' \
   "$post_restart_explicit_retry_count" \
+  'RECONCILIATION_RETRY_CLUSTER_IDENTITY' \
+  'PRESERVED' \
+  'RECONCILIATION_RETRY_POSTMASTER' \
+  'REPLACED' \
+  'RECONCILIATION_RETRY_POSTMASTER_STARTED_AT_BEFORE_RESTART' \
+  "$reconciliation_retry_postmaster_started_at_before" \
+  'RECONCILIATION_RETRY_POSTMASTER_STARTED_AT_AFTER_RESTART' \
+  "$reconciliation_retry_postmaster_started_at_after" \
   'POST_RESTART_INTERRUPTED_RETRY' \
   'AMBIGUOUS' \
   'POST_RESTART_RECOVERY_READ' \

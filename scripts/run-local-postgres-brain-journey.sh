@@ -492,7 +492,7 @@ fi
 export ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE="$audit_lineage_ambiguous_proof_file"
 bash scripts/run-postgres-audit-lineage-ambiguous-commit.sh
 mapfile -t audit_lineage_ambiguous_proof < "$audit_lineage_ambiguous_proof_file"
-if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 40 \
+if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 48 \
   || "${audit_lineage_ambiguous_proof[0]}" != "POST_COMMIT_RESULT" \
   || "${audit_lineage_ambiguous_proof[1]}" != "AMBIGUOUS" \
   || "${audit_lineage_ambiguous_proof[2]}" != "CLIENT_ACK" \
@@ -524,16 +524,25 @@ if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 40 \
   || "${audit_lineage_ambiguous_proof[27]}" != "INTERRUPTED" \
   || "${audit_lineage_ambiguous_proof[28]}" != "POST_RESTART_EXPLICIT_RETRY_COUNT" \
   || "${audit_lineage_ambiguous_proof[29]}" != "1" \
-  || "${audit_lineage_ambiguous_proof[30]}" != "POST_RESTART_INTERRUPTED_RETRY" \
-  || "${audit_lineage_ambiguous_proof[31]}" != "AMBIGUOUS" \
-  || "${audit_lineage_ambiguous_proof[32]}" != "POST_RESTART_RECOVERY_READ" \
-  || "${audit_lineage_ambiguous_proof[33]}" != "COMMITTED_TRACE_FOUND" \
-  || "${audit_lineage_ambiguous_proof[34]}" != "POST_RESTART_RECOVERY_READ_COUNT" \
-  || "${audit_lineage_ambiguous_proof[35]}" != "1" \
-  || "${audit_lineage_ambiguous_proof[36]}" != "POST_RESTART_REPLAY" \
-  || "${audit_lineage_ambiguous_proof[37]}" != "NOT_ATTEMPTED" \
-  || "${audit_lineage_ambiguous_proof[38]}" != "STATE_AFTER_RESTART" \
-  || "${audit_lineage_ambiguous_proof[39]}" != "1|1|1|1" ]]; then
+  || "${audit_lineage_ambiguous_proof[30]}" != "RECONCILIATION_RETRY_CLUSTER_IDENTITY" \
+  || "${audit_lineage_ambiguous_proof[31]}" != "PRESERVED" \
+  || "${audit_lineage_ambiguous_proof[32]}" != "RECONCILIATION_RETRY_POSTMASTER" \
+  || "${audit_lineage_ambiguous_proof[33]}" != "REPLACED" \
+  || "${audit_lineage_ambiguous_proof[34]}" != "RECONCILIATION_RETRY_POSTMASTER_STARTED_AT_BEFORE_RESTART" \
+  || -z "${audit_lineage_ambiguous_proof[35]}" \
+  || "${audit_lineage_ambiguous_proof[36]}" != "RECONCILIATION_RETRY_POSTMASTER_STARTED_AT_AFTER_RESTART" \
+  || -z "${audit_lineage_ambiguous_proof[37]}" \
+  || "${audit_lineage_ambiguous_proof[35]}" == "${audit_lineage_ambiguous_proof[37]}" \
+  || "${audit_lineage_ambiguous_proof[38]}" != "POST_RESTART_INTERRUPTED_RETRY" \
+  || "${audit_lineage_ambiguous_proof[39]}" != "AMBIGUOUS" \
+  || "${audit_lineage_ambiguous_proof[40]}" != "POST_RESTART_RECOVERY_READ" \
+  || "${audit_lineage_ambiguous_proof[41]}" != "COMMITTED_TRACE_FOUND" \
+  || "${audit_lineage_ambiguous_proof[42]}" != "POST_RESTART_RECOVERY_READ_COUNT" \
+  || "${audit_lineage_ambiguous_proof[43]}" != "1" \
+  || "${audit_lineage_ambiguous_proof[44]}" != "POST_RESTART_REPLAY" \
+  || "${audit_lineage_ambiguous_proof[45]}" != "NOT_ATTEMPTED" \
+  || "${audit_lineage_ambiguous_proof[46]}" != "STATE_AFTER_RESTART" \
+  || "${audit_lineage_ambiguous_proof[47]}" != "1|1|1|1" ]]; then
   echo "PostgreSQL journey passed without exact restartable post-commit ambiguity reconciliation proof" >&2
   exit 2
 fi
@@ -1217,11 +1226,15 @@ ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_FAILURE_SQLSTATE="${audit_lineage_a
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_FAIL_CLOSED_STATE="${audit_lineage_ambiguous_proof[25]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_EXPLICIT_RETRY="${audit_lineage_ambiguous_proof[27]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_EXPLICIT_RETRY_COUNT="${audit_lineage_ambiguous_proof[29]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_INTERRUPTED_RETRY="${audit_lineage_ambiguous_proof[31]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ="${audit_lineage_ambiguous_proof[33]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ_COUNT="${audit_lineage_ambiguous_proof[35]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[37]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[39]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_CLUSTER_IDENTITY="${audit_lineage_ambiguous_proof[31]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER="${audit_lineage_ambiguous_proof[33]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER_BEFORE="${audit_lineage_ambiguous_proof[35]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER_AFTER="${audit_lineage_ambiguous_proof[37]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_INTERRUPTED_RETRY="${audit_lineage_ambiguous_proof[39]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ="${audit_lineage_ambiguous_proof[41]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ_COUNT="${audit_lineage_ambiguous_proof[43]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[45]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[47]}" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1470,6 +1483,15 @@ node -e '
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_EXPLICIT_RETRY,
     causationAmbiguousPostRestartExplicitRetryCount:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_EXPLICIT_RETRY_COUNT,
+    causationAmbiguousReconciliationRetryClusterIdentity:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_CLUSTER_IDENTITY,
+    causationAmbiguousReconciliationRetryPostmaster:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER,
+    causationAmbiguousReconciliationRetryPostmasterStartedAtBeforeRestart:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER_BEFORE,
+    causationAmbiguousReconciliationRetryPostmasterStartedAtAfterRestart:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER_AFTER,
+    causationAmbiguousReconciliationRetryRestartVerified: true,
     causationAmbiguousPostRestartInterruptedRetry:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_INTERRUPTED_RETRY,
     causationAmbiguousPostRestartRecoveryRead:
