@@ -1344,6 +1344,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AN UNTRUSTED RECONCILIATION RESPONSE NOW LEAVES ONLY A SANITIZED STALE FAILURE AND CANNOT PRESERVE OR REPLAY THE SAME-INCIDENT CRITICAL COMMAND.** |
 | Next handoff | Prove that one explicit trusted detail retry can recover the incident after this rejection without resurrecting the disposed command or issuing another mutation. |
 
+### Explicit trusted detail recovery after command disposal
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `4de06805cfac54b7404d9b1fdad92f476c119712` was one hundred and forty-five commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | After an untrusted reconciliation detail response disposes the same-incident ambiguous command and leaves `failure/stale`, exactly one explicit trusted selection retry reads detail and Timeline once each, restores the incident to `ready`, and cannot resurrect the command or its retry path. |
+| No replay acceptance | The original critical mutation count remains one before and after recovery. The read retry consumes no prior operation identity, and direct ambiguous-action retry continues to report that no command exists. |
+| Local evidence | The extended authenticated browser journey passed **50/50** and bound detail/Timeline counts to `2` at failure and `3` after the single explicit recovery. Build and no-emit TypeScript passed, followed by **764/764** workspace tests (API 670, dashboard 50, mobile 36, domain 8), repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed, so no live database recovery is claimed. |
+| Safety limits | Recovery is read-only and does not recreate disposed browser capability. It grants no collection, retry, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE EXPLICIT TRUSTED READ CAN RECOVER THE INCIDENT AFTER RESPONSE REJECTION WITHOUT REVIVING OR REPLAYING THE DISPOSED CRITICAL COMMAND.** |
+| Next handoff | Prove that concurrent explicit recovery requests coalesce into one authenticated detail/Timeline read and still cannot recreate command authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

@@ -123,7 +123,7 @@ test('authenticated exhaustion refresh discards a prior ambiguous critical opera
   assert.equal(mutationRequests, 1);
 });
 
-test('untrusted reconciliation detail discards its ambiguous command and exposes only a sanitized stale failure', async () => {
+test('untrusted reconciliation detail discards its ambiguous command and explicit trusted retry recovers without replay', async () => {
   const incident: RoadEventResponse = {
     id: '50505050-5050-4050-8050-505050505050',
     status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
@@ -132,6 +132,8 @@ test('untrusted reconciliation detail discards its ambiguous command and exposes
   };
   const secretReason = 'سبب الأمر الحرج السري';
   let malformedDetail = false;
+  let detailReads = 0;
+  let timelineReads = 0;
   let mutationRequests = 0;
   const fetcher: typeof fetch = async (input, init) => {
     assertTrustedRequest(init);
@@ -140,8 +142,12 @@ test('untrusted reconciliation detail discards its ambiguous command and exposes
       mutationRequests += 1;
       throw new TypeError('connection reset after send');
     }
-    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
     if (target.pathname === `/api/v1/road-events/${incident.id}`) {
+      detailReads += 1;
       if (!malformedDetail) return ok(incident);
       return new Response(JSON.stringify({
         success: true,
@@ -180,6 +186,20 @@ test('untrusted reconciliation detail discards its ambiguous command and exposes
   assert.equal(controller.ambiguousCriticalActionView(), null);
   assert.doesNotMatch(html, /إجراء حرج بنتيجة غير مؤكدة|تفويض الإغلاق|سبب الأمر الحرج السري/);
   await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(detailReads, 2);
+  assert.equal(timelineReads, 2);
+
+  malformedDetail = false;
+  const recovered = await controller.retrySelection();
+  assert.equal(recovered.phase, 'ready');
+  assert.equal(recovered.stale, false);
+  assert.equal(recovered.selected?.id, incident.id);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(controller.canRetrySelection(), false);
+  await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
   assert.equal(mutationRequests, 1);
 });
 
