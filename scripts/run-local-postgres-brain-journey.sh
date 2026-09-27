@@ -129,7 +129,7 @@ bash scripts/run-postgres-integration.sh
 export ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE="$audit_lineage_proof_file"
 bash scripts/run-postgres-audit-lineage-guard.sh
 mapfile -t audit_lineage_proof < "$audit_lineage_proof_file"
-if [[ "${#audit_lineage_proof[@]}" -ne 20 \
+if [[ "${#audit_lineage_proof[@]}" -ne 26 \
   || "${audit_lineage_proof[0]}" != "CROSS_INCIDENT_CAUSATION" \
   || "${audit_lineage_proof[1]}" != "REJECTED" \
   || "${audit_lineage_proof[2]}" != "SQLSTATE" \
@@ -149,11 +149,25 @@ if [[ "${#audit_lineage_proof[@]}" -ne 20 \
   || "${audit_lineage_proof[16]}" != "CONCURRENT_CAUSATION_RACE" \
   || "${audit_lineage_proof[17]}" != "ONE_ACCEPTED_ONE_REJECTED" \
   || "${audit_lineage_proof[18]}" != "LOSER_SQLSTATE" \
-  || "${audit_lineage_proof[19]}" != "23505" ]]; then
+  || "${audit_lineage_proof[19]}" != "23505" \
+  || "${audit_lineage_proof[20]}" != "WINNER_TRACE" \
+  || "${audit_lineage_proof[22]}" != "LOSER_TRACE" \
+  || "${audit_lineage_proof[24]}" != "RACE_TRACE_STATE" \
+  || "${audit_lineage_proof[25]}" != "1|0" ]]; then
   echo "PostgreSQL journey passed without exact forged-rejection and same-incident audit-lineage proofs" >&2
   exit 2
 fi
 readonly audit_lineage_state_before_restart="${audit_lineage_proof[11]}"
+readonly audit_lineage_winner_trace="${audit_lineage_proof[21]}"
+readonly audit_lineage_loser_trace="${audit_lineage_proof[23]}"
+if ! { [[ "$audit_lineage_winner_trace" == '30000000-0000-4000-8000-000000000006' \
+  && "$audit_lineage_loser_trace" == '30000000-0000-4000-8000-000000000007' ]] \
+  || [[ "$audit_lineage_winner_trace" == '30000000-0000-4000-8000-000000000007' \
+  && "$audit_lineage_loser_trace" == '30000000-0000-4000-8000-000000000006' ]]; }; then
+  echo "PostgreSQL journey received unknown or non-distinct concurrent trace identities" >&2
+  exit 2
+fi
+readonly audit_lineage_trace_state_before_restart="${audit_lineage_proof[25]}"
 
 mapfile -t restart_proof < "$restart_proof_file"
 if [[ "${#restart_proof[@]}" -ne 4 ]]; then
@@ -377,6 +391,13 @@ readonly audit_lineage_state_after_restart="$(
 )"
 if [[ "$audit_lineage_state_after_restart" != "$audit_lineage_state_before_restart" ]]; then
   echo "Audit-lineage causal pair did not survive PostgreSQL restart exactly: $audit_lineage_state_after_restart" >&2
+  exit 2
+fi
+readonly audit_lineage_trace_state_after_restart="$(
+  psql "$DATABASE_URL" -Atqc "SELECT (SELECT count(*)::text FROM audit_logs WHERE trace_id='$audit_lineage_winner_trace') || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$audit_lineage_loser_trace')"
+)"
+if [[ "$audit_lineage_trace_state_after_restart" != "$audit_lineage_trace_state_before_restart" ]]; then
+  echo "Concurrent authorization race winner or loser identity changed after PostgreSQL restart: $audit_lineage_trace_state_after_restart" >&2
   exit 2
 fi
 readonly contact_recovery_state="$(
@@ -1023,6 +1044,10 @@ ROS_RECEIPT_DUPLICATE_CAUSATION="${audit_lineage_proof[13]}" \
 ROS_RECEIPT_DUPLICATE_CAUSATION_SQLSTATE="${audit_lineage_proof[15]}" \
 ROS_RECEIPT_CONCURRENT_CAUSATION_RACE="${audit_lineage_proof[17]}" \
 ROS_RECEIPT_CONCURRENT_CAUSATION_LOSER_SQLSTATE="${audit_lineage_proof[19]}" \
+ROS_RECEIPT_CONCURRENT_CAUSATION_WINNER_TRACE="$audit_lineage_winner_trace" \
+ROS_RECEIPT_CONCURRENT_CAUSATION_LOSER_TRACE="$audit_lineage_loser_trace" \
+ROS_RECEIPT_CONCURRENT_CAUSATION_TRACE_STATE_BEFORE_RESTART="$audit_lineage_trace_state_before_restart" \
+ROS_RECEIPT_CONCURRENT_CAUSATION_TRACE_STATE_AFTER_RESTART="$audit_lineage_trace_state_after_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1202,6 +1227,14 @@ node -e '
       process.env.ROS_RECEIPT_CONCURRENT_CAUSATION_RACE,
     concurrentCausationLoserSqlstate:
       process.env.ROS_RECEIPT_CONCURRENT_CAUSATION_LOSER_SQLSTATE,
+    concurrentCausationWinnerTrace:
+      process.env.ROS_RECEIPT_CONCURRENT_CAUSATION_WINNER_TRACE,
+    concurrentCausationLoserTrace:
+      process.env.ROS_RECEIPT_CONCURRENT_CAUSATION_LOSER_TRACE,
+    concurrentCausationTraceStateBeforeRestart:
+      process.env.ROS_RECEIPT_CONCURRENT_CAUSATION_TRACE_STATE_BEFORE_RESTART,
+    concurrentCausationTraceStateAfterRestart:
+      process.env.ROS_RECEIPT_CONCURRENT_CAUSATION_TRACE_STATE_AFTER_RESTART,
     auditLineageRestartVerified: true,
     auditLineageStateBeforeRestart:
       process.env.ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART,

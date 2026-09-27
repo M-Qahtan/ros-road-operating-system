@@ -40,6 +40,9 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(auditLineageGuard, /23505/);
   assert.match(auditLineageGuard, /CONCURRENT_CAUSATION_RACE/);
   assert.match(auditLineageGuard, /ONE_ACCEPTED_ONE_REJECTED/);
+  assert.match(auditLineageGuard, /WINNER_TRACE/);
+  assert.match(auditLineageGuard, /LOSER_TRACE/);
+  assert.match(auditLineageGuard, /RACE_TRACE_STATE/);
   assert.match(auditLineageGuard, /first_racer_pid=\$!/);
   assert.match(auditLineageGuard, /second_racer_pid=\$!/);
   assert.match(auditLineageGuard, /wait "\$first_racer_pid"/);
@@ -64,6 +67,10 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /duplicateCausationSqlstate/);
   assert.match(localHarness, /concurrentCausationRace/);
   assert.match(localHarness, /concurrentCausationLoserSqlstate/);
+  assert.match(localHarness, /concurrentCausationWinnerTrace/);
+  assert.match(localHarness, /concurrentCausationLoserTrace/);
+  assert.match(localHarness, /concurrentCausationTraceStateBeforeRestart/);
+  assert.match(localHarness, /concurrentCausationTraceStateAfterRestart/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);
   assert.match(localHarness, /auditLineageStateBeforeRestart/);
   assert.match(localHarness, /auditLineageStateAfterRestart/);

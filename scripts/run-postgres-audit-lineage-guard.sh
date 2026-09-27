@@ -128,8 +128,12 @@ fi
 
 if [[ "$first_racer_status" -ne 0 ]]; then
   readonly loser_error_log="$first_racer_error_log"
+  readonly winner_trace_id="$duplicate_closure_trace_id"
+  readonly loser_trace_id="$valid_closure_trace_id"
 else
   readonly loser_error_log="$second_racer_error_log"
+  readonly winner_trace_id="$valid_closure_trace_id"
+  readonly loser_trace_id="$duplicate_closure_trace_id"
 fi
 if ! grep -Eq '(^|[^0-9])23505([^0-9]|$)' "$loser_error_log"; then
   echo "Concurrent authorization race loser did not return SQLSTATE 23505" >&2
@@ -142,6 +146,14 @@ readonly audit_lineage_state="$(
 )"
 if [[ "$audit_lineage_state" != '1|1|0|1' ]]; then
   echo "Exact same-incident closure did not produce one durable causal pair: $audit_lineage_state" >&2
+  exit 2
+fi
+readonly race_trace_state="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT (SELECT count(*)::text FROM audit_logs WHERE trace_id='$winner_trace_id') || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$loser_trace_id')"
+)"
+if [[ "$race_trace_state" != '1|0' ]]; then
+  echo "Concurrent authorization race trace identities were not durable and exclusive: $race_trace_state" >&2
   exit 2
 fi
 
@@ -166,4 +178,10 @@ printf '%s\n' \
   'ONE_ACCEPTED_ONE_REJECTED' \
   'LOSER_SQLSTATE' \
   '23505' \
+  'WINNER_TRACE' \
+  "$winner_trace_id" \
+  'LOSER_TRACE' \
+  "$loser_trace_id" \
+  'RACE_TRACE_STATE' \
+  "$race_trace_state" \
   > "$ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE"

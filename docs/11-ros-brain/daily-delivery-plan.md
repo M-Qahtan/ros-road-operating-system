@@ -1164,6 +1164,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE RESTARTABLE JOURNEY NOW REQUIRES ONE DATABASE WINNER AND ONE `23505` LOSER FOR CONCURRENT CONSUMPTION OF A SINGLE HUMAN AUTHORIZATION CAUSE.** |
 | Next handoff | Record the exact winning and losing closure trace identities, then require the same winner and absent loser after restart rather than relying only on aggregate counts. |
 
+### Concurrent causation trace identity recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `43912ff9295a5317e15e0c683f24655f9a60df25` was one hundred and thirty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | The concurrent PostgreSQL fixture now identifies which of the two allowlisted closure traces won and which lost. It proves the winner exists exactly once and the loser is absent, emits both identities in the bounded proof, and rejects unknown, repeated, or non-distinct trace pairs before a receipt can be produced. |
+| Recovery acceptance | The journey binds the receipt to the exact `winner|loser` ordering and queries those same identities after the terminal PostgreSQL restart. It accepts only an unchanged `1|0` trace state in addition to the existing aggregate `1|1|0|1` causal state. |
+| Local evidence | The focused harness contract failed first because the winner/loser identity markers were absent, then passed **41/41** after implementation. Bash syntax, build, no-emit TypeScript, **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks passed. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live trace identity or restart receipt is claimed. |
+| Safety limits | The identity proof contains fixed synthetic trace UUIDs only and grants no collection, closure, control, dispatch, operational, or activation authority. It creates no cloud resource and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE RESTARTABLE JOURNEY NOW BINDS CONCURRENT CAUSATION TO ONE EXACT WINNING TRACE AND ONE ABSENT LOSING TRACE BEFORE AND AFTER RECOVERY.** |
+| Next handoff | Repeat the concurrent race after a PostgreSQL restart using a fresh authorization trace, and require one new winner and one new `23505` loser without altering the first historical pair. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
