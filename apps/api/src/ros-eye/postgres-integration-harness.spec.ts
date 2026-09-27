@@ -24,6 +24,10 @@ const auditLineageGuard = readFileSync(
   'scripts/run-postgres-audit-lineage-guard.sh',
   'utf8',
 );
+const auditLineageCrashRecovery = readFileSync(
+  'scripts/run-postgres-audit-lineage-crash-recovery.sh',
+  'utf8',
+);
 
 test('restartable journey proves cross-incident audit causation fails closed', () => {
   assert.match(auditLineageGuard, /road_event\.closure_authorized/);
@@ -78,6 +82,24 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /postRestartCausationWinnerTrace/);
   assert.match(localHarness, /postRestartCausationLoserTrace/);
   assert.match(localHarness, /historicalCausationTraceStateAfterSecondRace/);
+  assert.match(auditLineageCrashRecovery, /SELECT pg_sleep\(30\)/);
+  assert.match(auditLineageCrashRecovery, /restart -- "\$ROS_POSTGRES_RESTART_CONTAINER"/);
+  assert.match(auditLineageCrashRecovery, /wait "\$interrupted_pid"/);
+  assert.match(auditLineageCrashRecovery, /ROLLBACK_STATE/);
+  assert.match(auditLineageCrashRecovery, /CONTROLLED_RETRY/);
+  assert.match(auditLineageCrashRecovery, /23505/);
+  assert.ok(
+    auditLineageCrashRecovery.indexOf('SELECT pg_sleep(30)') <
+      auditLineageCrashRecovery.indexOf('restart -- "$ROS_POSTGRES_RESTART_CONTAINER"'),
+  );
+  assert.ok(
+    auditLineageCrashRecovery.indexOf('restart -- "$ROS_POSTGRES_RESTART_CONTAINER"') <
+      auditLineageCrashRecovery.indexOf('wait "$interrupted_pid"'),
+  );
+  assert.match(localHarness, /scripts\/run-postgres-audit-lineage-crash-recovery\.sh/);
+  assert.match(localHarness, /causationCrashRollbackState/);
+  assert.match(localHarness, /causationCrashControlledRetry/);
+  assert.match(localHarness, /causationCrashDuplicateRetry/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);
   assert.match(localHarness, /auditLineageStateBeforeRestart/);
   assert.match(localHarness, /auditLineageStateAfterRestart/);

@@ -1188,6 +1188,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE RESTARTABLE JOURNEY NOW REQUIRES A SECOND INDEPENDENT SINGLE-USE CAUSATION RACE AFTER RECOVERY WITHOUT MUTATING THE FIRST HISTORICAL PAIR.** |
 | Next handoff | Interrupt a fresh race after one transaction acquires the cause but before commit, restart PostgreSQL, and prove rollback leaves the authorization reusable for one controlled retry only. |
 
+### Pre-commit causation crash recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `f6b3661bae4cd4e0fc6087bf3f371d466bec5729` was one hundred and thirty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | A dedicated fixture inserts a fresh authorization, starts a closure transaction with a named PostgreSQL session, waits until the insert holds the cause and is sleeping before commit, and then restarts the local PostgreSQL container. A successful holder exit is rejected because it would mean the intended interruption did not happen. |
+| Recovery acceptance | Recovery must preserve the database system identifier while replacing the postmaster, leave exactly `1|0|0|0` (authorization, no closure, no interrupted trace, no consumed cause), allow one controlled retry, reject a second retry with `23505`, and finish at `1|1|0|1|0|1`. The earlier initial and post-restart race pairs must both remain `1|0`. |
+| Local evidence | The focused harness failed first because the crash-recovery fixture was absent, then passed **41/41** after implementation. Bash syntax, build, no-emit TypeScript, **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks passed. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live crash, rollback, restart identity, or SQLSTATE result is claimed. |
+| Safety limits | The fixture restarts only its ephemeral local test container and uses fixed synthetic UUIDs. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS A PRE-COMMIT CRASH ROLLS BACK THE CAUSAL CLAIM AND EXACTLY ONE CONTROLLED RETRY CONSUMES IT.** |
+| Next handoff | Simulate a connection loss after the closure commit but before the client receives success, then reconcile the committed trace without replaying the closure command. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

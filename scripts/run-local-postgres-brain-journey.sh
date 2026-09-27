@@ -40,6 +40,7 @@ readonly journey_manifest_sha256="$(
     scripts/run-postgres-closure-reauthorization-recovery.sh \
     scripts/run-postgres-closure-reauthorization-finalize.sh \
     scripts/run-postgres-audit-lineage-guard.sh \
+    scripts/run-postgres-audit-lineage-crash-recovery.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -58,6 +59,7 @@ readonly closure_reauthorization_proof_file="$(mktemp)"
 readonly closure_reauthorization_finalize_proof_file="$(mktemp)"
 readonly audit_lineage_proof_file="$(mktemp)"
 readonly audit_lineage_recovery_proof_file="$(mktemp)"
+readonly audit_lineage_crash_proof_file="$(mktemp)"
 readonly post_restart_duplicate_log="$(mktemp)"
 readonly post_restart_wrong_purpose_log="$(mktemp)"
 readonly post_restart_wrong_tenant_log="$(mktemp)"
@@ -77,6 +79,7 @@ cleanup() {
   rm -f "$closure_reauthorization_finalize_proof_file"
   rm -f "$audit_lineage_proof_file"
   rm -f "$audit_lineage_recovery_proof_file"
+  rm -f "$audit_lineage_crash_proof_file"
   rm -f "$post_restart_duplicate_log"
   rm -f "$post_restart_wrong_purpose_log"
   rm -f "$post_restart_wrong_tenant_log"
@@ -447,6 +450,40 @@ readonly historical_causation_trace_state_after_second_race="$(
 if [[ "$historical_audit_lineage_state_after_second_race" != "$audit_lineage_state_before_restart" \
   || "$historical_causation_trace_state_after_second_race" != "$audit_lineage_trace_state_before_restart" ]]; then
   echo "Post-restart causation race changed the historical causal pair" >&2
+  exit 2
+fi
+export ROS_POSTGRES_AUDIT_LINEAGE_CRASH_PROOF_FILE="$audit_lineage_crash_proof_file"
+bash scripts/run-postgres-audit-lineage-crash-recovery.sh
+mapfile -t audit_lineage_crash_proof < "$audit_lineage_crash_proof_file"
+if [[ "${#audit_lineage_crash_proof[@]}" -ne 16 \
+  || "${audit_lineage_crash_proof[0]}" != "CRASH_BEFORE_COMMIT" \
+  || "${audit_lineage_crash_proof[1]}" != "CONNECTION_TERMINATED" \
+  || "${audit_lineage_crash_proof[2]}" != "CLUSTER_IDENTITY" \
+  || "${audit_lineage_crash_proof[3]}" != "PRESERVED" \
+  || "${audit_lineage_crash_proof[4]}" != "POSTMASTER" \
+  || "${audit_lineage_crash_proof[5]}" != "REPLACED" \
+  || "${audit_lineage_crash_proof[6]}" != "ROLLBACK_STATE" \
+  || "${audit_lineage_crash_proof[7]}" != "1|0|0|0" \
+  || "${audit_lineage_crash_proof[8]}" != "CONTROLLED_RETRY" \
+  || "${audit_lineage_crash_proof[9]}" != "COMMITTED" \
+  || "${audit_lineage_crash_proof[10]}" != "DUPLICATE_RETRY" \
+  || "${audit_lineage_crash_proof[11]}" != "REJECTED" \
+  || "${audit_lineage_crash_proof[12]}" != "SQLSTATE" \
+  || "${audit_lineage_crash_proof[13]}" != "23505" \
+  || "${audit_lineage_crash_proof[14]}" != "FINAL_STATE" \
+  || "${audit_lineage_crash_proof[15]}" != "1|1|0|1|0|1" ]]; then
+  echo "PostgreSQL journey passed without exact pre-commit crash rollback and controlled retry proof" >&2
+  exit 2
+fi
+readonly historical_causation_trace_state_after_crash="$(
+  psql "$DATABASE_URL" -Atqc "SELECT (SELECT count(*)::text FROM audit_logs WHERE trace_id='$audit_lineage_winner_trace') || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$audit_lineage_loser_trace')"
+)"
+readonly post_restart_causation_trace_state_after_crash="$(
+  psql "$DATABASE_URL" -Atqc "SELECT (SELECT count(*)::text FROM audit_logs WHERE trace_id='$audit_lineage_recovery_winner_trace') || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$audit_lineage_recovery_loser_trace')"
+)"
+if [[ "$historical_causation_trace_state_after_crash" != "$audit_lineage_trace_state_before_restart" \
+  || "$post_restart_causation_trace_state_after_crash" != "${audit_lineage_recovery_proof[25]}" ]]; then
+  echo "Pre-commit crash recovery changed an earlier causation race pair" >&2
   exit 2
 fi
 readonly contact_recovery_state="$(
@@ -1104,6 +1141,14 @@ ROS_RECEIPT_POST_RESTART_CAUSATION_LOSER_TRACE="$audit_lineage_recovery_loser_tr
 ROS_RECEIPT_POST_RESTART_CAUSATION_TRACE_STATE="${audit_lineage_recovery_proof[25]}" \
 ROS_RECEIPT_HISTORICAL_CAUSATION_TRACE_STATE_AFTER_SECOND_RACE="$historical_causation_trace_state_after_second_race" \
 ROS_RECEIPT_HISTORICAL_AUDIT_LINEAGE_STATE_AFTER_SECOND_RACE="$historical_audit_lineage_state_after_second_race" \
+ROS_RECEIPT_CAUSATION_CRASH_BEFORE_COMMIT="${audit_lineage_crash_proof[1]}" \
+ROS_RECEIPT_CAUSATION_CRASH_ROLLBACK_STATE="${audit_lineage_crash_proof[7]}" \
+ROS_RECEIPT_CAUSATION_CRASH_CONTROLLED_RETRY="${audit_lineage_crash_proof[9]}" \
+ROS_RECEIPT_CAUSATION_CRASH_DUPLICATE_RETRY="${audit_lineage_crash_proof[11]}" \
+ROS_RECEIPT_CAUSATION_CRASH_DUPLICATE_SQLSTATE="${audit_lineage_crash_proof[13]}" \
+ROS_RECEIPT_CAUSATION_CRASH_FINAL_STATE="${audit_lineage_crash_proof[15]}" \
+ROS_RECEIPT_HISTORICAL_CAUSATION_TRACE_STATE_AFTER_CRASH="$historical_causation_trace_state_after_crash" \
+ROS_RECEIPT_POST_RESTART_CAUSATION_TRACE_STATE_AFTER_CRASH="$post_restart_causation_trace_state_after_crash" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1305,6 +1350,22 @@ node -e '
       process.env.ROS_RECEIPT_HISTORICAL_CAUSATION_TRACE_STATE_AFTER_SECOND_RACE,
     historicalAuditLineageStateAfterSecondRace:
       process.env.ROS_RECEIPT_HISTORICAL_AUDIT_LINEAGE_STATE_AFTER_SECOND_RACE,
+    causationCrashBeforeCommit:
+      process.env.ROS_RECEIPT_CAUSATION_CRASH_BEFORE_COMMIT,
+    causationCrashRollbackState:
+      process.env.ROS_RECEIPT_CAUSATION_CRASH_ROLLBACK_STATE,
+    causationCrashControlledRetry:
+      process.env.ROS_RECEIPT_CAUSATION_CRASH_CONTROLLED_RETRY,
+    causationCrashDuplicateRetry:
+      process.env.ROS_RECEIPT_CAUSATION_CRASH_DUPLICATE_RETRY,
+    causationCrashDuplicateSqlstate:
+      process.env.ROS_RECEIPT_CAUSATION_CRASH_DUPLICATE_SQLSTATE,
+    causationCrashFinalState:
+      process.env.ROS_RECEIPT_CAUSATION_CRASH_FINAL_STATE,
+    historicalCausationTraceStateAfterCrash:
+      process.env.ROS_RECEIPT_HISTORICAL_CAUSATION_TRACE_STATE_AFTER_CRASH,
+    postRestartCausationTraceStateAfterCrash:
+      process.env.ROS_RECEIPT_POST_RESTART_CAUSATION_TRACE_STATE_AFTER_CRASH,
     auditLineageRestartVerified: true,
     auditLineageStateBeforeRestart:
       process.env.ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART,
