@@ -1356,6 +1356,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE EXPLICIT TRUSTED READ CAN RECOVER THE INCIDENT AFTER RESPONSE REJECTION WITHOUT REVIVING OR REPLAYING THE DISPOSED CRITICAL COMMAND.** |
 | Next handoff | Prove that concurrent explicit recovery requests coalesce into one authenticated detail/Timeline read and still cannot recreate command authority. |
 
+### Coalesced concurrent trusted detail recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `0c3d885b6834174608aa2bd4c3dce8ad4ac0adf1` was one hundred and forty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Two concurrent explicit recovery requests after an untrusted response return the same in-flight promise. A start barrier proves they cross the authenticated boundary as exactly one detail read and one Timeline read, then both receive the same restored `ready` state. |
+| No authority acceptance | Coalescing creates no additional mutation, operation identity, or ambiguous retry path. The original critical mutation count remains one and the disposed command remains absent before, during, and after recovery. |
+| Local evidence | The focused test initially observed counters before asynchronous authentication reached the network boundary; adding a separate read-start barrier made the concurrency assertion deterministic, and the dashboard suite passed **50/50**. Build and no-emit TypeScript passed, followed by **764/764** workspace tests (API 670, dashboard 50, mobile 36, domain 8), repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed, so no live database recovery is claimed. |
+| Safety limits | The change strengthens test evidence only; production recovery remains authenticated and read-only. It grants no collection, retry, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **CONCURRENT EXPLICIT RECOVERY INTENT NOW HAS DIRECT EVIDENCE OF ONE BOUNDED READ PAIR AND ZERO COMMAND OR MUTATION RECREATION.** |
+| Next handoff | Make a coalesced recovery fail again with an untrusted response and prove it remains `failure/stale` with no automatic read loop, command identity, or mutation replay. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

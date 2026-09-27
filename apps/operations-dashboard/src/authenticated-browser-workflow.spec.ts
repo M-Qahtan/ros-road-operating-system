@@ -132,6 +132,8 @@ test('untrusted reconciliation detail discards its ambiguous command and explici
   };
   const secretReason = 'سبب الأمر الحرج السري';
   let malformedDetail = false;
+  let recoveryBarrier: ReturnType<typeof barrier> | null = null;
+  let recoveryStarted: ReturnType<typeof barrier> | null = null;
   let detailReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
@@ -148,7 +150,13 @@ test('untrusted reconciliation detail discards its ambiguous command and explici
     }
     if (target.pathname === `/api/v1/road-events/${incident.id}`) {
       detailReads += 1;
-      if (!malformedDetail) return ok(incident);
+      if (!malformedDetail) {
+        if (recoveryBarrier !== null) {
+          recoveryStarted?.release();
+          await recoveryBarrier.wait;
+        }
+        return ok(incident);
+      }
       return new Response(JSON.stringify({
         success: true,
         data: { ...incident, internalSecret: 'must-not-leak' },
@@ -191,7 +199,17 @@ test('untrusted reconciliation detail discards its ambiguous command and explici
   assert.equal(timelineReads, 2);
 
   malformedDetail = false;
-  const recovered = await controller.retrySelection();
+  recoveryBarrier = barrier();
+  recoveryStarted = barrier();
+  const firstRecovery = controller.retrySelection();
+  const duplicateRecovery = controller.retrySelection();
+  assert.equal(firstRecovery, duplicateRecovery);
+  await recoveryStarted.wait;
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
+  recoveryBarrier.release();
+  const [recovered, duplicateResult] = await Promise.all([firstRecovery, duplicateRecovery]);
+  assert.equal(duplicateResult, recovered);
   assert.equal(recovered.phase, 'ready');
   assert.equal(recovered.stale, false);
   assert.equal(recovered.selected?.id, incident.id);
