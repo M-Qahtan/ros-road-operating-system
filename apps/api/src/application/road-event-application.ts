@@ -11,6 +11,7 @@ import {
   SeverityLevel
 } from '@ros/domain';
 import {
+  AuditTimelineEntry,
   AuditTimelinePort,
   AuthenticatedActor,
   AuthorizationPort,
@@ -132,6 +133,84 @@ function validateExpectedVersion(version: number): void {
 
 function fingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+const RECONCILIATION_REVIEW_ACTION = 'road_event.reconciliation_review_required';
+const RECONCILIATION_REVIEW_ERROR = 'Reconciliation review evidence is missing, malformed, or ambiguous';
+const RECONCILIATION_PAYLOAD_KEYS = [
+  'automaticAttemptBudget',
+  'automaticAttemptCount',
+  'automaticRetryAuthorized',
+  'closureAuthorized',
+  'disposition',
+  'state',
+  'thirdAutomaticAttempt'
+] as const;
+
+function failReconciliationReview(): never {
+  throw new ApplicationConflictError(RECONCILIATION_REVIEW_ERROR);
+}
+
+function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : null;
+}
+
+function reconciliationReviewProjection(
+  timeline: readonly AuditTimelineEntry[],
+  roadEventId: string
+): RoadEventReadModel['reconciliation'] {
+  const markers = timeline.filter((entry) => entry.action === RECONCILIATION_REVIEW_ACTION);
+  if (markers.length === 0) return null;
+  if (markers.length !== 1) return failReconciliationReview();
+
+  const marker = markers[0]!;
+  const before = asRecord(marker.beforeState);
+  const after = asRecord(marker.afterState);
+  const payload = asRecord(after?.reconciliation);
+  const payloadKeys = payload === null ? [] : Object.keys(payload).sort();
+  const closureMatches = marker.causationId === null
+    ? []
+    : timeline.filter((entry) =>
+        entry.action === 'road_event.closed'
+        && entry.traceId === marker.causationId
+        && entry.correlationId === roadEventId
+      );
+  const closure = closureMatches[0];
+  const markerTime = Date.parse(marker.occurredAt);
+  const closureTime = closure === undefined ? Number.NaN : Date.parse(closure.occurredAt);
+
+  if (
+    marker.actorType !== 'SYSTEM'
+    || marker.actorId !== null
+    || marker.correlationId !== roadEventId
+    || marker.causationId === null
+    || marker.traceId === marker.causationId
+    || before?.reconciliation !== null
+    || payload === null
+    || payloadKeys.length !== RECONCILIATION_PAYLOAD_KEYS.length
+    || !payloadKeys.every((key, index) => key === RECONCILIATION_PAYLOAD_KEYS[index])
+    || payload.state !== 'HUMAN_REVIEW_REQUIRED'
+    || payload.disposition !== 'EXHAUSTED_FAIL_CLOSED'
+    || payload.automaticAttemptBudget !== 2
+    || payload.automaticAttemptCount !== 2
+    || payload.thirdAutomaticAttempt !== 'NOT_ATTEMPTED'
+    || payload.automaticRetryAuthorized !== false
+    || payload.closureAuthorized !== false
+    || closureMatches.length !== 1
+    || !Number.isFinite(markerTime)
+    || !Number.isFinite(closureTime)
+    || markerTime < closureTime
+  ) {
+    return failReconciliationReview();
+  }
+
+  return {
+    state: 'HUMAN_REVIEW_REQUIRED',
+    automaticRetryAuthorized: false,
+    closureAuthorized: false
+  };
 }
 
 export function deriveRoadEventIdempotencyScope(operation: string, actor: AuthenticatedActor): string {
@@ -293,17 +372,7 @@ export class RoadEventApplicationService {
     const roadEventId = requireUuid(id, 'roadEventId');
     const event = await this.requireEvent(roadEventId, scope);
     const timeline = await this.auditTimeline.listForRoadEvent(roadEventId, scope);
-    const requiresHumanReview = timeline.some((entry) =>
-      entry.action === 'road_event.reconciliation_review_required'
-      && entry.correlationId === roadEventId
-    );
-    return toRoadEventReadModel(event, requiresHumanReview
-      ? {
-          state: 'HUMAN_REVIEW_REQUIRED',
-          automaticRetryAuthorized: false,
-          closureAuthorized: false
-        }
-      : null);
+    return toRoadEventReadModel(event, reconciliationReviewProjection(timeline, roadEventId));
   }
 
   async list(query: RoadEventListQuery, actor: AuthenticatedActor): Promise<RoadEventPageReadModel> {

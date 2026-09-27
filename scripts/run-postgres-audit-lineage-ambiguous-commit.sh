@@ -321,14 +321,14 @@ INSERT INTO audit_logs (
   'SYSTEM', NULL,
   'road_event.reconciliation_review_required', 'RoadEvent', '$authorization_event_id',
   '{"reconciliation":null}'::jsonb,
-  '{"reconciliation":{"state":"HUMAN_REVIEW_REQUIRED","automaticRetryAuthorized":false,"closureAuthorized":false}}'::jsonb,
+  '{"reconciliation":{"state":"HUMAN_REVIEW_REQUIRED","disposition":"EXHAUSTED_FAIL_CLOSED","automaticAttemptBudget":2,"automaticAttemptCount":2,"thirdAutomaticAttempt":"NOT_ATTEMPTED","automaticRetryAuthorized":false,"closureAuthorized":false}}'::jsonb,
   'Automatic reconciliation attempt budget exhausted', '$reconciliation_review_trace_id',
   '$authorization_event_id', '$closure_trace_id', '2026-09-27T06:00:02Z'
 );
 SQL
 readonly reconciliation_review_state="$(
   psql "$DATABASE_URL" -Atqc \
-    "SELECT CASE WHEN count(*)=1 THEN 'HUMAN_REVIEW_REQUIRED' ELSE 'INVALID' END FROM audit_logs WHERE action='road_event.reconciliation_review_required' AND resource_type='RoadEvent' AND resource_id='$authorization_event_id' AND correlation_id='$authorization_event_id' AND causation_id='$closure_trace_id' AND after_state #>> '{reconciliation,state}'='HUMAN_REVIEW_REQUIRED' AND after_state #>> '{reconciliation,automaticRetryAuthorized}'='false' AND after_state #>> '{reconciliation,closureAuthorized}'='false'"
+    "SELECT CASE WHEN count(*)=1 THEN 'HUMAN_REVIEW_REQUIRED' ELSE 'INVALID' END FROM audit_logs WHERE action='road_event.reconciliation_review_required' AND resource_type='RoadEvent' AND resource_id='$authorization_event_id' AND correlation_id='$authorization_event_id' AND causation_id='$closure_trace_id' AND after_state #>> '{reconciliation,state}'='HUMAN_REVIEW_REQUIRED' AND after_state #>> '{reconciliation,disposition}'='EXHAUSTED_FAIL_CLOSED' AND after_state #>> '{reconciliation,automaticAttemptBudget}'='2' AND after_state #>> '{reconciliation,automaticAttemptCount}'='2' AND after_state #>> '{reconciliation,thirdAutomaticAttempt}'='NOT_ATTEMPTED' AND after_state #>> '{reconciliation,automaticRetryAuthorized}'='false' AND after_state #>> '{reconciliation,closureAuthorized}'='false'"
 )"
 if [[ "$reconciliation_review_state" != 'HUMAN_REVIEW_REQUIRED' ]]; then
   echo "Exhausted reconciliation did not persist one exact human-review marker" >&2

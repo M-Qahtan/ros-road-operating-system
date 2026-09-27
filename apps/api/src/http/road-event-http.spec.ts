@@ -8,6 +8,7 @@ import {
   MemorySignalAttachmentAdapter,
   RoleMatrixAuthorizationAdapter
 } from '../application/local-adapters.js';
+import { AuditTimelineEntry, AuditTimelinePort } from '../application/ports.js';
 import { createRoadEventHttpHandler, HttpRequest } from './road-event-http.js';
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
@@ -37,13 +38,16 @@ class JournalWithholdingRoadEventRepository extends MemoryRoadEventRepository {
   }
 }
 
-function fixture(repository = new MemoryRoadEventRepository()) {
+function fixture(
+  repository = new MemoryRoadEventRepository(),
+  auditTimeline: AuditTimelinePort = repository
+) {
   const application = new RoadEventApplicationService(
     repository,
     new RoleMatrixAuthorizationAdapter(),
     new MemoryIdempotencyAdapter(),
     new MemorySignalAttachmentAdapter(repository),
-    repository
+    auditTimeline
   );
   return createRoadEventHttpHandler(application);
 }
@@ -76,6 +80,51 @@ const validCreateBody = {
   longitude: 46.6753
 };
 
+const CLOSURE_TRACE_ID = 'trace-http-closure-committed';
+
+function reconciliationTimeline(): readonly AuditTimelineEntry[] {
+  return [
+    {
+      action: 'road_event.closed',
+      actorType: 'SUPERVISOR',
+      actorId: ACTOR_ID,
+      beforeState: { status: 'RECOVERY', version: 13 },
+      afterState: { status: 'CLOSED', version: 14 },
+      reason: 'human-authorized closure',
+      traceId: CLOSURE_TRACE_ID,
+      correlationId: EVENT_ID,
+      causationId: 'trace-http-closure-authorization',
+      occurredAt: '2026-07-25T03:10:00.000Z'
+    },
+    {
+      action: 'road_event.reconciliation_review_required',
+      actorType: 'SYSTEM',
+      actorId: null,
+      beforeState: { reconciliation: null },
+      afterState: {
+        reconciliation: {
+          state: 'HUMAN_REVIEW_REQUIRED',
+          disposition: 'EXHAUSTED_FAIL_CLOSED',
+          automaticAttemptBudget: 2,
+          automaticAttemptCount: 2,
+          thirdAutomaticAttempt: 'NOT_ATTEMPTED',
+          automaticRetryAuthorized: false,
+          closureAuthorized: false
+        }
+      },
+      reason: 'automatic reconciliation attempt budget exhausted',
+      traceId: 'trace-http-reconciliation-exhausted',
+      correlationId: EVENT_ID,
+      causationId: CLOSURE_TRACE_ID,
+      occurredAt: '2026-07-25T03:10:01.000Z'
+    }
+  ];
+}
+
+function timelinePort(entries: readonly AuditTimelineEntry[]): AuditTimelinePort {
+  return { async listForRoadEvent() { return entries; } };
+}
+
 test('HTTP create and detail endpoints return stable envelopes', async () => {
   const handle = fixture();
   const created = await handle(request({ method: 'POST', body: validCreateBody }));
@@ -104,18 +153,7 @@ test('authenticated incident read exposes exhausted reconciliation as human revi
     eventType: 'FixtureClosed',
     correlationId: EVENT_ID
   });
-  await repository.update(event, 14, {
-    tenantId: TENANT,
-    purpose: PURPOSE,
-    actorType: 'SYSTEM',
-    action: 'road_event.reconciliation_review_required',
-    reason: 'automatic reconciliation attempt budget exhausted',
-    traceId: 'trace-http-reconciliation-exhausted',
-    eventType: 'RoadEventReconciliationReviewRequired',
-    correlationId: EVENT_ID
-  });
-
-  const response = await fixture(repository)(request({
+  const response = await fixture(repository, timelinePort(reconciliationTimeline()))(request({
     method: 'GET',
     path: `/api/v1/road-events/${EVENT_ID}`,
     headers: actorHeaders('OPERATOR')
@@ -138,6 +176,58 @@ test('authenticated incident read exposes exhausted reconciliation as human revi
     closureAuthorized: false
   });
   assert.equal(data.closureAuthorization, null);
+});
+
+test('authenticated incident read fails closed on malformed duplicate or unbound reconciliation markers', async () => {
+  const repository = new MemoryRoadEventRepository();
+  const event = new RoadEvent({
+    ...validCreateBody,
+    occurredAt: new Date(validCreateBody.occurredAt),
+    status: RoadEventStatus.Closed,
+    version: 14
+  });
+  await repository.create(event, {
+    tenantId: TENANT,
+    purpose: PURPOSE,
+    actorType: 'SYSTEM',
+    action: 'fixture.closed',
+    traceId: 'trace-http-invalid-reconciliation-fixture',
+    eventType: 'FixtureClosed',
+    correlationId: EVENT_ID
+  });
+  const [closure, marker] = reconciliationTimeline();
+  assert.ok(closure !== undefined && marker !== undefined);
+  const markerPayload = (marker.afterState as {
+    reconciliation: Readonly<Record<string, unknown>>;
+  }).reconciliation;
+  const cases: readonly (readonly AuditTimelineEntry[])[] = [
+    [closure, { ...marker, afterState: { reconciliation: { state: 'HUMAN_REVIEW_REQUIRED' } } }],
+    [closure, { ...marker, afterState: { reconciliation: { ...markerPayload, unexpectedAuthority: false } } }],
+    [closure, marker, { ...marker, traceId: 'trace-http-reconciliation-duplicate' }],
+    [closure, { ...closure }, marker],
+    [closure, { ...marker, causationId: 'trace-http-unbound-closure' }],
+    [closure, { ...marker, correlationId: '99999999-9999-4999-8999-999999999999' }],
+    [closure, { ...marker, actorType: 'SUPERVISOR', actorId: ACTOR_ID }],
+    [closure, { ...marker, occurredAt: '2026-07-25T03:09:59.000Z' }]
+  ];
+
+  for (const entries of cases) {
+    const response = await fixture(repository, timelinePort(entries))(request({
+      method: 'GET',
+      path: `/api/v1/road-events/${EVENT_ID}`,
+      headers: actorHeaders('OPERATOR')
+    }));
+    assert.equal(response.status, 409);
+    assert.deepEqual(response.body, {
+      success: false,
+      data: null,
+      error: {
+        code: 'CONFLICT',
+        message: 'Reconciliation review evidence is missing, malformed, or ambiguous'
+      },
+      traceId: 'trace-http-001'
+    });
+  }
 });
 
 test('authenticated list keeps a journal-withheld incident visible without executable closure authorization', async () => {

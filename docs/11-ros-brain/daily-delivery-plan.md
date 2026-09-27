@@ -1284,6 +1284,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AN AUTHENTICATED INCIDENT READ CAN NOW SURFACE DURABLE RECONCILIATION EXHAUSTION FOR HUMAN REVIEW WITHOUT IMPORTING RETRY OR CLOSURE AUTHORITY.** |
 | Next handoff | Require the API projection to validate the marker's exact exhaustion payload and closure-trace causation, failing closed on malformed, duplicate, or unbound markers. |
 
+### Strict reconciliation review evidence validation
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `26d4f2653fa5d3c168bbb643f78449eccdf91975` was one hundred and forty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | The authenticated incident read now accepts exactly one system-authored reconciliation marker only when its payload proves `EXHAUSTED_FAIL_CLOSED`, attempt budget/count `2/2`, no third attempt, and both retry and closure authority `false`. Its causation must resolve to one exact `road_event.closed` trace for the same incident and its timestamp cannot precede that closure. |
+| Fail-closed acceptance | Missing payload fields, extra payload fields, duplicate markers, mismatched incident correlation, absent or duplicate closure causation, self-causation, invalid timestamps, or non-system authorship produce a conflict response with no incident projection. |
+| Local evidence | The new negative HTTP test first failed because malformed evidence still returned `200`, then the focused HTTP and PostgreSQL harness set passed **49/49**. Build, no-emit TypeScript, **760/760** workspace tests (API 670, dashboard 46, mobile 36, domain 8), **32/32** contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests passed. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live marker-validation round trip is claimed. |
+| Safety limits | Validation only reduces accepted evidence. It grants no collection, closure, retry, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE INCIDENT READ NOW FAILS CLOSED UNLESS ONE EXACT EXHAUSTION MARKER IS BOUND TO ONE EXACT COMMITTED CLOSURE TRACE.** |
+| Next handoff | Consume the validated reconciliation state in the operations dashboard, render an explicit human-review banner, and block every critical control without synthesizing a retry path. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
