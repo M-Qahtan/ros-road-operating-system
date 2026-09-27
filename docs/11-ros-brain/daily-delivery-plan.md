@@ -1116,6 +1116,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **POSTGRESQL NOW HAS AN INDEPENDENT FAIL-CLOSED CONTRACT THAT REJECTS CROSS-INCIDENT OR OTHERWISE FORGED HIGH-RISK CLOSURE CAUSATION.** |
 | Next handoff | Add the forged cross-incident insert to the restartable PostgreSQL journey and capture a live rollback receipt proving SQLSTATE `23514`, without weakening REL-013 or using AWS. |
 
+### Restartable cross-incident causation rejection proof
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `22b014a5179c92a58f823e6fb62add2c8241dcfe` was one hundred and twenty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch pull request or overlapping local execution. Both integration documents remained present. The unrelated unstaged edit to `.github/workflows/operational-readiness.yml` remained excluded. The approved cadence remains hourly. |
+| Added behavior | The restartable PostgreSQL journey now inserts one valid high-risk authorization audit for incident A, attempts to consume its trace as the cause of a closure audit for incident B, and withholds the receipt unless PostgreSQL rejects the forged insert with SQLSTATE `23514`. |
+| Atomic acceptance | The proof queries the durable audit write set after rejection and accepts only one authorization row plus zero forged closure rows. The local receipt is extended with the rejection, SQLSTATE, and `AUTHORIZATION_ONLY` write-set disposition, and its manifest binds the proof script. |
+| Local evidence | The new harness contract first failed because the proof script was absent, then passed after implementation. Bash syntax, build, no-emit TypeScript, **757/757** workspace tests (API 667, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks passed. The restartable PostgreSQL journey stopped before execution with exit `127` because neither Docker nor Podman is installed, so no live SQLSTATE receipt is claimed. |
+| Safety limits | Static and shell-contract evidence does not prove trigger execution against PostgreSQL. The fixture grants no closure or activation authority, creates no cloud resource, and is not REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE RESTARTABLE JOURNEY NOW REQUIRES A LIVE `23514` REJECTION AND AN AUTHORIZATION-ONLY WRITE SET BEFORE IT CAN EMIT A PASS RECEIPT.** |
+| Next handoff | Add a same-incident positive control that consumes the exact authorization once, while preserving the forged rejection, then prove both outcomes and restart durability on an available PostgreSQL engine. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

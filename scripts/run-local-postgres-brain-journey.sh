@@ -15,7 +15,7 @@ if [[ -z "$container_engine" ]]; then
   exit 127
 fi
 
-for required_command in git mktemp node seq sha256sum sleep; do
+for required_command in git grep mktemp node seq sha256sum sleep; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "Required local receipt tool '$required_command' is unavailable; no PostgreSQL journey was executed" >&2
     exit 127
@@ -39,6 +39,7 @@ readonly journey_manifest_sha256="$(
     scripts/run-postgres-closure-authorization-read.sh \
     scripts/run-postgres-closure-reauthorization-recovery.sh \
     scripts/run-postgres-closure-reauthorization-finalize.sh \
+    scripts/run-postgres-audit-lineage-guard.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -55,6 +56,7 @@ readonly cognitive_closure_recovery_proof_file="$(mktemp)"
 readonly closure_authorization_read_proof_file="$(mktemp)"
 readonly closure_reauthorization_proof_file="$(mktemp)"
 readonly closure_reauthorization_finalize_proof_file="$(mktemp)"
+readonly audit_lineage_proof_file="$(mktemp)"
 readonly post_restart_duplicate_log="$(mktemp)"
 readonly post_restart_wrong_purpose_log="$(mktemp)"
 readonly post_restart_wrong_tenant_log="$(mktemp)"
@@ -72,6 +74,7 @@ cleanup() {
   rm -f "$closure_authorization_read_proof_file"
   rm -f "$closure_reauthorization_proof_file"
   rm -f "$closure_reauthorization_finalize_proof_file"
+  rm -f "$audit_lineage_proof_file"
   rm -f "$post_restart_duplicate_log"
   rm -f "$post_restart_wrong_purpose_log"
   rm -f "$post_restart_wrong_tenant_log"
@@ -122,6 +125,20 @@ export ROS_POSTGRES_CLOSURE_RACE_PROOF_FILE="$closure_race_proof_file"
 export ROS_POSTGRES_CONTACT_CLOSURE_RACE_PROOF_FILE="$contact_closure_race_proof_file"
 export ROS_POSTGRES_COGNITIVE_CLOSURE_PROOF_FILE="$cognitive_closure_proof_file"
 bash scripts/run-postgres-integration.sh
+
+export ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE="$audit_lineage_proof_file"
+bash scripts/run-postgres-audit-lineage-guard.sh
+mapfile -t audit_lineage_proof < "$audit_lineage_proof_file"
+if [[ "${#audit_lineage_proof[@]}" -ne 6 \
+  || "${audit_lineage_proof[0]}" != "CROSS_INCIDENT_CAUSATION" \
+  || "${audit_lineage_proof[1]}" != "REJECTED" \
+  || "${audit_lineage_proof[2]}" != "SQLSTATE" \
+  || "${audit_lineage_proof[3]}" != "23514" \
+  || "${audit_lineage_proof[4]}" != "AUDIT_WRITE_SET" \
+  || "${audit_lineage_proof[5]}" != "AUTHORIZATION_ONLY" ]]; then
+  echo "PostgreSQL journey passed without an exact cross-incident audit-lineage rejection proof" >&2
+  exit 2
+fi
 
 mapfile -t restart_proof < "$restart_proof_file"
 if [[ "${#restart_proof[@]}" -ne 4 ]]; then
@@ -975,6 +992,9 @@ ROS_RECEIPT_CLOSURE_FINALIZATION_STATE_BEFORE_RESTART="$closure_finalization_sta
 ROS_RECEIPT_CLOSURE_FINALIZATION_STATE_AFTER_RESTART="$closure_finalization_state_after_restart" \
 ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_BEFORE="$closure_finalization_postmaster_started_at_before_restart" \
 ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_AFTER="$closure_finalization_postmaster_started_at_after_restart" \
+ROS_RECEIPT_CROSS_INCIDENT_CAUSATION="${audit_lineage_proof[1]}" \
+ROS_RECEIPT_CROSS_INCIDENT_SQLSTATE="${audit_lineage_proof[3]}" \
+ROS_RECEIPT_CROSS_INCIDENT_AUDIT_WRITE_SET="${audit_lineage_proof[5]}" \
 node -e '
   const receipt = {
     schemaVersion: "ros-brain.local-postgres-journey-receipt.v33",
@@ -1133,6 +1153,13 @@ node -e '
       process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_BEFORE,
     terminalClosurePostmasterStartedAtAfterRestart:
       process.env.ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_AFTER,
+    auditLineageGuardVerified: true,
+    crossIncidentCausation:
+      process.env.ROS_RECEIPT_CROSS_INCIDENT_CAUSATION,
+    crossIncidentSqlstate:
+      process.env.ROS_RECEIPT_CROSS_INCIDENT_SQLSTATE,
+    crossIncidentAuditWriteSet:
+      process.env.ROS_RECEIPT_CROSS_INCIDENT_AUDIT_WRITE_SET,
     result: "PASS",
     externalArchiveReceipt: null,
   };

@@ -20,6 +20,26 @@ const closureReauthorizationFinalize = readFileSync(
   'scripts/run-postgres-closure-reauthorization-finalize.sh',
   'utf8',
 );
+const auditLineageGuard = readFileSync(
+  'scripts/run-postgres-audit-lineage-guard.sh',
+  'utf8',
+);
+
+test('restartable journey proves cross-incident audit causation fails closed', () => {
+  assert.match(auditLineageGuard, /road_event\.closure_authorized/);
+  assert.match(auditLineageGuard, /road_event\.closed/);
+  assert.match(auditLineageGuard, /30000000-0000-4000-8000-000000000001/);
+  assert.match(auditLineageGuard, /30000000-0000-4000-8000-000000000002/);
+  assert.match(auditLineageGuard, /\\set VERBOSITY verbose/);
+  assert.match(auditLineageGuard, /23514/);
+  assert.match(auditLineageGuard, /AUTHORIZATION_ONLY/);
+  assert.match(localHarness, /scripts\/run-postgres-audit-lineage-guard\.sh/);
+  assert.match(localHarness, /ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE/);
+  assert.match(localHarness, /auditLineageGuardVerified: true/);
+  assert.match(localHarness, /crossIncidentCausation/);
+  assert.match(localHarness, /crossIncidentSqlstate/);
+  assert.match(localHarness, /crossIncidentAuditWriteSet/);
+});
 
 test('PostgreSQL integration runner fails explicitly before claiming an unexecuted test', () => {
   assert.match(runner, /command -v "\$required_command"/);
