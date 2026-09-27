@@ -70,6 +70,59 @@ test('validated exhausted reconciliation requires human review and exposes no cr
   assert.deepEqual(paths.filter((path) => path.startsWith('POST')), []);
 });
 
+test('authenticated exhaustion refresh discards a prior ambiguous critical operation without replay', async () => {
+  let incident: RoadEventResponse = {
+    id: '48484848-4848-4848-8848-484848484848',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-09-27T06:00:00.000Z', version: 14, closureAuthorization: null,
+    reconciliation: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization')) {
+      mutationRequests += 1;
+      throw new TypeError('connection reset after send');
+    }
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${incident.id}`) return ok(incident);
+    return ok({ items: [incident], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-27T06:01:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(incident.id);
+  await assert.rejects(
+    () => controller.authorizeClosure('الأمر الأصلي الحرج'),
+    /تعذر التحقق من نتيجة الإجراء/
+  );
+  assert.equal(controller.ambiguousCriticalActionView()?.status, 'REFRESH_REQUIRED');
+  assert.equal(mutationRequests, 1);
+
+  incident = { ...incident, reconciliation: {
+    state: 'HUMAN_REVIEW_REQUIRED', automaticRetryAuthorized: false, closureAuthorized: false
+  } };
+  await controller.select(incident.id);
+  const html = renderDashboard(controller.state, {
+    canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(),
+    ambiguousCriticalAction: controller.ambiguousCriticalActionView(),
+    now: new Date('2026-09-27T06:01:00.000Z')
+  });
+
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(controller.canRetryAmbiguousCriticalAction(), false);
+  assert.doesNotMatch(html, /إجراء حرج بنتيجة غير مؤكدة|الأمر الأصلي الحرج|retry-critical-action-button|verify-critical-action-button/);
+  assert.match(html, /استنفدت محاولات المصالحة الآلية/);
+  await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
+  assert.equal(mutationRequests, 1);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

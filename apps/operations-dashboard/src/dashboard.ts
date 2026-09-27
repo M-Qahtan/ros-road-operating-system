@@ -132,6 +132,10 @@ export class OperationsDashboardController {
       const [selected, timeline] = await Promise.all([this.gateway.getById(id), this.gateway.timeline(id)]);
       if (intent !== this.readIntent) return this.current;
       assertTerminalTimelineConsistency(selected, timeline);
+      if (requiresHumanReconciliationReview(selected)
+        && this.ambiguousCriticalOperation?.incidentId === selected.id) {
+        this.ambiguousCriticalOperation = null;
+      }
       this.current = {
         ...this.current,
         phase: 'ready',

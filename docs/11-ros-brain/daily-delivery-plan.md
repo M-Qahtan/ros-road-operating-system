@@ -1308,6 +1308,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A VALIDATED RECONCILIATION EXHAUSTION STATE IS NOW VISIBLE TO THE HUMAN OPERATOR AND FAILS CLOSED ACROSS EVERY DASHBOARD CRITICAL CONTROL.** |
 | Next handoff | Prove that an authenticated refresh which discovers reconciliation exhaustion invalidates any previously ambiguous critical operation and cannot expose or replay its original command. |
 
+### Reconciliation exhaustion invalidates ambiguous browser commands
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `744ac0e5b71e616594063d76eed25133b5088627` was one hundred and forty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | When an authenticated incident refresh discovers `HUMAN_REVIEW_REQUIRED`, the dashboard now destroys any ambiguous critical-operation identity belonging to that exact incident before publishing the refreshed state. The original action type, expected revision, reason, and replay control no longer remain available to the view or controller. |
+| Isolation and fail-closed acceptance | Exhaustion for one incident does not erase state attributed to another incident. For the bound incident, retry eligibility is false, the ambiguity panel is absent, direct retry reports that no ambiguous operation exists, and the gateway receives no second mutation. |
+| Local evidence | The new authenticated browser test first failed because the operation survived as `INVALIDATED`, then the focused dashboard suite passed **48/48**. Build, no-emit TypeScript, **762/762** workspace tests (API 670, dashboard 48, mobile 36, domain 8), **32/32** contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests passed. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live reconciliation round trip is claimed. |
+| Safety limits | This change only destroys browser-held command capability after authoritative exhaustion. It grants no collection, retry, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **AUTHENTICATED EXHAUSTION NOW REMOVES THE PREVIOUS AMBIGUOUS COMMAND INSTEAD OF LEAVING A DISABLED BUT INSPECTABLE REPLAY IDENTITY.** |
+| Next handoff | Require the authenticated dashboard detail boundary to reject a missing or malformed reconciliation field, preventing response-field omission from downgrading a human-review lock to ordinary control eligibility. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
