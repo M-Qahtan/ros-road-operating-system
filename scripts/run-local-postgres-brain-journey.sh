@@ -492,7 +492,7 @@ fi
 export ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE="$audit_lineage_ambiguous_proof_file"
 bash scripts/run-postgres-audit-lineage-ambiguous-commit.sh
 mapfile -t audit_lineage_ambiguous_proof < "$audit_lineage_ambiguous_proof_file"
-if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 34 \
+if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 40 \
   || "${audit_lineage_ambiguous_proof[0]}" != "POST_COMMIT_RESULT" \
   || "${audit_lineage_ambiguous_proof[1]}" != "AMBIGUOUS" \
   || "${audit_lineage_ambiguous_proof[2]}" != "CLIENT_ACK" \
@@ -521,13 +521,19 @@ if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 34 \
   || "${audit_lineage_ambiguous_proof[24]}" != "POST_RESTART_FAIL_CLOSED_STATE" \
   || "${audit_lineage_ambiguous_proof[25]}" != "1|1|1|1" \
   || "${audit_lineage_ambiguous_proof[26]}" != "POST_RESTART_EXPLICIT_RETRY" \
-  || "${audit_lineage_ambiguous_proof[27]}" != "COMMITTED_TRACE_FOUND" \
+  || "${audit_lineage_ambiguous_proof[27]}" != "INTERRUPTED" \
   || "${audit_lineage_ambiguous_proof[28]}" != "POST_RESTART_EXPLICIT_RETRY_COUNT" \
   || "${audit_lineage_ambiguous_proof[29]}" != "1" \
-  || "${audit_lineage_ambiguous_proof[30]}" != "POST_RESTART_REPLAY" \
-  || "${audit_lineage_ambiguous_proof[31]}" != "NOT_ATTEMPTED" \
-  || "${audit_lineage_ambiguous_proof[32]}" != "STATE_AFTER_RESTART" \
-  || "${audit_lineage_ambiguous_proof[33]}" != "1|1|1|1" ]]; then
+  || "${audit_lineage_ambiguous_proof[30]}" != "POST_RESTART_INTERRUPTED_RETRY" \
+  || "${audit_lineage_ambiguous_proof[31]}" != "AMBIGUOUS" \
+  || "${audit_lineage_ambiguous_proof[32]}" != "POST_RESTART_RECOVERY_READ" \
+  || "${audit_lineage_ambiguous_proof[33]}" != "COMMITTED_TRACE_FOUND" \
+  || "${audit_lineage_ambiguous_proof[34]}" != "POST_RESTART_RECOVERY_READ_COUNT" \
+  || "${audit_lineage_ambiguous_proof[35]}" != "1" \
+  || "${audit_lineage_ambiguous_proof[36]}" != "POST_RESTART_REPLAY" \
+  || "${audit_lineage_ambiguous_proof[37]}" != "NOT_ATTEMPTED" \
+  || "${audit_lineage_ambiguous_proof[38]}" != "STATE_AFTER_RESTART" \
+  || "${audit_lineage_ambiguous_proof[39]}" != "1|1|1|1" ]]; then
   echo "PostgreSQL journey passed without exact restartable post-commit ambiguity reconciliation proof" >&2
   exit 2
 fi
@@ -1211,8 +1217,11 @@ ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_FAILURE_SQLSTATE="${audit_lineage_a
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_FAIL_CLOSED_STATE="${audit_lineage_ambiguous_proof[25]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_EXPLICIT_RETRY="${audit_lineage_ambiguous_proof[27]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_EXPLICIT_RETRY_COUNT="${audit_lineage_ambiguous_proof[29]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[31]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[33]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_INTERRUPTED_RETRY="${audit_lineage_ambiguous_proof[31]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ="${audit_lineage_ambiguous_proof[33]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ_COUNT="${audit_lineage_ambiguous_proof[35]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[37]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[39]}" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1461,6 +1470,12 @@ node -e '
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_EXPLICIT_RETRY,
     causationAmbiguousPostRestartExplicitRetryCount:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_EXPLICIT_RETRY_COUNT,
+    causationAmbiguousPostRestartInterruptedRetry:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_INTERRUPTED_RETRY,
+    causationAmbiguousPostRestartRecoveryRead:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ,
+    causationAmbiguousPostRestartRecoveryReadCount:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ_COUNT,
     causationAmbiguousPostRestartReplay:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY,
     causationAmbiguousStateAfterRestart:

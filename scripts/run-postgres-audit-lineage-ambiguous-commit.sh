@@ -23,13 +23,18 @@ readonly authorization_trace_id='60000000-0000-4000-8000-000000000004'
 readonly closure_trace_id='60000000-0000-4000-8000-000000000005'
 readonly ambiguous_client_log="$(mktemp)"
 readonly post_restart_reconciliation_log="$(mktemp)"
+readonly reconciliation_retry_log="$(mktemp)"
 ambiguous_pid=''
+reconciliation_retry_pid=''
 
 cleanup() {
   if [[ -n "$ambiguous_pid" ]]; then
     kill -- "$ambiguous_pid" >/dev/null 2>&1 || true
   fi
-  rm -f "$ambiguous_client_log" "$post_restart_reconciliation_log"
+  if [[ -n "$reconciliation_retry_pid" ]]; then
+    kill -- "$reconciliation_retry_pid" >/dev/null 2>&1 || true
+  fi
+  rm -f "$ambiguous_client_log" "$post_restart_reconciliation_log" "$reconciliation_retry_log"
 }
 trap cleanup EXIT
 
@@ -179,6 +184,50 @@ fi
 
 post_restart_explicit_retry_count=0
 post_restart_explicit_retry_count=$((post_restart_explicit_retry_count + 1))
+readonly reconciliation_retry_database_url="${DATABASE_URL}?application_name=ros-causation-reconciliation-retry"
+set +e
+psql "$reconciliation_retry_database_url" -v ON_ERROR_STOP=1 -At >"$reconciliation_retry_log" 2>&1 <<SQL &
+SELECT CASE WHEN count(*)=1 THEN 'COMMITTED_TRACE_FOUND' ELSE 'COMMITTED_TRACE_NOT_UNIQUE' END FROM audit_logs WHERE trace_id='$closure_trace_id' AND action='road_event.closed' AND resource_type='RoadEvent' AND resource_id='$authorization_event_id' AND correlation_id='$authorization_event_id' AND causation_id='$authorization_trace_id';
+SELECT pg_sleep(30);
+SQL
+reconciliation_retry_pid=$!
+set -e
+
+reconciliation_retry_hold=false
+for _attempt in $(seq 1 100); do
+  if [[ "$(psql "$DATABASE_URL" -Atqc "SELECT count(*) FROM pg_stat_activity WHERE application_name='ros-causation-reconciliation-retry' AND state='active' AND query LIKE '%pg_sleep%'")" == '1' ]]; then
+    reconciliation_retry_hold=true
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$reconciliation_retry_hold" != true ]]; then
+  echo "Explicit reconciliation retry never reached its interruptible read hold" >&2
+  exit 2
+fi
+
+kill "$reconciliation_retry_pid"
+set +e
+wait "$reconciliation_retry_pid"
+readonly reconciliation_retry_status=$?
+set -e
+reconciliation_retry_pid=''
+if [[ "$reconciliation_retry_status" -eq 0 ]]; then
+  echo "Interrupted reconciliation retry unexpectedly completed successfully" >&2
+  exit 2
+fi
+
+readonly state_after_interrupted_retry="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$closure_trace_id') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
+)"
+if [[ "$state_after_interrupted_retry" != "$state_after_reconciliation" ]]; then
+  echo "Interrupted reconciliation retry changed the committed closure: $state_after_interrupted_retry" >&2
+  exit 2
+fi
+
+post_restart_recovery_read_count=0
+post_restart_recovery_read_count=$((post_restart_recovery_read_count + 1))
 readonly post_restart_reconciliation_result="$(
   psql "$DATABASE_URL" -Atqc \
     "SELECT CASE WHEN count(*)=1 THEN 'COMMITTED_TRACE_FOUND' ELSE 'COMMITTED_TRACE_NOT_UNIQUE' END FROM audit_logs WHERE trace_id='$closure_trace_id' AND action='road_event.closed' AND resource_type='RoadEvent' AND resource_id='$authorization_event_id' AND correlation_id='$authorization_event_id' AND causation_id='$authorization_trace_id'"
@@ -188,6 +237,7 @@ readonly state_after_restart="$(
     "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$closure_trace_id') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
 )"
 if [[ "$post_restart_explicit_retry_count" -ne 1 \
+  || "$post_restart_recovery_read_count" -ne 1 \
   || "$post_restart_reconciliation_result" != 'COMMITTED_TRACE_FOUND' \
   || "$state_after_restart" != "$state_after_reconciliation" ]]; then
   echo "Restarted read-only reconciliation did not preserve one exact committed closure: $state_after_restart" >&2
@@ -222,9 +272,15 @@ printf '%s\n' \
   'POST_RESTART_FAIL_CLOSED_STATE' \
   "$post_restart_fail_closed_state" \
   'POST_RESTART_EXPLICIT_RETRY' \
-  "$post_restart_reconciliation_result" \
+  'INTERRUPTED' \
   'POST_RESTART_EXPLICIT_RETRY_COUNT' \
   "$post_restart_explicit_retry_count" \
+  'POST_RESTART_INTERRUPTED_RETRY' \
+  'AMBIGUOUS' \
+  'POST_RESTART_RECOVERY_READ' \
+  "$post_restart_reconciliation_result" \
+  'POST_RESTART_RECOVERY_READ_COUNT' \
+  "$post_restart_recovery_read_count" \
   'POST_RESTART_REPLAY' \
   'NOT_ATTEMPTED' \
   'STATE_AFTER_RESTART' \

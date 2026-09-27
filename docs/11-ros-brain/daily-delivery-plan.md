@@ -1236,6 +1236,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS A FAILED POST-RESTART READ STAYS CLOSED AND ONE EXPLICIT READ RETRY RECOVERS THE SAME TRACE WITHOUT MUTATION REPLAY.** |
 | Next handoff | Interrupt the explicit reconciliation retry itself after it begins, then prove a later authenticated read can recover the same trace without accumulating retries or mutation authority. |
 
+### Interrupted reconciliation retry recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `10c0b93c439c23a929e93d2af233369aec25309e` was one hundred and thirty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | After the fail-closed timeout, the fixture starts one named read-only reconciliation retry, waits until its trace lookup has begun and the session is held, then cuts the client. A later explicit recovery read queries the same exact trace once; neither path issues the closure mutation. |
+| Recovery acceptance | The interrupted retry must exit non-success and leave causal state `1|1|1|1`. Its attempt count and the later recovery-read count must each equal one, the recovery must return `COMMITTED_TRACE_FOUND`, final state must remain `1|1|1|1`, and `REPLAY` must stay `NOT_ATTEMPTED`. |
+| Local evidence | The focused harness failed first because the named interruptible retry and recovery receipt bindings were absent, then passed **41/41** after implementation. The integrated candidate passed build and TypeScript checks plus **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** contract tests, repository and staging-composition verification, archive conditional-write and retention checks, negative evidence gates, and **8/8** external-evidence tests. The live journey exited `127` because neither Docker nor Podman is available; no live PostgreSQL interruption or recovery result is claimed. |
+| Safety limits | Both attempts are SELECT-only and operate on fixed synthetic identifiers in the ephemeral local fixture. They grant no collection, closure, control, dispatch, operational, or activation authority, create no cloud resource, and do not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS AN INTERRUPTED RECONCILIATION READ REMAINS NON-MUTATING AND ONE LATER READ RECOVERS THE SAME TRACE.** |
+| Next handoff | Restart PostgreSQL while the reconciliation retry is held, then prove recovery under postmaster replacement without replay or duplicate read loops. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
