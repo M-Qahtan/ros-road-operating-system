@@ -1152,6 +1152,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A HIGH-RISK HUMAN AUTHORIZATION TRACE CAN BE CONSUMED BY AT MOST ONE CLOSURE AUDIT AT THE DATABASE BOUNDARY.** |
 | Next handoff | Prove a concurrent two-closure race against one authorization trace has exactly one database winner and one `23505` loser, with the same durable state after restart. |
 
+### Concurrent single-use causation race
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `df9fd85d09890a2383ce701d7914adaf5128386f` was one hundred and twenty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base; both integration documents remained present, with no branch pull request, candidate workflow run, or overlapping local execution. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | The PostgreSQL lineage fixture now launches two independent closure transactions against one human-authorization cause. Each attempts a distinct closure trace; the transaction that acquires the unique cause holds it through a short overlap window, while the competing transaction must wait for resolution and fail with `23505`. |
+| Atomic acceptance | The fixture accepts only complementary process results: exactly one exit `0`, exactly one nonzero exit containing SQLSTATE `23505`, one durable closure consuming the cause, and no forged cross-incident closure. The journey consumes an explicit `ONE_ACCEPTED_ONE_REJECTED` proof and requires the same `1|1|0|1` state after restart. |
+| Local evidence | The harness contract failed first because no concurrent-process or race receipt markers existed, then passed **41/41** after implementation. Bash syntax, build, no-emit TypeScript, **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks passed. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live contention or SQLSTATE result is claimed. |
+| Safety limits | The fixture affects audit evidence only and grants no collection, closure, control, dispatch, operational, or activation authority. It creates no cloud resource and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE RESTARTABLE JOURNEY NOW REQUIRES ONE DATABASE WINNER AND ONE `23505` LOSER FOR CONCURRENT CONSUMPTION OF A SINGLE HUMAN AUTHORIZATION CAUSE.** |
+| Next handoff | Record the exact winning and losing closure trace identities, then require the same winner and absent loser after restart rather than relying only on aggregate counts. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

@@ -38,6 +38,21 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(auditLineageGuard, /AUTHORIZATION_AND_CLOSURE/);
   assert.match(auditLineageGuard, /DUPLICATE_CAUSATION/);
   assert.match(auditLineageGuard, /23505/);
+  assert.match(auditLineageGuard, /CONCURRENT_CAUSATION_RACE/);
+  assert.match(auditLineageGuard, /ONE_ACCEPTED_ONE_REJECTED/);
+  assert.match(auditLineageGuard, /first_racer_pid=\$!/);
+  assert.match(auditLineageGuard, /second_racer_pid=\$!/);
+  assert.match(auditLineageGuard, /wait "\$first_racer_pid"/);
+  assert.match(auditLineageGuard, /wait "\$second_racer_pid"/);
+  assert.ok(
+    auditLineageGuard.indexOf("'road_event.closure_authorized'") <
+      auditLineageGuard.indexOf('run_closure_racer()'),
+  );
+  assert.ok(
+    auditLineageGuard.indexOf('Forged cross-incident closure must fail') <
+      auditLineageGuard.indexOf('run_closure_racer()'),
+  );
+  assert.ok(auditLineageGuard.indexOf('SELECT pg_sleep(0.25)') < auditLineageGuard.indexOf('COMMIT;'));
   assert.match(localHarness, /scripts\/run-postgres-audit-lineage-guard\.sh/);
   assert.match(localHarness, /ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE/);
   assert.match(localHarness, /auditLineageGuardVerified: true/);
@@ -47,6 +62,8 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /sameIncidentCausation/);
   assert.match(localHarness, /duplicateCausation/);
   assert.match(localHarness, /duplicateCausationSqlstate/);
+  assert.match(localHarness, /concurrentCausationRace/);
+  assert.match(localHarness, /concurrentCausationLoserSqlstate/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);
   assert.match(localHarness, /auditLineageStateBeforeRestart/);
   assert.match(localHarness, /auditLineageStateAfterRestart/);
