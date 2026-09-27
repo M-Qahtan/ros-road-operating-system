@@ -125,6 +125,13 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(auditLineageAmbiguousCommit, /RECONCILIATION_RETRY_CLUSTER_IDENTITY/);
   assert.match(auditLineageAmbiguousCommit, /RECONCILIATION_RETRY_POSTMASTER/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_INTERRUPTED_RETRY/);
+  assert.match(auditLineageAmbiguousCommit, /ros-causation-bounded-recovery/);
+  assert.match(auditLineageAmbiguousCommit, /AUTO_RECONCILIATION_ATTEMPT_BUDGET/);
+  assert.match(auditLineageAmbiguousCommit, /AUTO_RECONCILIATION_ATTEMPT_COUNT/);
+  assert.match(auditLineageAmbiguousCommit, /SECOND_AUTOMATIC_RECONCILIATION/);
+  assert.match(auditLineageAmbiguousCommit, /THIRD_AUTOMATIC_RECONCILIATION/);
+  assert.match(auditLineageAmbiguousCommit, /EXHAUSTED_FAIL_CLOSED/);
+  assert.match(auditLineageAmbiguousCommit, /STATE_AFTER_BUDGET_EXHAUSTION/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_RECOVERY_READ/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_RECOVERY_READ_COUNT/);
   assert.ok(
@@ -170,6 +177,10 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /causationAmbiguousPostRestartExplicitRetryCount/);
   assert.match(localHarness, /causationAmbiguousPostRestartInterruptedRetry/);
   assert.match(localHarness, /causationAmbiguousReconciliationRetryRestartVerified/);
+  assert.match(localHarness, /causationAmbiguousAutomaticRetryBudget/);
+  assert.match(localHarness, /causationAmbiguousAutomaticRetryCount/);
+  assert.match(localHarness, /causationAmbiguousThirdAutomaticAttempt/);
+  assert.match(localHarness, /causationAmbiguousAutomaticRetryDisposition/);
   assert.match(localHarness, /causationAmbiguousPostRestartRecoveryReadCount/);
   assert.match(localHarness, /causationAmbiguousPostRestartReplay/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);

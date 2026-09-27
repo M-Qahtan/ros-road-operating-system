@@ -24,8 +24,10 @@ readonly closure_trace_id='60000000-0000-4000-8000-000000000005'
 readonly ambiguous_client_log="$(mktemp)"
 readonly post_restart_reconciliation_log="$(mktemp)"
 readonly reconciliation_retry_log="$(mktemp)"
+readonly bounded_recovery_log="$(mktemp)"
 ambiguous_pid=''
 reconciliation_retry_pid=''
+bounded_recovery_pid=''
 
 cleanup() {
   if [[ -n "$ambiguous_pid" ]]; then
@@ -34,7 +36,10 @@ cleanup() {
   if [[ -n "$reconciliation_retry_pid" ]]; then
     kill -- "$reconciliation_retry_pid" >/dev/null 2>&1 || true
   fi
-  rm -f "$ambiguous_client_log" "$post_restart_reconciliation_log" "$reconciliation_retry_log"
+  if [[ -n "$bounded_recovery_pid" ]]; then
+    kill -- "$bounded_recovery_pid" >/dev/null 2>&1 || true
+  fi
+  rm -f "$ambiguous_client_log" "$post_restart_reconciliation_log" "$reconciliation_retry_log" "$bounded_recovery_log"
 }
 trap cleanup EXIT
 
@@ -258,6 +263,54 @@ if [[ "$state_after_interrupted_retry" != "$state_after_reconciliation" ]]; then
   exit 2
 fi
 
+readonly automatic_reconciliation_attempt_budget=2
+automatic_reconciliation_attempt_count="$post_restart_explicit_retry_count"
+automatic_reconciliation_attempt_count=$((automatic_reconciliation_attempt_count + 1))
+readonly bounded_recovery_database_url="${DATABASE_URL}?application_name=ros-causation-bounded-recovery"
+set +e
+psql "$bounded_recovery_database_url" -v ON_ERROR_STOP=1 -At >"$bounded_recovery_log" 2>&1 <<SQL &
+SELECT CASE WHEN count(*)=1 THEN 'COMMITTED_TRACE_FOUND' ELSE 'COMMITTED_TRACE_NOT_UNIQUE' END FROM audit_logs WHERE trace_id='$closure_trace_id' AND action='road_event.closed' AND resource_type='RoadEvent' AND resource_id='$authorization_event_id' AND correlation_id='$authorization_event_id' AND causation_id='$authorization_trace_id';
+SELECT pg_sleep(30);
+SQL
+bounded_recovery_pid=$!
+set -e
+
+bounded_recovery_hold=false
+for _attempt in $(seq 1 100); do
+  if [[ "$(psql "$DATABASE_URL" -Atqc "SELECT count(*) FROM pg_stat_activity WHERE application_name='ros-causation-bounded-recovery' AND state='active' AND query LIKE '%pg_sleep%'")" == '1' ]]; then
+    bounded_recovery_hold=true
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$bounded_recovery_hold" != true ]]; then
+  echo "Second automatic reconciliation attempt never reached its interruptible read hold" >&2
+  exit 2
+fi
+
+kill "$bounded_recovery_pid"
+set +e
+wait "$bounded_recovery_pid"
+readonly bounded_recovery_status=$?
+set -e
+bounded_recovery_pid=''
+if [[ "$bounded_recovery_status" -eq 0 ]]; then
+  echo "Interrupted second automatic reconciliation attempt unexpectedly completed successfully" >&2
+  exit 2
+fi
+
+readonly state_after_budget_exhaustion="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$closure_trace_id') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
+)"
+if [[ "$automatic_reconciliation_attempt_count" -ne "$automatic_reconciliation_attempt_budget" \
+  || "$state_after_budget_exhaustion" != "$state_after_reconciliation" ]]; then
+  echo "Automatic reconciliation budget did not exhaust fail-closed: $state_after_budget_exhaustion" >&2
+  exit 2
+fi
+readonly third_automatic_reconciliation_attempt='NOT_ATTEMPTED'
+readonly automatic_reconciliation_disposition='EXHAUSTED_FAIL_CLOSED'
+
 post_restart_recovery_read_count=0
 post_restart_recovery_read_count=$((post_restart_recovery_read_count + 1))
 readonly post_restart_reconciliation_result="$(
@@ -317,6 +370,18 @@ printf '%s\n' \
   "$reconciliation_retry_postmaster_started_at_after" \
   'POST_RESTART_INTERRUPTED_RETRY' \
   'AMBIGUOUS' \
+  'AUTO_RECONCILIATION_ATTEMPT_BUDGET' \
+  "$automatic_reconciliation_attempt_budget" \
+  'AUTO_RECONCILIATION_ATTEMPT_COUNT' \
+  "$automatic_reconciliation_attempt_count" \
+  'SECOND_AUTOMATIC_RECONCILIATION' \
+  'INTERRUPTED' \
+  'THIRD_AUTOMATIC_RECONCILIATION' \
+  "$third_automatic_reconciliation_attempt" \
+  'AUTO_RECONCILIATION_DISPOSITION' \
+  "$automatic_reconciliation_disposition" \
+  'STATE_AFTER_BUDGET_EXHAUSTION' \
+  "$state_after_budget_exhaustion" \
   'POST_RESTART_RECOVERY_READ' \
   "$post_restart_reconciliation_result" \
   'POST_RESTART_RECOVERY_READ_COUNT' \

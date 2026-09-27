@@ -492,7 +492,7 @@ fi
 export ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE="$audit_lineage_ambiguous_proof_file"
 bash scripts/run-postgres-audit-lineage-ambiguous-commit.sh
 mapfile -t audit_lineage_ambiguous_proof < "$audit_lineage_ambiguous_proof_file"
-if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 48 \
+if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 60 \
   || "${audit_lineage_ambiguous_proof[0]}" != "POST_COMMIT_RESULT" \
   || "${audit_lineage_ambiguous_proof[1]}" != "AMBIGUOUS" \
   || "${audit_lineage_ambiguous_proof[2]}" != "CLIENT_ACK" \
@@ -535,14 +535,26 @@ if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 48 \
   || "${audit_lineage_ambiguous_proof[35]}" == "${audit_lineage_ambiguous_proof[37]}" \
   || "${audit_lineage_ambiguous_proof[38]}" != "POST_RESTART_INTERRUPTED_RETRY" \
   || "${audit_lineage_ambiguous_proof[39]}" != "AMBIGUOUS" \
-  || "${audit_lineage_ambiguous_proof[40]}" != "POST_RESTART_RECOVERY_READ" \
-  || "${audit_lineage_ambiguous_proof[41]}" != "COMMITTED_TRACE_FOUND" \
-  || "${audit_lineage_ambiguous_proof[42]}" != "POST_RESTART_RECOVERY_READ_COUNT" \
-  || "${audit_lineage_ambiguous_proof[43]}" != "1" \
-  || "${audit_lineage_ambiguous_proof[44]}" != "POST_RESTART_REPLAY" \
-  || "${audit_lineage_ambiguous_proof[45]}" != "NOT_ATTEMPTED" \
-  || "${audit_lineage_ambiguous_proof[46]}" != "STATE_AFTER_RESTART" \
-  || "${audit_lineage_ambiguous_proof[47]}" != "1|1|1|1" ]]; then
+  || "${audit_lineage_ambiguous_proof[40]}" != "AUTO_RECONCILIATION_ATTEMPT_BUDGET" \
+  || "${audit_lineage_ambiguous_proof[41]}" != "2" \
+  || "${audit_lineage_ambiguous_proof[42]}" != "AUTO_RECONCILIATION_ATTEMPT_COUNT" \
+  || "${audit_lineage_ambiguous_proof[43]}" != "2" \
+  || "${audit_lineage_ambiguous_proof[44]}" != "SECOND_AUTOMATIC_RECONCILIATION" \
+  || "${audit_lineage_ambiguous_proof[45]}" != "INTERRUPTED" \
+  || "${audit_lineage_ambiguous_proof[46]}" != "THIRD_AUTOMATIC_RECONCILIATION" \
+  || "${audit_lineage_ambiguous_proof[47]}" != "NOT_ATTEMPTED" \
+  || "${audit_lineage_ambiguous_proof[48]}" != "AUTO_RECONCILIATION_DISPOSITION" \
+  || "${audit_lineage_ambiguous_proof[49]}" != "EXHAUSTED_FAIL_CLOSED" \
+  || "${audit_lineage_ambiguous_proof[50]}" != "STATE_AFTER_BUDGET_EXHAUSTION" \
+  || "${audit_lineage_ambiguous_proof[51]}" != "1|1|1|1" \
+  || "${audit_lineage_ambiguous_proof[52]}" != "POST_RESTART_RECOVERY_READ" \
+  || "${audit_lineage_ambiguous_proof[53]}" != "COMMITTED_TRACE_FOUND" \
+  || "${audit_lineage_ambiguous_proof[54]}" != "POST_RESTART_RECOVERY_READ_COUNT" \
+  || "${audit_lineage_ambiguous_proof[55]}" != "1" \
+  || "${audit_lineage_ambiguous_proof[56]}" != "POST_RESTART_REPLAY" \
+  || "${audit_lineage_ambiguous_proof[57]}" != "NOT_ATTEMPTED" \
+  || "${audit_lineage_ambiguous_proof[58]}" != "STATE_AFTER_RESTART" \
+  || "${audit_lineage_ambiguous_proof[59]}" != "1|1|1|1" ]]; then
   echo "PostgreSQL journey passed without exact restartable post-commit ambiguity reconciliation proof" >&2
   exit 2
 fi
@@ -1231,10 +1243,16 @@ ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER="${audit_lineage_ambiguous_proo
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER_BEFORE="${audit_lineage_ambiguous_proof[35]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_RETRY_POSTMASTER_AFTER="${audit_lineage_ambiguous_proof[37]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_INTERRUPTED_RETRY="${audit_lineage_ambiguous_proof[39]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ="${audit_lineage_ambiguous_proof[41]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ_COUNT="${audit_lineage_ambiguous_proof[43]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[45]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[47]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_BUDGET="${audit_lineage_ambiguous_proof[41]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_COUNT="${audit_lineage_ambiguous_proof[43]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_SECOND_AUTO_ATTEMPT="${audit_lineage_ambiguous_proof[45]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_THIRD_AUTO_ATTEMPT="${audit_lineage_ambiguous_proof[47]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_DISPOSITION="${audit_lineage_ambiguous_proof[49]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_BUDGET="${audit_lineage_ambiguous_proof[51]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ="${audit_lineage_ambiguous_proof[53]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ_COUNT="${audit_lineage_ambiguous_proof[55]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[57]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[59]}" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1494,6 +1512,18 @@ node -e '
     causationAmbiguousReconciliationRetryRestartVerified: true,
     causationAmbiguousPostRestartInterruptedRetry:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_INTERRUPTED_RETRY,
+    causationAmbiguousAutomaticRetryBudget:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_BUDGET,
+    causationAmbiguousAutomaticRetryCount:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_COUNT,
+    causationAmbiguousSecondAutomaticAttempt:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_SECOND_AUTO_ATTEMPT,
+    causationAmbiguousThirdAutomaticAttempt:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_THIRD_AUTO_ATTEMPT,
+    causationAmbiguousAutomaticRetryDisposition:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_DISPOSITION,
+    causationAmbiguousStateAfterBudgetExhaustion:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_BUDGET,
     causationAmbiguousPostRestartRecoveryRead:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ,
     causationAmbiguousPostRestartRecoveryReadCount:

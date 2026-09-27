@@ -1260,6 +1260,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS A POSTMASTER REPLACEMENT INTERRUPTS THE HELD RETRY AND ONE BOUNDED READ RECOVERS THE SAME TRACE WITHOUT REPLAY.** |
 | Next handoff | Interrupt the bounded recovery read again and prove retry-budget exhaustion remains fail-closed with no third automatic read or closure replay. |
 
+### Bounded reconciliation exhaustion
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `ced8023e4004ce3062377a33dc950d9371c0bd07` was one hundred and thirty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | After the postmaster interrupts the first automatic trace read, the fixture starts one second named read-only attempt and interrupts it after the exact lookup begins. A fixed budget of two then records `EXHAUSTED_FAIL_CLOSED`, explicitly leaves the third automatic attempt `NOT_ATTEMPTED`, and permits one separate authenticated database read to recover the trace. |
+| Recovery acceptance | Automatic attempt budget and count must both equal two; the second attempt must be interrupted, the third must not start, and causal state must remain `1|1|1|1` at exhaustion. One later explicit recovery read must return `COMMITTED_TRACE_FOUND`, its count must equal one, and closure replay must remain `NOT_ATTEMPTED`. |
+| Local evidence | The focused harness failed first because bounded exhaustion evidence was absent, then passed **41/41** after implementation. The integrated candidate passed build and TypeScript checks plus **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** contract tests, repository and staging-composition verification, archive conditional-write and retention checks, negative evidence gates, and **8/8** external-evidence tests. The live journey exited `127` because neither Docker nor Podman is available; no live PostgreSQL exhaustion or recovery result is claimed. |
+| Safety limits | Every added attempt is SELECT-only and uses fixed synthetic identifiers in the ephemeral local fixture. Exhaustion grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS TWO INTERRUPTED AUTOMATIC READS EXHAUST THE FIXED BUDGET, BLOCK A THIRD, AND LEAVE ONLY ONE EXPLICIT READ PATH WITHOUT REPLAY.** |
+| Next handoff | Represent the exhausted reconciliation state in the API as human-review-required without granting retry or closure authority, and expose it through the authenticated incident read. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
