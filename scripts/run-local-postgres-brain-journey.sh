@@ -129,16 +129,23 @@ bash scripts/run-postgres-integration.sh
 export ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE="$audit_lineage_proof_file"
 bash scripts/run-postgres-audit-lineage-guard.sh
 mapfile -t audit_lineage_proof < "$audit_lineage_proof_file"
-if [[ "${#audit_lineage_proof[@]}" -ne 6 \
+if [[ "${#audit_lineage_proof[@]}" -ne 12 \
   || "${audit_lineage_proof[0]}" != "CROSS_INCIDENT_CAUSATION" \
   || "${audit_lineage_proof[1]}" != "REJECTED" \
   || "${audit_lineage_proof[2]}" != "SQLSTATE" \
   || "${audit_lineage_proof[3]}" != "23514" \
   || "${audit_lineage_proof[4]}" != "AUDIT_WRITE_SET" \
-  || "${audit_lineage_proof[5]}" != "AUTHORIZATION_ONLY" ]]; then
-  echo "PostgreSQL journey passed without an exact cross-incident audit-lineage rejection proof" >&2
+  || "${audit_lineage_proof[5]}" != "AUTHORIZATION_ONLY" \
+  || "${audit_lineage_proof[6]}" != "SAME_INCIDENT_CAUSATION" \
+  || "${audit_lineage_proof[7]}" != "ACCEPTED" \
+  || "${audit_lineage_proof[8]}" != "AUDIT_WRITE_SET" \
+  || "${audit_lineage_proof[9]}" != "AUTHORIZATION_AND_CLOSURE" \
+  || "${audit_lineage_proof[10]}" != "AUDIT_LINEAGE_STATE" \
+  || "${audit_lineage_proof[11]}" != "1|1|0|1" ]]; then
+  echo "PostgreSQL journey passed without exact forged-rejection and same-incident audit-lineage proofs" >&2
   exit 2
 fi
+readonly audit_lineage_state_before_restart="${audit_lineage_proof[11]}"
 
 mapfile -t restart_proof < "$restart_proof_file"
 if [[ "${#restart_proof[@]}" -ne 4 ]]; then
@@ -355,6 +362,13 @@ if [[ "$closure_finalization_system_identifier_before_restart" != "$closure_fina
   || "$closure_finalization_postmaster_started_at_before_restart" == "$closure_finalization_postmaster_started_at_after_restart" \
   || "$closure_finalization_state_after_restart" != "$closure_finalization_state_before_restart" ]]; then
   echo "Terminal closure did not survive PostgreSQL restart exactly: $closure_finalization_state_after_restart" >&2
+  exit 2
+fi
+readonly audit_lineage_state_after_restart="$(
+  psql "$DATABASE_URL" -Atqc "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='30000000-0000-4000-8000-000000000005') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='30000000-0000-4000-8000-000000000004')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='30000000-0000-4000-8000-000000000001'"
+)"
+if [[ "$audit_lineage_state_after_restart" != "$audit_lineage_state_before_restart" ]]; then
+  echo "Audit-lineage causal pair did not survive PostgreSQL restart exactly: $audit_lineage_state_after_restart" >&2
   exit 2
 fi
 readonly contact_recovery_state="$(
@@ -995,6 +1009,10 @@ ROS_RECEIPT_CLOSURE_FINALIZATION_POSTMASTER_AFTER="$closure_finalization_postmas
 ROS_RECEIPT_CROSS_INCIDENT_CAUSATION="${audit_lineage_proof[1]}" \
 ROS_RECEIPT_CROSS_INCIDENT_SQLSTATE="${audit_lineage_proof[3]}" \
 ROS_RECEIPT_CROSS_INCIDENT_AUDIT_WRITE_SET="${audit_lineage_proof[5]}" \
+ROS_RECEIPT_SAME_INCIDENT_CAUSATION="${audit_lineage_proof[7]}" \
+ROS_RECEIPT_SAME_INCIDENT_AUDIT_WRITE_SET="${audit_lineage_proof[9]}" \
+ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
+ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
   const receipt = {
     schemaVersion: "ros-brain.local-postgres-journey-receipt.v33",
@@ -1160,6 +1178,15 @@ node -e '
       process.env.ROS_RECEIPT_CROSS_INCIDENT_SQLSTATE,
     crossIncidentAuditWriteSet:
       process.env.ROS_RECEIPT_CROSS_INCIDENT_AUDIT_WRITE_SET,
+    sameIncidentCausation:
+      process.env.ROS_RECEIPT_SAME_INCIDENT_CAUSATION,
+    sameIncidentAuditWriteSet:
+      process.env.ROS_RECEIPT_SAME_INCIDENT_AUDIT_WRITE_SET,
+    auditLineageRestartVerified: true,
+    auditLineageStateBeforeRestart:
+      process.env.ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART,
+    auditLineageStateAfterRestart:
+      process.env.ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART,
     result: "PASS",
     externalArchiveReceipt: null,
   };

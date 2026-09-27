@@ -1128,6 +1128,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE RESTARTABLE JOURNEY NOW REQUIRES A LIVE `23514` REJECTION AND AN AUTHORIZATION-ONLY WRITE SET BEFORE IT CAN EMIT A PASS RECEIPT.** |
 | Next handoff | Add a same-incident positive control that consumes the exact authorization once, while preserving the forged rejection, then prove both outcomes and restart durability on an available PostgreSQL engine. |
 
+### Same-incident causation acceptance across restart
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `dfb2b459e9c1f3e82099f4cb5cfbba62a3624ec0` was one hundred and twenty-seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind, with no branch pull request, candidate workflow run, or overlapping local execution. Both integration documents remained present. The unrelated unstaged workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | After requiring the forged cross-incident cause to fail with `23514`, the restartable journey now inserts the exact same authorization snapshot and cause for incident A. The database must accept one matching closure audit, while the forged incident B closure remains absent. |
+| Restart acceptance | The journey records the exact state `1|1|0|1`: one authorization, one accepted same-incident closure, zero forged closure rows, and one closure pointing to the authorization trace. The final receipt is withheld unless this state remains byte-for-byte identical after the terminal PostgreSQL restart. |
+| Local evidence | The positive-control contract first failed because no same-incident acceptance existed, then passed after the helper, restart check, and receipt fields were added. Bash syntax, build, no-emit TypeScript, **757/757** workspace tests (API 667, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks passed. The restartable PostgreSQL journey stopped before execution with exit `127` because neither Docker nor Podman is installed, so neither live acceptance nor restart durability is claimed. |
+| Safety limits | This fixture proves audit-lineage acceptance only and does not close a real RoadEvent or grant operational authority. It creates no cloud resource and is not REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE NEXT LIVE RECEIPT MUST NOW PROVE BOTH FAIL-CLOSED CROSS-INCIDENT REJECTION AND ONE DURABLE SAME-INCIDENT CAUSAL PAIR.** |
+| Next handoff | Add a duplicate-consumption attempt for the same authorization trace and require the database to reject a second closure audit without changing the durable pair. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

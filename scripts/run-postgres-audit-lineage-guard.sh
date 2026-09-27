@@ -16,6 +16,7 @@ readonly forged_closure_event_id='30000000-0000-4000-8000-000000000002'
 readonly supervisor_id='30000000-0000-4000-8000-000000000003'
 readonly authorization_trace_id='30000000-0000-4000-8000-000000000004'
 readonly forged_closure_trace_id='30000000-0000-4000-8000-000000000005'
+readonly valid_closure_trace_id='30000000-0000-4000-8000-000000000006'
 readonly error_log="$(mktemp)"
 
 cleanup() {
@@ -72,6 +73,30 @@ if [[ "$audit_write_set" != '1|0' ]]; then
   exit 2
 fi
 
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<SQL
+INSERT INTO audit_logs (
+  actor_type, actor_id, action, resource_type, resource_id,
+  before_state, after_state, reason, trace_id, correlation_id, causation_id,
+  occurred_at
+) VALUES (
+  'SUPERVISOR', '$supervisor_id',
+  'road_event.closed', 'RoadEvent', '$authorization_event_id',
+  '{"status":"RECOVERY","version":13,"closureAuthorization":{"actorId":"$supervisor_id","reason":"Cross-incident lineage guard fixture","authorizedAt":"2026-09-27T00:00:00.000Z","sourceSnapshot":{"inputVersion":1,"snapshotDigest":"1111111111111111111111111111111111111111111111111111111111111111","policyVersion":"ros-eye.input-snapshot.v2","cognitiveRevision":1,"cognitiveDigest":"6666666666666666666666666666666666666666666666666666666666666666"}}}'::jsonb,
+  '{"status":"CLOSED","version":14,"closureAuthorization":null}'::jsonb,
+  'Exact same-incident authorization consumed', '$valid_closure_trace_id',
+  '$authorization_event_id', '$authorization_trace_id', '2026-09-27T00:00:02Z'
+);
+SQL
+
+readonly audit_lineage_state="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$forged_closure_trace_id') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
+)"
+if [[ "$audit_lineage_state" != '1|1|0|1' ]]; then
+  echo "Exact same-incident closure did not produce one durable causal pair: $audit_lineage_state" >&2
+  exit 2
+fi
+
 printf '%s\n' \
   'CROSS_INCIDENT_CAUSATION' \
   'REJECTED' \
@@ -79,4 +104,10 @@ printf '%s\n' \
   '23514' \
   'AUDIT_WRITE_SET' \
   'AUTHORIZATION_ONLY' \
+  'SAME_INCIDENT_CAUSATION' \
+  'ACCEPTED' \
+  'AUDIT_WRITE_SET' \
+  'AUTHORIZATION_AND_CLOSURE' \
+  'AUDIT_LINEAGE_STATE' \
+  "$audit_lineage_state" \
   > "$ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE"

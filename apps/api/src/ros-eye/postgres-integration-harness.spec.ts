@@ -33,12 +33,19 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(auditLineageGuard, /\\set VERBOSITY verbose/);
   assert.match(auditLineageGuard, /23514/);
   assert.match(auditLineageGuard, /AUTHORIZATION_ONLY/);
+  assert.match(auditLineageGuard, /SAME_INCIDENT_CAUSATION/);
+  assert.match(auditLineageGuard, /ACCEPTED/);
+  assert.match(auditLineageGuard, /AUTHORIZATION_AND_CLOSURE/);
   assert.match(localHarness, /scripts\/run-postgres-audit-lineage-guard\.sh/);
   assert.match(localHarness, /ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE/);
   assert.match(localHarness, /auditLineageGuardVerified: true/);
   assert.match(localHarness, /crossIncidentCausation/);
   assert.match(localHarness, /crossIncidentSqlstate/);
   assert.match(localHarness, /crossIncidentAuditWriteSet/);
+  assert.match(localHarness, /sameIncidentCausation/);
+  assert.match(localHarness, /auditLineageRestartVerified: true/);
+  assert.match(localHarness, /auditLineageStateBeforeRestart/);
+  assert.match(localHarness, /auditLineageStateAfterRestart/);
 });
 
 test('PostgreSQL integration runner fails explicitly before claiming an unexecuted test', () => {
