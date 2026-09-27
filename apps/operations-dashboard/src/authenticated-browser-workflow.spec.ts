@@ -343,6 +343,105 @@ test('session discard invalidates late coalesced recovery success or rejection w
   }
 });
 
+test('new-session retry cannot coalesce onto an obsolete recovery promise from a discarded session', async () => {
+  const incident: RoadEventResponse = {
+    id: '53535353-5353-4353-8353-535353535353',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-09-28T00:00:00.000Z', version: 14, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const oldRecoveryBarrier = barrier();
+  const oldRecoveryStarted = barrier();
+  const newRecoveryBarrier = barrier();
+  const newRecoveryStarted = barrier();
+  let detailMode: 'TRUSTED' | 'UNTRUSTED' = 'TRUSTED';
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname === `/api/v1/road-events/${incident.id}`) {
+      const readNumber = ++detailReads;
+      if (readNumber === 3) {
+        oldRecoveryStarted.release();
+        await oldRecoveryBarrier.wait;
+      }
+      if (readNumber === 5) {
+        newRecoveryStarted.release();
+        await newRecoveryBarrier.wait;
+      }
+      if (detailMode === 'TRUSTED') return ok(incident);
+      return new Response(JSON.stringify({
+        success: true,
+        data: { ...incident, internalSecret: 'must-not-cross-session-boundary' },
+        error: null,
+        traceId: 'trace-new-session-retry'
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return ok({ items: [incident], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-28T00:01:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(incident.id);
+  detailMode = 'UNTRUSTED';
+  await controller.select(incident.id);
+  assert.equal(controller.canRetrySelection(), true);
+
+  detailMode = 'TRUSTED';
+  const obsoleteRecovery = controller.retrySelection();
+  await oldRecoveryStarted.wait;
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
+
+  controller.discardBrowserSession();
+  await controller.load();
+  detailMode = 'UNTRUSTED';
+  const newFailure = await controller.select(incident.id);
+  assert.equal(newFailure.phase, 'failure');
+  assert.equal(newFailure.stale, true);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(detailReads, 4);
+  assert.equal(timelineReads, 4);
+
+  detailMode = 'TRUSTED';
+  const currentRecovery = controller.retrySelection();
+  assert.notEqual(currentRecovery, obsoleteRecovery);
+  await newRecoveryStarted.wait;
+  assert.equal(detailReads, 5);
+  assert.equal(timelineReads, 5);
+
+  oldRecoveryBarrier.release();
+  const obsoleteResult = await obsoleteRecovery;
+  assert.equal(obsoleteResult.phase, 'failure');
+  assert.equal(obsoleteResult.selected, null);
+  assert.equal(controller.state.phase, 'failure');
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.retrySelection(), currentRecovery);
+
+  newRecoveryBarrier.release();
+  const recovered = await currentRecovery;
+  assert.equal(recovered.phase, 'ready');
+  assert.equal(recovered.selected?.id, incident.id);
+  assert.equal(recovered.stale, false);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

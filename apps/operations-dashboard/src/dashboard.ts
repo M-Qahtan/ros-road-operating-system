@@ -63,6 +63,7 @@ export class OperationsDashboardController {
   };
   private failedSelectionId: string | null = null;
   private retryInFlight: Promise<DashboardState> | null = null;
+  private retryGeneration = 0;
   private criticalActionInFlight: { readonly key: string; readonly result: Promise<DashboardState> } | null = null;
   private ambiguousCriticalOperation: CriticalOperation | null = null;
   private readIntent = 0;
@@ -169,7 +170,10 @@ export class OperationsDashboardController {
     if (this.retryInFlight !== null) return this.retryInFlight;
     const id = this.failedSelectionId;
     if (id === null) throw new Error('لا توجد محاولة تحميل فاشلة لإعادتها');
-    this.retryInFlight = this.select(id).finally(() => { this.retryInFlight = null; });
+    const generation = ++this.retryGeneration;
+    this.retryInFlight = this.select(id).finally(() => {
+      if (generation === this.retryGeneration) this.retryInFlight = null;
+    });
     return this.retryInFlight;
   }
 
@@ -248,6 +252,8 @@ export class OperationsDashboardController {
 
   discardBrowserSession(): DashboardState {
     ++this.readIntent;
+    ++this.retryGeneration;
+    this.retryInFlight = null;
     this.failedSelectionId = null;
     this.ambiguousCriticalOperation = null;
     this.current = {

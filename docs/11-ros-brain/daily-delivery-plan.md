@@ -1392,6 +1392,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **SESSION DISCARD NOW HAS DIRECT EVIDENCE THAT BOTH LATE RECOVERY SUCCESS AND REJECTION ARE OBSOLETE AND CANNOT RESTORE INCIDENT OR COMMAND STATE.** |
 | Next handoff | Prove a new-session failed selection cannot coalesce onto the obsolete prior-session recovery promise while that old read remains in flight. |
 
+### Retry promise ownership is isolated across browser sessions
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-28, GitHub candidate `ee737bea4cedc349765444846c55c92074d25ee7` was one hundred and forty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | Session discard now invalidates the in-flight selection-retry owner as well as its read result. A later failed selection creates a distinct recovery promise and authenticated read pair for the current session; duplicate current-session requests still coalesce onto that new promise. |
+| Race ownership | A monotonically increasing retry generation prevents the obsolete promise's `finally` callback from clearing a newer retry. The old read may finish while the new read is pending, but it cannot repopulate state, replace the new promise, or expose a mutation path. |
+| Local evidence | The regression test first failed **51/52** because the new session received the exact obsolete promise. After the bounded controller fix, the dashboard suite passed **52/52** and proved distinct old/new promises, one current-session duplicate, ordered late completion, five detail/Timeline reads, and zero mutation requests. Build and no-emit TypeScript passed, followed by **766/766** workspace tests (API 670, dashboard 52, mobile 36, domain 8), repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | Retry ownership is process-local and read-only; it grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A RECOVERED BROWSER SESSION CAN NO LONGER INHERIT OR BE CLEARED BY AN OBSOLETE PRIOR-SESSION RECOVERY PROMISE.** |
+| Next handoff | Prove a newer failed selection for a different incident in the same session cannot coalesce onto an older incident's still-pending recovery promise. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
