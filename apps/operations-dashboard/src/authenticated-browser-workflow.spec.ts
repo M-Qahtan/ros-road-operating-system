@@ -123,6 +123,66 @@ test('authenticated exhaustion refresh discards a prior ambiguous critical opera
   assert.equal(mutationRequests, 1);
 });
 
+test('untrusted reconciliation detail discards its ambiguous command and exposes only a sanitized stale failure', async () => {
+  const incident: RoadEventResponse = {
+    id: '50505050-5050-4050-8050-505050505050',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-09-27T06:00:00.000Z', version: 14, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const secretReason = 'سبب الأمر الحرج السري';
+  let malformedDetail = false;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization')) {
+      mutationRequests += 1;
+      throw new TypeError('connection reset after send');
+    }
+    if (target.pathname.endsWith('/timeline')) return ok([]);
+    if (target.pathname === `/api/v1/road-events/${incident.id}`) {
+      if (!malformedDetail) return ok(incident);
+      return new Response(JSON.stringify({
+        success: true,
+        data: { ...incident, internalSecret: 'must-not-leak' },
+        error: null,
+        traceId: 'trace-untrusted-reconciliation'
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return ok({ items: [incident], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-27T06:01:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(incident.id);
+  await assert.rejects(() => controller.authorizeClosure(secretReason), /تعذر التحقق من نتيجة الإجراء/);
+  assert.equal(controller.ambiguousCriticalActionView()?.status, 'REFRESH_REQUIRED');
+
+  malformedDetail = true;
+  const failed = await controller.select(incident.id);
+  const html = renderDashboard(failed, {
+    canTransition: controller.canTransition(),
+    canAuthorizeClosure: controller.canAuthorizeClosure(),
+    ambiguousCriticalAction: controller.ambiguousCriticalActionView(),
+    now: new Date('2026-09-27T06:01:00.000Z')
+  });
+
+  assert.equal(failed.phase, 'failure');
+  assert.equal(failed.stale, true);
+  assert.equal(failed.selected, null);
+  assert.deepEqual(failed.timeline, []);
+  assert.match(failed.error ?? '', /تعذر التحقق من حالة المصالحة/);
+  assert.doesNotMatch(failed.error ?? '', /internalSecret|must-not-leak/);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.doesNotMatch(html, /إجراء حرج بنتيجة غير مؤكدة|تفويض الإغلاق|سبب الأمر الحرج السري/);
+  await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
+  assert.equal(mutationRequests, 1);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

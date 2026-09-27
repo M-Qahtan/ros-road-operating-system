@@ -1332,6 +1332,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A MISSING OR MALFORMED RECONCILIATION FIELD CAN NO LONGER DOWNGRADE A HUMAN-REVIEW LOCK INTO ORDINARY DASHBOARD CONTROL ELIGIBILITY.** |
 | Next handoff | When a reconciliation detail response is rejected, destroy any same-incident ambiguous command identity and expose only the sanitized stale failure, without mutation replay. |
 
+### Untrusted reconciliation response command disposal
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `c4c48294ed70067cea2e0ffcf630170f5a41afb1` was one hundred and forty-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | If the authenticated detail boundary rejects an `UNTRUSTED_RESPONSE`, the dashboard now destroys an ambiguous critical command only when it belongs to the requested incident. It publishes a sanitized `failure/stale` state with no selected detail or Timeline, no replay identity, and no second mutation. |
+| Scope boundary | Ordinary read failures retain the existing fail-closed recovery semantics, and a rejected response for another incident cannot erase an unrelated command. The disposal rule is limited to the locally validated untrusted-response code and exact incident identity. |
+| Local evidence | The new authenticated browser test first failed because the ambiguous operation remained `REFRESH_REQUIRED`, then the dashboard suite passed **50/50** after implementation. Build and no-emit TypeScript passed, followed by **764/764** workspace tests (API 670, dashboard 50, mobile 36, domain 8), repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed, so no live database round trip is claimed. |
+| Safety limits | Disposal removes browser-held capability and never creates authority. It grants no collection, retry, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **AN UNTRUSTED RECONCILIATION RESPONSE NOW LEAVES ONLY A SANITIZED STALE FAILURE AND CANNOT PRESERVE OR REPLAY THE SAME-INCIDENT CRITICAL COMMAND.** |
+| Next handoff | Prove that one explicit trusted detail retry can recover the incident after this rejection without resurrecting the disposed command or issuing another mutation. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
