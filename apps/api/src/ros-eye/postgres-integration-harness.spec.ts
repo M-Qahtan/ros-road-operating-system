@@ -36,6 +36,8 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(auditLineageGuard, /SAME_INCIDENT_CAUSATION/);
   assert.match(auditLineageGuard, /ACCEPTED/);
   assert.match(auditLineageGuard, /AUTHORIZATION_AND_CLOSURE/);
+  assert.match(auditLineageGuard, /DUPLICATE_CAUSATION/);
+  assert.match(auditLineageGuard, /23505/);
   assert.match(localHarness, /scripts\/run-postgres-audit-lineage-guard\.sh/);
   assert.match(localHarness, /ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE/);
   assert.match(localHarness, /auditLineageGuardVerified: true/);
@@ -43,6 +45,8 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /crossIncidentSqlstate/);
   assert.match(localHarness, /crossIncidentAuditWriteSet/);
   assert.match(localHarness, /sameIncidentCausation/);
+  assert.match(localHarness, /duplicateCausation/);
+  assert.match(localHarness, /duplicateCausationSqlstate/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);
   assert.match(localHarness, /auditLineageStateBeforeRestart/);
   assert.match(localHarness, /auditLineageStateAfterRestart/);

@@ -741,6 +741,21 @@ test('closure authorization journal is scoped, cognitive-bound and append-only',
   assert.match(lineageMigration, /BEFORE INSERT ON audit_logs/);
 });
 
+test('high-risk closure audit causation is consumed at most once', () => {
+  const migration = readFileSync(
+    'database/migrations/0029_road_event_audit_cause_single_use.sql',
+    'utf8',
+  );
+  assert.match(migration, /GROUP BY causation_id\s+HAVING count\(\*\) > 1/);
+  assert.match(migration, /CREATE UNIQUE INDEX audit_logs_road_event_closure_cause_once_idx/);
+  assert.match(migration, /ON audit_logs \(causation_id\)/);
+  assert.match(migration, /resource_type = 'RoadEvent'/);
+  assert.match(migration, /action = 'road_event\.closed'/);
+  assert.match(migration, /before_state -> 'closureAuthorization' IS DISTINCT FROM 'null'::jsonb/);
+  assert.match(migration, /causation_id IS NOT NULL/);
+  assert.match(migration, /no operational or activation authority/);
+});
+
 test('list scopes in SQL before filters, pagination and total count', async () => {
   const client = new FakeClient(() => ({ rows: [{ ...row(), total_count: '7' }], rowCount: 1 }));
   const repository = new PostgresRoadEventRepository(new FakePool(client));

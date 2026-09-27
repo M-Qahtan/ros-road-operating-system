@@ -17,6 +17,7 @@ readonly supervisor_id='30000000-0000-4000-8000-000000000003'
 readonly authorization_trace_id='30000000-0000-4000-8000-000000000004'
 readonly forged_closure_trace_id='30000000-0000-4000-8000-000000000005'
 readonly valid_closure_trace_id='30000000-0000-4000-8000-000000000006'
+readonly duplicate_closure_trace_id='30000000-0000-4000-8000-000000000007'
 readonly error_log="$(mktemp)"
 
 cleanup() {
@@ -88,9 +89,35 @@ INSERT INTO audit_logs (
 );
 SQL
 
+: > "$error_log"
+if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At > /dev/null 2>"$error_log" <<SQL
+\set VERBOSITY verbose
+INSERT INTO audit_logs (
+  actor_type, actor_id, action, resource_type, resource_id,
+  before_state, after_state, reason, trace_id, correlation_id, causation_id,
+  occurred_at
+) VALUES (
+  'SUPERVISOR', '$supervisor_id',
+  'road_event.closed', 'RoadEvent', '$authorization_event_id',
+  '{"status":"RECOVERY","version":13,"closureAuthorization":{"actorId":"$supervisor_id","reason":"Cross-incident lineage guard fixture","authorizedAt":"2026-09-27T00:00:00.000Z","sourceSnapshot":{"inputVersion":1,"snapshotDigest":"1111111111111111111111111111111111111111111111111111111111111111","policyVersion":"ros-eye.input-snapshot.v2","cognitiveRevision":1,"cognitiveDigest":"6666666666666666666666666666666666666666666666666666666666666666"}}}'::jsonb,
+  '{"status":"CLOSED","version":14,"closureAuthorization":null}'::jsonb,
+  'Duplicate authorization consumption must fail', '$duplicate_closure_trace_id',
+  '$authorization_event_id', '$authorization_trace_id', '2026-09-27T00:00:03Z'
+);
+SQL
+then
+  echo "Duplicate authorization consumption unexpectedly committed" >&2
+  exit 2
+fi
+
+if ! grep -Eq '(^|[^0-9])23505([^0-9]|$)' "$error_log"; then
+  echo "Duplicate authorization consumption did not return SQLSTATE 23505" >&2
+  exit 2
+fi
+
 readonly audit_lineage_state="$(
   psql "$DATABASE_URL" -Atqc \
-    "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$forged_closure_trace_id') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
+    "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id IN ('$forged_closure_trace_id', '$duplicate_closure_trace_id')) || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
 )"
 if [[ "$audit_lineage_state" != '1|1|0|1' ]]; then
   echo "Exact same-incident closure did not produce one durable causal pair: $audit_lineage_state" >&2
@@ -110,4 +137,8 @@ printf '%s\n' \
   'AUTHORIZATION_AND_CLOSURE' \
   'AUDIT_LINEAGE_STATE' \
   "$audit_lineage_state" \
+  'DUPLICATE_CAUSATION' \
+  'REJECTED' \
+  'SQLSTATE' \
+  '23505' \
   > "$ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE"

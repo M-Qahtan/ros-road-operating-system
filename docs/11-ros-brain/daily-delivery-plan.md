@@ -1140,6 +1140,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE NEXT LIVE RECEIPT MUST NOW PROVE BOTH FAIL-CLOSED CROSS-INCIDENT REJECTION AND ONE DURABLE SAME-INCIDENT CAUSAL PAIR.** |
 | Next handoff | Add a duplicate-consumption attempt for the same authorization trace and require the database to reject a second closure audit without changing the durable pair. |
 
+### Single-use high-risk authorization causation
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `628952423087471876025caad87ed23e7b350b4c` was one hundred and twenty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, with no branch pull request, candidate workflow run, or overlapping local execution. The unrelated unstaged workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | Migration `0029` creates an atomic partial unique index over the authorization `causation_id` of high-risk RoadEvent closure audits. A historical duplicate preflight fails the migration before the index is created. The journey accepts the first exact same-incident closure, attempts a second closure with the same authorization trace, and withholds its receipt unless PostgreSQL rejects that attempt with `23505`. |
+| Durable acceptance | The proof and post-restart query both require `1|1|0|1`: one authorization, one accepted closure, zero forged or duplicate closure traces, and exactly one closure consuming the authorization cause. The receipt records the duplicate rejection and SQLSTATE without exposing authority or credentials. |
+| Local evidence | The focused contract failed first because migration `0029` and the duplicate proof were absent, then passed after implementation. Bash syntax, build, no-emit TypeScript, **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks passed. The restartable PostgreSQL journey stopped before execution with exit `127` because neither Docker nor Podman is installed, so no live `23505` or restart receipt is claimed. |
+| Safety limits | The unique index protects append-only audit causation only; it grants no operational or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A HIGH-RISK HUMAN AUTHORIZATION TRACE CAN BE CONSUMED BY AT MOST ONE CLOSURE AUDIT AT THE DATABASE BOUNDARY.** |
+| Next handoff | Prove a concurrent two-closure race against one authorization trace has exactly one database winner and one `23505` loser, with the same durable state after restart. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

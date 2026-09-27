@@ -129,7 +129,7 @@ bash scripts/run-postgres-integration.sh
 export ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE="$audit_lineage_proof_file"
 bash scripts/run-postgres-audit-lineage-guard.sh
 mapfile -t audit_lineage_proof < "$audit_lineage_proof_file"
-if [[ "${#audit_lineage_proof[@]}" -ne 12 \
+if [[ "${#audit_lineage_proof[@]}" -ne 16 \
   || "${audit_lineage_proof[0]}" != "CROSS_INCIDENT_CAUSATION" \
   || "${audit_lineage_proof[1]}" != "REJECTED" \
   || "${audit_lineage_proof[2]}" != "SQLSTATE" \
@@ -141,7 +141,11 @@ if [[ "${#audit_lineage_proof[@]}" -ne 12 \
   || "${audit_lineage_proof[8]}" != "AUDIT_WRITE_SET" \
   || "${audit_lineage_proof[9]}" != "AUTHORIZATION_AND_CLOSURE" \
   || "${audit_lineage_proof[10]}" != "AUDIT_LINEAGE_STATE" \
-  || "${audit_lineage_proof[11]}" != "1|1|0|1" ]]; then
+  || "${audit_lineage_proof[11]}" != "1|1|0|1" \
+  || "${audit_lineage_proof[12]}" != "DUPLICATE_CAUSATION" \
+  || "${audit_lineage_proof[13]}" != "REJECTED" \
+  || "${audit_lineage_proof[14]}" != "SQLSTATE" \
+  || "${audit_lineage_proof[15]}" != "23505" ]]; then
   echo "PostgreSQL journey passed without exact forged-rejection and same-incident audit-lineage proofs" >&2
   exit 2
 fi
@@ -365,7 +369,7 @@ if [[ "$closure_finalization_system_identifier_before_restart" != "$closure_fina
   exit 2
 fi
 readonly audit_lineage_state_after_restart="$(
-  psql "$DATABASE_URL" -Atqc "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='30000000-0000-4000-8000-000000000005') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='30000000-0000-4000-8000-000000000004')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='30000000-0000-4000-8000-000000000001'"
+  psql "$DATABASE_URL" -Atqc "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id IN ('30000000-0000-4000-8000-000000000005', '30000000-0000-4000-8000-000000000007')) || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='30000000-0000-4000-8000-000000000004')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='30000000-0000-4000-8000-000000000001'"
 )"
 if [[ "$audit_lineage_state_after_restart" != "$audit_lineage_state_before_restart" ]]; then
   echo "Audit-lineage causal pair did not survive PostgreSQL restart exactly: $audit_lineage_state_after_restart" >&2
@@ -1011,6 +1015,8 @@ ROS_RECEIPT_CROSS_INCIDENT_SQLSTATE="${audit_lineage_proof[3]}" \
 ROS_RECEIPT_CROSS_INCIDENT_AUDIT_WRITE_SET="${audit_lineage_proof[5]}" \
 ROS_RECEIPT_SAME_INCIDENT_CAUSATION="${audit_lineage_proof[7]}" \
 ROS_RECEIPT_SAME_INCIDENT_AUDIT_WRITE_SET="${audit_lineage_proof[9]}" \
+ROS_RECEIPT_DUPLICATE_CAUSATION="${audit_lineage_proof[13]}" \
+ROS_RECEIPT_DUPLICATE_CAUSATION_SQLSTATE="${audit_lineage_proof[15]}" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1182,6 +1188,10 @@ node -e '
       process.env.ROS_RECEIPT_SAME_INCIDENT_CAUSATION,
     sameIncidentAuditWriteSet:
       process.env.ROS_RECEIPT_SAME_INCIDENT_AUDIT_WRITE_SET,
+    duplicateCausation:
+      process.env.ROS_RECEIPT_DUPLICATE_CAUSATION,
+    duplicateCausationSqlstate:
+      process.env.ROS_RECEIPT_DUPLICATE_CAUSATION_SQLSTATE,
     auditLineageRestartVerified: true,
     auditLineageStateBeforeRestart:
       process.env.ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART,
