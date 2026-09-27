@@ -132,6 +132,10 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(auditLineageAmbiguousCommit, /THIRD_AUTOMATIC_RECONCILIATION/);
   assert.match(auditLineageAmbiguousCommit, /EXHAUSTED_FAIL_CLOSED/);
   assert.match(auditLineageAmbiguousCommit, /STATE_AFTER_BUDGET_EXHAUSTION/);
+  assert.match(auditLineageAmbiguousCommit, /road_event\.reconciliation_review_required/);
+  assert.match(auditLineageAmbiguousCommit, /HUMAN_REVIEW_REQUIRED/);
+  assert.match(auditLineageAmbiguousCommit, /AUTOMATIC_RETRY_AUTHORIZED/);
+  assert.match(auditLineageAmbiguousCommit, /CLOSURE_AUTHORIZED/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_RECOVERY_READ/);
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_RECOVERY_READ_COUNT/);
   assert.ok(
@@ -160,11 +164,14 @@ test('restartable journey proves cross-incident audit causation fails closed', (
     auditLineageAmbiguousCommit.indexOf('SELECT pg_sleep(30)') <
       auditLineageAmbiguousCommit.indexOf('kill "$ambiguous_pid"'),
   );
+  const afterAcknowledgementLoss = auditLineageAmbiguousCommit.slice(
+    auditLineageAmbiguousCommit.indexOf('kill "$ambiguous_pid"'),
+  );
+  assert.equal(afterAcknowledgementLoss.match(/INSERT INTO audit_logs/g)?.length, 1);
+  assert.match(afterAcknowledgementLoss, /'road_event\.reconciliation_review_required'/);
   assert.doesNotMatch(
-    auditLineageAmbiguousCommit.slice(
-      auditLineageAmbiguousCommit.indexOf('kill "$ambiguous_pid"'),
-    ),
-    /INSERT INTO audit_logs/,
+    afterAcknowledgementLoss,
+    /'SUPERVISOR', '\$supervisor_id',[\s\S]{0,80}'road_event\.closed'/,
   );
   assert.match(localHarness, /scripts\/run-postgres-audit-lineage-ambiguous-commit\.sh/);
   assert.match(localHarness, /causationAmbiguousCommitResult/);
@@ -181,6 +188,9 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /causationAmbiguousAutomaticRetryCount/);
   assert.match(localHarness, /causationAmbiguousThirdAutomaticAttempt/);
   assert.match(localHarness, /causationAmbiguousAutomaticRetryDisposition/);
+  assert.match(localHarness, /causationAmbiguousReviewState/);
+  assert.match(localHarness, /causationAmbiguousAutomaticRetryAuthorized/);
+  assert.match(localHarness, /causationAmbiguousClosureAuthorized/);
   assert.match(localHarness, /causationAmbiguousPostRestartRecoveryReadCount/);
   assert.match(localHarness, /causationAmbiguousPostRestartReplay/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);

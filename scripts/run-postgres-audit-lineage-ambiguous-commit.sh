@@ -21,6 +21,7 @@ readonly authorization_event_id='60000000-0000-4000-8000-000000000001'
 readonly supervisor_id='60000000-0000-4000-8000-000000000003'
 readonly authorization_trace_id='60000000-0000-4000-8000-000000000004'
 readonly closure_trace_id='60000000-0000-4000-8000-000000000005'
+readonly reconciliation_review_trace_id='60000000-0000-4000-8000-000000000006'
 readonly ambiguous_client_log="$(mktemp)"
 readonly post_restart_reconciliation_log="$(mktemp)"
 readonly reconciliation_retry_log="$(mktemp)"
@@ -311,6 +312,29 @@ fi
 readonly third_automatic_reconciliation_attempt='NOT_ATTEMPTED'
 readonly automatic_reconciliation_disposition='EXHAUSTED_FAIL_CLOSED'
 
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At <<SQL
+INSERT INTO audit_logs (
+  actor_type, actor_id, action, resource_type, resource_id,
+  before_state, after_state, reason, trace_id, correlation_id, causation_id,
+  occurred_at
+) VALUES (
+  'SYSTEM', NULL,
+  'road_event.reconciliation_review_required', 'RoadEvent', '$authorization_event_id',
+  '{"reconciliation":null}'::jsonb,
+  '{"reconciliation":{"state":"HUMAN_REVIEW_REQUIRED","automaticRetryAuthorized":false,"closureAuthorized":false}}'::jsonb,
+  'Automatic reconciliation attempt budget exhausted', '$reconciliation_review_trace_id',
+  '$authorization_event_id', '$closure_trace_id', '2026-09-27T06:00:02Z'
+);
+SQL
+readonly reconciliation_review_state="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT CASE WHEN count(*)=1 THEN 'HUMAN_REVIEW_REQUIRED' ELSE 'INVALID' END FROM audit_logs WHERE action='road_event.reconciliation_review_required' AND resource_type='RoadEvent' AND resource_id='$authorization_event_id' AND correlation_id='$authorization_event_id' AND causation_id='$closure_trace_id' AND after_state #>> '{reconciliation,state}'='HUMAN_REVIEW_REQUIRED' AND after_state #>> '{reconciliation,automaticRetryAuthorized}'='false' AND after_state #>> '{reconciliation,closureAuthorized}'='false'"
+)"
+if [[ "$reconciliation_review_state" != 'HUMAN_REVIEW_REQUIRED' ]]; then
+  echo "Exhausted reconciliation did not persist one exact human-review marker" >&2
+  exit 2
+fi
+
 post_restart_recovery_read_count=0
 post_restart_recovery_read_count=$((post_restart_recovery_read_count + 1))
 readonly post_restart_reconciliation_result="$(
@@ -382,6 +406,12 @@ printf '%s\n' \
   "$automatic_reconciliation_disposition" \
   'STATE_AFTER_BUDGET_EXHAUSTION' \
   "$state_after_budget_exhaustion" \
+  'RECONCILIATION_REVIEW_STATE' \
+  "$reconciliation_review_state" \
+  'AUTOMATIC_RETRY_AUTHORIZED' \
+  'false' \
+  'CLOSURE_AUTHORIZED' \
+  'false' \
   'POST_RESTART_RECOVERY_READ' \
   "$post_restart_reconciliation_result" \
   'POST_RESTART_RECOVERY_READ_COUNT' \

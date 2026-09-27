@@ -89,6 +89,11 @@ export interface RoadEventReadModel {
   readonly longitude: number;
   readonly occurredAt: string;
   readonly version: number;
+  readonly reconciliation: {
+    readonly state: 'HUMAN_REVIEW_REQUIRED';
+    readonly automaticRetryAuthorized: false;
+    readonly closureAuthorized: false;
+  } | null;
   readonly closureAuthorization: {
     readonly actorId: string;
     readonly reason: string;
@@ -103,7 +108,10 @@ export interface RoadEventReadModel {
   } | null;
 }
 
-export function toRoadEventReadModel(event: RoadEvent): RoadEventReadModel {
+export function toRoadEventReadModel(
+  event: RoadEvent,
+  reconciliation: RoadEventReadModel['reconciliation'] = null
+): RoadEventReadModel {
   const authorization = event.closureAuthorization;
   return {
     id: event.id,
@@ -119,6 +127,7 @@ export function toRoadEventReadModel(event: RoadEvent): RoadEventReadModel {
     longitude: event.longitude,
     occurredAt: event.occurredAt.toISOString(),
     version: event.version,
+    reconciliation,
     closureAuthorization: authorization === undefined
       ? null
       : {

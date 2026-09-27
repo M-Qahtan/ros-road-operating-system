@@ -492,7 +492,7 @@ fi
 export ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE="$audit_lineage_ambiguous_proof_file"
 bash scripts/run-postgres-audit-lineage-ambiguous-commit.sh
 mapfile -t audit_lineage_ambiguous_proof < "$audit_lineage_ambiguous_proof_file"
-if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 60 \
+if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 66 \
   || "${audit_lineage_ambiguous_proof[0]}" != "POST_COMMIT_RESULT" \
   || "${audit_lineage_ambiguous_proof[1]}" != "AMBIGUOUS" \
   || "${audit_lineage_ambiguous_proof[2]}" != "CLIENT_ACK" \
@@ -547,14 +547,20 @@ if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 60 \
   || "${audit_lineage_ambiguous_proof[49]}" != "EXHAUSTED_FAIL_CLOSED" \
   || "${audit_lineage_ambiguous_proof[50]}" != "STATE_AFTER_BUDGET_EXHAUSTION" \
   || "${audit_lineage_ambiguous_proof[51]}" != "1|1|1|1" \
-  || "${audit_lineage_ambiguous_proof[52]}" != "POST_RESTART_RECOVERY_READ" \
-  || "${audit_lineage_ambiguous_proof[53]}" != "COMMITTED_TRACE_FOUND" \
-  || "${audit_lineage_ambiguous_proof[54]}" != "POST_RESTART_RECOVERY_READ_COUNT" \
-  || "${audit_lineage_ambiguous_proof[55]}" != "1" \
-  || "${audit_lineage_ambiguous_proof[56]}" != "POST_RESTART_REPLAY" \
-  || "${audit_lineage_ambiguous_proof[57]}" != "NOT_ATTEMPTED" \
-  || "${audit_lineage_ambiguous_proof[58]}" != "STATE_AFTER_RESTART" \
-  || "${audit_lineage_ambiguous_proof[59]}" != "1|1|1|1" ]]; then
+  || "${audit_lineage_ambiguous_proof[52]}" != "RECONCILIATION_REVIEW_STATE" \
+  || "${audit_lineage_ambiguous_proof[53]}" != "HUMAN_REVIEW_REQUIRED" \
+  || "${audit_lineage_ambiguous_proof[54]}" != "AUTOMATIC_RETRY_AUTHORIZED" \
+  || "${audit_lineage_ambiguous_proof[55]}" != "false" \
+  || "${audit_lineage_ambiguous_proof[56]}" != "CLOSURE_AUTHORIZED" \
+  || "${audit_lineage_ambiguous_proof[57]}" != "false" \
+  || "${audit_lineage_ambiguous_proof[58]}" != "POST_RESTART_RECOVERY_READ" \
+  || "${audit_lineage_ambiguous_proof[59]}" != "COMMITTED_TRACE_FOUND" \
+  || "${audit_lineage_ambiguous_proof[60]}" != "POST_RESTART_RECOVERY_READ_COUNT" \
+  || "${audit_lineage_ambiguous_proof[61]}" != "1" \
+  || "${audit_lineage_ambiguous_proof[62]}" != "POST_RESTART_REPLAY" \
+  || "${audit_lineage_ambiguous_proof[63]}" != "NOT_ATTEMPTED" \
+  || "${audit_lineage_ambiguous_proof[64]}" != "STATE_AFTER_RESTART" \
+  || "${audit_lineage_ambiguous_proof[65]}" != "1|1|1|1" ]]; then
   echo "PostgreSQL journey passed without exact restartable post-commit ambiguity reconciliation proof" >&2
   exit 2
 fi
@@ -1249,10 +1255,13 @@ ROS_RECEIPT_CAUSATION_AMBIGUOUS_SECOND_AUTO_ATTEMPT="${audit_lineage_ambiguous_p
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_THIRD_AUTO_ATTEMPT="${audit_lineage_ambiguous_proof[47]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_DISPOSITION="${audit_lineage_ambiguous_proof[49]}" \
 ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_BUDGET="${audit_lineage_ambiguous_proof[51]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ="${audit_lineage_ambiguous_proof[53]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ_COUNT="${audit_lineage_ambiguous_proof[55]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[57]}" \
-ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[59]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_REVIEW_STATE="${audit_lineage_ambiguous_proof[53]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_AUTHORIZED="${audit_lineage_ambiguous_proof[55]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_CLOSURE_AUTHORIZED="${audit_lineage_ambiguous_proof[57]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ="${audit_lineage_ambiguous_proof[59]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ_COUNT="${audit_lineage_ambiguous_proof[61]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_REPLAY="${audit_lineage_ambiguous_proof[63]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_RESTART="${audit_lineage_ambiguous_proof[65]}" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1524,6 +1533,12 @@ node -e '
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_DISPOSITION,
     causationAmbiguousStateAfterBudgetExhaustion:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER_BUDGET,
+    causationAmbiguousReviewState:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_REVIEW_STATE,
+    causationAmbiguousAutomaticRetryAuthorized:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_AUTO_RETRY_AUTHORIZED,
+    causationAmbiguousClosureAuthorized:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_CLOSURE_AUTHORIZED,
     causationAmbiguousPostRestartRecoveryRead:
       process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_POST_RESTART_RECOVERY_READ,
     causationAmbiguousPostRestartRecoveryReadCount:

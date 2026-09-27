@@ -1272,6 +1272,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS TWO INTERRUPTED AUTOMATIC READS EXHAUST THE FIXED BUDGET, BLOCK A THIRD, AND LEAVE ONLY ONE EXPLICIT READ PATH WITHOUT REPLAY.** |
 | Next handoff | Represent the exhausted reconciliation state in the API as human-review-required without granting retry or closure authority, and expose it through the authenticated incident read. |
 
+### Authenticated reconciliation review projection
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `21c56de9c60258d7c7ab4c5c15d95e7df975d3ff` was one hundred and thirty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | Exhausting the fixed automatic reconciliation budget now appends one incident-correlated `road_event.reconciliation_review_required` audit marker. An authenticated incident detail read projects that marker as `HUMAN_REVIEW_REQUIRED` with `automaticRetryAuthorized=false` and `closureAuthorized=false`; list and command responses do not invent the marker. |
+| Recovery acceptance | The marker must be append-only, correlated to the exact incident and caused by the ambiguous closure trace. The read projection must expose no retry or closure authority, and the closure mutation must remain unreplayed. |
+| Local evidence | The focused HTTP test failed first because the reconciliation projection was absent, then the focused HTTP and PostgreSQL harness tests passed. Build, no-emit TypeScript, **759/759** workspace tests (API 669, dashboard 46, mobile 36, domain 8), **32/32** contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests passed. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live durable marker or API/database round trip is claimed. |
+| Safety limits | The projection is read-only and authority-negative. It grants no collection, closure, retry, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **AN AUTHENTICATED INCIDENT READ CAN NOW SURFACE DURABLE RECONCILIATION EXHAUSTION FOR HUMAN REVIEW WITHOUT IMPORTING RETRY OR CLOSURE AUTHORITY.** |
+| Next handoff | Require the API projection to validate the marker's exact exhaustion payload and closure-trace causation, failing closed on malformed, duplicate, or unbound markers. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

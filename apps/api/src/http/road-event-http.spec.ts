@@ -87,6 +87,59 @@ test('HTTP create and detail endpoints return stable envelopes', async () => {
   assert.equal(((detail.body as { data: { id: string } }).data).id, EVENT_ID);
 });
 
+test('authenticated incident read exposes exhausted reconciliation as human review without retry or closure authority', async () => {
+  const repository = new MemoryRoadEventRepository();
+  const event = new RoadEvent({
+    ...validCreateBody,
+    occurredAt: new Date(validCreateBody.occurredAt),
+    status: RoadEventStatus.Closed,
+    version: 14
+  });
+  await repository.create(event, {
+    tenantId: TENANT,
+    purpose: PURPOSE,
+    actorType: 'SYSTEM',
+    action: 'fixture.closed',
+    traceId: 'trace-http-reconciliation-fixture',
+    eventType: 'FixtureClosed',
+    correlationId: EVENT_ID
+  });
+  await repository.update(event, 14, {
+    tenantId: TENANT,
+    purpose: PURPOSE,
+    actorType: 'SYSTEM',
+    action: 'road_event.reconciliation_review_required',
+    reason: 'automatic reconciliation attempt budget exhausted',
+    traceId: 'trace-http-reconciliation-exhausted',
+    eventType: 'RoadEventReconciliationReviewRequired',
+    correlationId: EVENT_ID
+  });
+
+  const response = await fixture(repository)(request({
+    method: 'GET',
+    path: `/api/v1/road-events/${EVENT_ID}`,
+    headers: actorHeaders('OPERATOR')
+  }));
+
+  assert.equal(response.status, 200);
+  const data = (response.body as {
+    data: {
+      reconciliation: {
+        state: string;
+        automaticRetryAuthorized: boolean;
+        closureAuthorized: boolean;
+      } | null;
+      closureAuthorization: unknown;
+    };
+  }).data;
+  assert.deepEqual(data.reconciliation, {
+    state: 'HUMAN_REVIEW_REQUIRED',
+    automaticRetryAuthorized: false,
+    closureAuthorized: false
+  });
+  assert.equal(data.closureAuthorization, null);
+});
+
 test('authenticated list keeps a journal-withheld incident visible without executable closure authorization', async () => {
   const repository = new JournalWithholdingRoadEventRepository();
   const event = new RoadEvent({

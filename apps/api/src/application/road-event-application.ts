@@ -290,13 +290,26 @@ export class RoadEventApplicationService {
   async getById(id: string, actor: AuthenticatedActor): Promise<RoadEventReadModel> {
     this.authorization.assertAllowed(actor, 'road_event:read');
     const scope = this.accessScope(actor);
-    return toRoadEventReadModel(await this.requireEvent(requireUuid(id, 'roadEventId'), scope));
+    const roadEventId = requireUuid(id, 'roadEventId');
+    const event = await this.requireEvent(roadEventId, scope);
+    const timeline = await this.auditTimeline.listForRoadEvent(roadEventId, scope);
+    const requiresHumanReview = timeline.some((entry) =>
+      entry.action === 'road_event.reconciliation_review_required'
+      && entry.correlationId === roadEventId
+    );
+    return toRoadEventReadModel(event, requiresHumanReview
+      ? {
+          state: 'HUMAN_REVIEW_REQUIRED',
+          automaticRetryAuthorized: false,
+          closureAuthorized: false
+        }
+      : null);
   }
 
   async list(query: RoadEventListQuery, actor: AuthenticatedActor): Promise<RoadEventPageReadModel> {
     this.authorization.assertAllowed(actor, 'road_event:list');
     const page = await this.repository.list(query, this.accessScope(actor));
-    return { ...page, items: page.items.map(toRoadEventReadModel) };
+    return { ...page, items: page.items.map((event) => toRoadEventReadModel(event)) };
   }
 
   async timeline(id: string, actor: AuthenticatedActor) {
