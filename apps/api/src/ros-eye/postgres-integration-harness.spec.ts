@@ -28,6 +28,10 @@ const auditLineageCrashRecovery = readFileSync(
   'scripts/run-postgres-audit-lineage-crash-recovery.sh',
   'utf8',
 );
+const auditLineageAmbiguousCommit = readFileSync(
+  'scripts/run-postgres-audit-lineage-ambiguous-commit.sh',
+  'utf8',
+);
 
 test('restartable journey proves cross-incident audit causation fails closed', () => {
   assert.match(auditLineageGuard, /road_event\.closure_authorized/);
@@ -100,6 +104,29 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /causationCrashRollbackState/);
   assert.match(localHarness, /causationCrashControlledRetry/);
   assert.match(localHarness, /causationCrashDuplicateRetry/);
+  assert.match(auditLineageAmbiguousCommit, /COMMIT;[\s\S]*SELECT pg_sleep\(30\)/);
+  assert.match(auditLineageAmbiguousCommit, /kill "\$ambiguous_pid"/);
+  assert.match(auditLineageAmbiguousCommit, /COMMITTED_TRACE_FOUND/);
+  assert.match(auditLineageAmbiguousCommit, /REPLAY/);
+  assert.match(auditLineageAmbiguousCommit, /NOT_ATTEMPTED/);
+  assert.ok(
+    auditLineageAmbiguousCommit.indexOf('COMMIT;') <
+      auditLineageAmbiguousCommit.indexOf('SELECT pg_sleep(30)'),
+  );
+  assert.ok(
+    auditLineageAmbiguousCommit.indexOf('SELECT pg_sleep(30)') <
+      auditLineageAmbiguousCommit.indexOf('kill "$ambiguous_pid"'),
+  );
+  assert.doesNotMatch(
+    auditLineageAmbiguousCommit.slice(
+      auditLineageAmbiguousCommit.indexOf('kill "$ambiguous_pid"'),
+    ),
+    /INSERT INTO audit_logs/,
+  );
+  assert.match(localHarness, /scripts\/run-postgres-audit-lineage-ambiguous-commit\.sh/);
+  assert.match(localHarness, /causationAmbiguousCommitResult/);
+  assert.match(localHarness, /causationAmbiguousReconciliation/);
+  assert.match(localHarness, /causationAmbiguousReplay/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);
   assert.match(localHarness, /auditLineageStateBeforeRestart/);
   assert.match(localHarness, /auditLineageStateAfterRestart/);

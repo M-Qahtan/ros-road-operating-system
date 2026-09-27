@@ -1200,6 +1200,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS A PRE-COMMIT CRASH ROLLS BACK THE CAUSAL CLAIM AND EXACTLY ONE CONTROLLED RETRY CONSUMES IT.** |
 | Next handoff | Simulate a connection loss after the closure commit but before the client receives success, then reconcile the committed trace without replaying the closure command. |
 
+### Post-commit acknowledgement-loss reconciliation
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `46cd6321518e9233d4a2bcfa4226ea5185fff522` was one hundred and thirty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | A dedicated fixture commits one exact high-risk closure and then holds the client session after `COMMIT` but before normal completion. The harness cuts that client, requires a non-success client result, and treats the outcome as ambiguous even though the causal pair is durable. |
+| Reconciliation acceptance | A read-only lookup by the exact closure trace, incident correlation, and authorization cause must find one committed closure. The state must remain exactly `1|1|1|1` before and after reconciliation, and the receipt records `REPLAY=NOT_ATTEMPTED`; the closure mutation is never reissued. |
+| Local evidence | The focused harness failed first because the post-commit ambiguity fixture was absent, then passed **41/41** after implementation. Bash syntax, build, no-emit TypeScript, **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks passed. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live commit, transport loss, or reconciliation result is claimed. |
+| Safety limits | The fixture uses fixed synthetic UUIDs and a read-only reconciliation query after the ambiguous result. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS A COMMITTED CLOSURE WITH A LOST CLIENT ACKNOWLEDGEMENT IS RECONCILED BY TRACE WITHOUT REPLAYING THE MUTATION.** |
+| Next handoff | Restart PostgreSQL after the ambiguous reconciliation and prove the same committed trace remains singular and recoverable without replay. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

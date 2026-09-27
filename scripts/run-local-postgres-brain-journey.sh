@@ -41,6 +41,7 @@ readonly journey_manifest_sha256="$(
     scripts/run-postgres-closure-reauthorization-finalize.sh \
     scripts/run-postgres-audit-lineage-guard.sh \
     scripts/run-postgres-audit-lineage-crash-recovery.sh \
+    scripts/run-postgres-audit-lineage-ambiguous-commit.sh \
     database/migrations/*.sql \
     database/seeds/*.sql \
     database/tests/*.sql \
@@ -60,6 +61,7 @@ readonly closure_reauthorization_finalize_proof_file="$(mktemp)"
 readonly audit_lineage_proof_file="$(mktemp)"
 readonly audit_lineage_recovery_proof_file="$(mktemp)"
 readonly audit_lineage_crash_proof_file="$(mktemp)"
+readonly audit_lineage_ambiguous_proof_file="$(mktemp)"
 readonly post_restart_duplicate_log="$(mktemp)"
 readonly post_restart_wrong_purpose_log="$(mktemp)"
 readonly post_restart_wrong_tenant_log="$(mktemp)"
@@ -80,6 +82,7 @@ cleanup() {
   rm -f "$audit_lineage_proof_file"
   rm -f "$audit_lineage_recovery_proof_file"
   rm -f "$audit_lineage_crash_proof_file"
+  rm -f "$audit_lineage_ambiguous_proof_file"
   rm -f "$post_restart_duplicate_log"
   rm -f "$post_restart_wrong_purpose_log"
   rm -f "$post_restart_wrong_tenant_log"
@@ -484,6 +487,25 @@ readonly post_restart_causation_trace_state_after_crash="$(
 if [[ "$historical_causation_trace_state_after_crash" != "$audit_lineage_trace_state_before_restart" \
   || "$post_restart_causation_trace_state_after_crash" != "${audit_lineage_recovery_proof[25]}" ]]; then
   echo "Pre-commit crash recovery changed an earlier causation race pair" >&2
+  exit 2
+fi
+export ROS_POSTGRES_AUDIT_LINEAGE_AMBIGUOUS_PROOF_FILE="$audit_lineage_ambiguous_proof_file"
+bash scripts/run-postgres-audit-lineage-ambiguous-commit.sh
+mapfile -t audit_lineage_ambiguous_proof < "$audit_lineage_ambiguous_proof_file"
+if [[ "${#audit_lineage_ambiguous_proof[@]}" -ne 12 \
+  || "${audit_lineage_ambiguous_proof[0]}" != "POST_COMMIT_RESULT" \
+  || "${audit_lineage_ambiguous_proof[1]}" != "AMBIGUOUS" \
+  || "${audit_lineage_ambiguous_proof[2]}" != "CLIENT_ACK" \
+  || "${audit_lineage_ambiguous_proof[3]}" != "LOST" \
+  || "${audit_lineage_ambiguous_proof[4]}" != "STATE_BEFORE_RECONCILIATION" \
+  || "${audit_lineage_ambiguous_proof[5]}" != "1|1|1|1" \
+  || "${audit_lineage_ambiguous_proof[6]}" != "RECONCILIATION" \
+  || "${audit_lineage_ambiguous_proof[7]}" != "COMMITTED_TRACE_FOUND" \
+  || "${audit_lineage_ambiguous_proof[8]}" != "REPLAY" \
+  || "${audit_lineage_ambiguous_proof[9]}" != "NOT_ATTEMPTED" \
+  || "${audit_lineage_ambiguous_proof[10]}" != "STATE_AFTER_RECONCILIATION" \
+  || "${audit_lineage_ambiguous_proof[11]}" != "1|1|1|1" ]]; then
+  echo "PostgreSQL journey passed without exact post-commit ambiguity reconciliation proof" >&2
   exit 2
 fi
 readonly contact_recovery_state="$(
@@ -1149,6 +1171,12 @@ ROS_RECEIPT_CAUSATION_CRASH_DUPLICATE_SQLSTATE="${audit_lineage_crash_proof[13]}
 ROS_RECEIPT_CAUSATION_CRASH_FINAL_STATE="${audit_lineage_crash_proof[15]}" \
 ROS_RECEIPT_HISTORICAL_CAUSATION_TRACE_STATE_AFTER_CRASH="$historical_causation_trace_state_after_crash" \
 ROS_RECEIPT_POST_RESTART_CAUSATION_TRACE_STATE_AFTER_CRASH="$post_restart_causation_trace_state_after_crash" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_COMMIT_RESULT="${audit_lineage_ambiguous_proof[1]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_CLIENT_ACK="${audit_lineage_ambiguous_proof[3]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_BEFORE="${audit_lineage_ambiguous_proof[5]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_RECONCILIATION="${audit_lineage_ambiguous_proof[7]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_REPLAY="${audit_lineage_ambiguous_proof[9]}" \
+ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER="${audit_lineage_ambiguous_proof[11]}" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART="$audit_lineage_state_before_restart" \
 ROS_RECEIPT_AUDIT_LINEAGE_STATE_AFTER_RESTART="$audit_lineage_state_after_restart" \
 node -e '
@@ -1366,6 +1394,18 @@ node -e '
       process.env.ROS_RECEIPT_HISTORICAL_CAUSATION_TRACE_STATE_AFTER_CRASH,
     postRestartCausationTraceStateAfterCrash:
       process.env.ROS_RECEIPT_POST_RESTART_CAUSATION_TRACE_STATE_AFTER_CRASH,
+    causationAmbiguousCommitResult:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_COMMIT_RESULT,
+    causationAmbiguousClientAck:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_CLIENT_ACK,
+    causationAmbiguousStateBefore:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_BEFORE,
+    causationAmbiguousReconciliation:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_RECONCILIATION,
+    causationAmbiguousReplay:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_REPLAY,
+    causationAmbiguousStateAfter:
+      process.env.ROS_RECEIPT_CAUSATION_AMBIGUOUS_STATE_AFTER,
     auditLineageRestartVerified: true,
     auditLineageStateBeforeRestart:
       process.env.ROS_RECEIPT_AUDIT_LINEAGE_STATE_BEFORE_RESTART,
