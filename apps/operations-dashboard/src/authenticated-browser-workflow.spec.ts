@@ -123,7 +123,7 @@ test('authenticated exhaustion refresh discards a prior ambiguous critical opera
   assert.equal(mutationRequests, 1);
 });
 
-test('untrusted reconciliation detail discards its ambiguous command and explicit trusted retry recovers without replay', async () => {
+test('coalesced recovery stays fail-closed on repeated untrusted detail and later trusted retry recovers without replay', async () => {
   const incident: RoadEventResponse = {
     id: '50505050-5050-4050-8050-505050505050',
     status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
@@ -150,13 +150,11 @@ test('untrusted reconciliation detail discards its ambiguous command and explici
     }
     if (target.pathname === `/api/v1/road-events/${incident.id}`) {
       detailReads += 1;
-      if (!malformedDetail) {
-        if (recoveryBarrier !== null) {
-          recoveryStarted?.release();
-          await recoveryBarrier.wait;
-        }
-        return ok(incident);
+      if (recoveryBarrier !== null) {
+        recoveryStarted?.release();
+        await recoveryBarrier.wait;
       }
+      if (!malformedDetail) return ok(incident);
       return new Response(JSON.stringify({
         success: true,
         data: { ...incident, internalSecret: 'must-not-leak' },
@@ -198,6 +196,30 @@ test('untrusted reconciliation detail discards its ambiguous command and explici
   assert.equal(detailReads, 2);
   assert.equal(timelineReads, 2);
 
+  recoveryBarrier = barrier();
+  recoveryStarted = barrier();
+  const firstRejectedRecovery = controller.retrySelection();
+  const duplicateRejectedRecovery = controller.retrySelection();
+  assert.equal(firstRejectedRecovery, duplicateRejectedRecovery);
+  await recoveryStarted.wait;
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
+  recoveryBarrier.release();
+  const [rejectedRecovery, duplicateRejectedResult] = await Promise.all([
+    firstRejectedRecovery, duplicateRejectedRecovery
+  ]);
+  assert.equal(duplicateRejectedResult, rejectedRecovery);
+  assert.equal(rejectedRecovery.phase, 'failure');
+  assert.equal(rejectedRecovery.stale, true);
+  assert.equal(rejectedRecovery.selected, null);
+  assert.deepEqual(rejectedRecovery.timeline, []);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(controller.canRetrySelection(), true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
+  assert.equal(mutationRequests, 1);
+
   malformedDetail = false;
   recoveryBarrier = barrier();
   recoveryStarted = barrier();
@@ -205,8 +227,8 @@ test('untrusted reconciliation detail discards its ambiguous command and explici
   const duplicateRecovery = controller.retrySelection();
   assert.equal(firstRecovery, duplicateRecovery);
   await recoveryStarted.wait;
-  assert.equal(detailReads, 3);
-  assert.equal(timelineReads, 3);
+  assert.equal(detailReads, 4);
+  assert.equal(timelineReads, 4);
   recoveryBarrier.release();
   const [recovered, duplicateResult] = await Promise.all([firstRecovery, duplicateRecovery]);
   assert.equal(duplicateResult, recovered);
@@ -216,8 +238,8 @@ test('untrusted reconciliation detail discards its ambiguous command and explici
   assert.equal(controller.ambiguousCriticalActionView(), null);
   assert.equal(controller.canRetrySelection(), false);
   await assert.rejects(() => controller.retryAmbiguousCriticalAction(), /لا يوجد إجراء حرج غامض/);
-  assert.equal(detailReads, 3);
-  assert.equal(timelineReads, 3);
+  assert.equal(detailReads, 4);
+  assert.equal(timelineReads, 4);
   assert.equal(mutationRequests, 1);
 });
 
