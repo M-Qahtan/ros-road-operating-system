@@ -1224,6 +1224,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS THE AMBIGUOUSLY COMMITTED TRACE SURVIVES A DISTINCT POSTGRESQL RESTART AS ONE EXACT CAUSAL PAIR WITHOUT REPLAY.** |
 | Next handoff | Prove that a post-restart reconciliation read failure fails closed, then recovers on one explicit read retry without issuing the closure mutation. |
 
+### Fail-closed post-restart reconciliation retry
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-27, GitHub candidate `35f71e74b3acd6bce047aa17c6ed3c80218d7ee6` was one hundred and thirty-five commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | After the ambiguous closure survives a distinct PostgreSQL restart, the fixture forces the first read-only reconciliation to time out with SQLSTATE `57014`. It then verifies the exact causal state remains unchanged before allowing one explicit read retry; the closure mutation is never reissued. |
+| Recovery acceptance | The failed read must produce no positive reconciliation result, preserve state `1|1|1|1`, and record the failure as closed. Exactly one explicit retry must find the committed trace, keep the state `1|1|1|1`, and retain `REPLAY=NOT_ATTEMPTED`. |
+| Local evidence | The focused harness failed first because failure, fail-closed state, and explicit-retry receipt bindings were absent, then passed **41/41** after implementation. Fresh direct-package build and no-emit TypeScript passed, followed by **758/758** workspace tests (API 668, dashboard 46, mobile 36, domain 8), **32/32** perception/coverage contract cases, repository/runtime composition, retention, negative-gate, archive conditional-write, and **8/8** external-evidence policy checks. The restartable journey stopped before PostgreSQL execution with exit `127` because neither Docker nor Podman is installed, so no live timeout, fail-closed state, or explicit retry is claimed. |
+| Safety limits | The injected fault is a SELECT-only statement timeout inside the ephemeral local PostgreSQL fixture. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE LOCAL JOURNEY NOW WITHHOLDS ITS RECEIPT UNLESS A FAILED POST-RESTART READ STAYS CLOSED AND ONE EXPLICIT READ RETRY RECOVERS THE SAME TRACE WITHOUT MUTATION REPLAY.** |
+| Next handoff | Interrupt the explicit reconciliation retry itself after it begins, then prove a later authenticated read can recover the same trace without accumulating retries or mutation authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

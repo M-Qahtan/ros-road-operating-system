@@ -114,6 +114,19 @@ test('restartable journey proves cross-incident audit causation fails closed', (
     /restart -- "\$ROS_POSTGRES_RESTART_CONTAINER"/,
   );
   assert.match(auditLineageAmbiguousCommit, /POST_RESTART_RECONCILIATION/);
+  assert.match(auditLineageAmbiguousCommit, /POST_RESTART_FAILURE_SQLSTATE/);
+  assert.match(auditLineageAmbiguousCommit, /57014/);
+  assert.match(auditLineageAmbiguousCommit, /post_restart_reconciliation_failure_status/);
+  assert.match(auditLineageAmbiguousCommit, /grep -q '57014'/);
+  assert.match(auditLineageAmbiguousCommit, /POST_RESTART_FAIL_CLOSED_STATE/);
+  assert.match(auditLineageAmbiguousCommit, /POST_RESTART_EXPLICIT_RETRY/);
+  assert.match(auditLineageAmbiguousCommit, /POST_RESTART_EXPLICIT_RETRY_COUNT/);
+  assert.ok(
+    auditLineageAmbiguousCommit.indexOf("SET statement_timeout='1ms'") <
+      auditLineageAmbiguousCommit.indexOf(
+        'post_restart_explicit_retry_count=$((post_restart_explicit_retry_count + 1))',
+      ),
+  );
   assert.match(auditLineageAmbiguousCommit, /STATE_AFTER_RESTART/);
   assert.ok(
     auditLineageAmbiguousCommit.indexOf('COMMIT;') <
@@ -135,6 +148,9 @@ test('restartable journey proves cross-incident audit causation fails closed', (
   assert.match(localHarness, /causationAmbiguousReplay/);
   assert.match(localHarness, /causationAmbiguousRestartVerified/);
   assert.match(localHarness, /causationAmbiguousPostRestartReconciliation/);
+  assert.match(localHarness, /causationAmbiguousPostRestartFailureSqlstate/);
+  assert.match(localHarness, /causationAmbiguousPostRestartFailClosedState/);
+  assert.match(localHarness, /causationAmbiguousPostRestartExplicitRetryCount/);
   assert.match(localHarness, /causationAmbiguousPostRestartReplay/);
   assert.match(localHarness, /auditLineageRestartVerified: true/);
   assert.match(localHarness, /auditLineageStateBeforeRestart/);

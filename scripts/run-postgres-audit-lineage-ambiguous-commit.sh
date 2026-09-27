@@ -22,13 +22,14 @@ readonly supervisor_id='60000000-0000-4000-8000-000000000003'
 readonly authorization_trace_id='60000000-0000-4000-8000-000000000004'
 readonly closure_trace_id='60000000-0000-4000-8000-000000000005'
 readonly ambiguous_client_log="$(mktemp)"
+readonly post_restart_reconciliation_log="$(mktemp)"
 ambiguous_pid=''
 
 cleanup() {
   if [[ -n "$ambiguous_pid" ]]; then
     kill -- "$ambiguous_pid" >/dev/null 2>&1 || true
   fi
-  rm -f "$ambiguous_client_log"
+  rm -f "$ambiguous_client_log" "$post_restart_reconciliation_log"
 }
 trap cleanup EXIT
 
@@ -153,6 +154,31 @@ if [[ "$system_identifier_before_restart" != "$system_identifier_after_restart" 
   exit 2
 fi
 
+set +e
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -At > /dev/null 2>"$post_restart_reconciliation_log" <<'SQL'
+\set VERBOSITY verbose
+SET statement_timeout='1ms';
+SELECT pg_sleep(1);
+SQL
+readonly post_restart_reconciliation_failure_status=$?
+set -e
+if [[ "$post_restart_reconciliation_failure_status" -eq 0 ]] \
+  || ! grep -q '57014' "$post_restart_reconciliation_log"; then
+  echo "Post-restart reconciliation read did not fail with SQLSTATE 57014" >&2
+  exit 2
+fi
+
+readonly post_restart_fail_closed_state="$(
+  psql "$DATABASE_URL" -Atqc \
+    "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$closure_trace_id') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
+)"
+if [[ "$post_restart_fail_closed_state" != "$state_after_reconciliation" ]]; then
+  echo "Failed post-restart reconciliation changed the committed closure: $post_restart_fail_closed_state" >&2
+  exit 2
+fi
+
+post_restart_explicit_retry_count=0
+post_restart_explicit_retry_count=$((post_restart_explicit_retry_count + 1))
 readonly post_restart_reconciliation_result="$(
   psql "$DATABASE_URL" -Atqc \
     "SELECT CASE WHEN count(*)=1 THEN 'COMMITTED_TRACE_FOUND' ELSE 'COMMITTED_TRACE_NOT_UNIQUE' END FROM audit_logs WHERE trace_id='$closure_trace_id' AND action='road_event.closed' AND resource_type='RoadEvent' AND resource_id='$authorization_event_id' AND correlation_id='$authorization_event_id' AND causation_id='$authorization_trace_id'"
@@ -161,7 +187,8 @@ readonly state_after_restart="$(
   psql "$DATABASE_URL" -Atqc \
     "SELECT count(*) FILTER (WHERE action='road_event.closure_authorized')::text || '|' || count(*) FILTER (WHERE action='road_event.closed')::text || '|' || (SELECT count(*)::text FROM audit_logs WHERE trace_id='$closure_trace_id') || '|' || count(*) FILTER (WHERE action='road_event.closed' AND causation_id='$authorization_trace_id')::text FROM audit_logs WHERE resource_type='RoadEvent' AND resource_id='$authorization_event_id'"
 )"
-if [[ "$post_restart_reconciliation_result" != 'COMMITTED_TRACE_FOUND' \
+if [[ "$post_restart_explicit_retry_count" -ne 1 \
+  || "$post_restart_reconciliation_result" != 'COMMITTED_TRACE_FOUND' \
   || "$state_after_restart" != "$state_after_reconciliation" ]]; then
   echo "Restarted read-only reconciliation did not preserve one exact committed closure: $state_after_restart" >&2
   exit 2
@@ -189,7 +216,15 @@ printf '%s\n' \
   'POSTMASTER_STARTED_AT_AFTER_RESTART' \
   "$postmaster_started_at_after_restart" \
   'POST_RESTART_RECONCILIATION' \
+  'READ_FAILED' \
+  'POST_RESTART_FAILURE_SQLSTATE' \
+  '57014' \
+  'POST_RESTART_FAIL_CLOSED_STATE' \
+  "$post_restart_fail_closed_state" \
+  'POST_RESTART_EXPLICIT_RETRY' \
   "$post_restart_reconciliation_result" \
+  'POST_RESTART_EXPLICIT_RETRY_COUNT' \
+  "$post_restart_explicit_retry_count" \
   'POST_RESTART_REPLAY' \
   'NOT_ATTEMPTED' \
   'STATE_AFTER_RESTART' \
