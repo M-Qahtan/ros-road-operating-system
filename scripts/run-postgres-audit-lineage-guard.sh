@@ -11,13 +11,40 @@ if [[ ! -f "$ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE" \
   exit 2
 fi
 
-readonly authorization_event_id='30000000-0000-4000-8000-000000000001'
-readonly forged_closure_event_id='30000000-0000-4000-8000-000000000002'
 readonly supervisor_id='30000000-0000-4000-8000-000000000003'
-readonly authorization_trace_id='30000000-0000-4000-8000-000000000004'
-readonly forged_closure_trace_id='30000000-0000-4000-8000-000000000005'
-readonly valid_closure_trace_id='30000000-0000-4000-8000-000000000006'
-readonly duplicate_closure_trace_id='30000000-0000-4000-8000-000000000007'
+readonly fixture="${ROS_POSTGRES_AUDIT_LINEAGE_FIXTURE:-INITIAL}"
+case "$fixture" in
+  INITIAL)
+    readonly authorization_event_id='30000000-0000-4000-8000-000000000001'
+    readonly forged_closure_event_id='30000000-0000-4000-8000-000000000002'
+    readonly authorization_trace_id='30000000-0000-4000-8000-000000000004'
+    readonly forged_closure_trace_id='30000000-0000-4000-8000-000000000005'
+    readonly valid_closure_trace_id='30000000-0000-4000-8000-000000000006'
+    readonly duplicate_closure_trace_id='30000000-0000-4000-8000-000000000007'
+    readonly authorization_occurred_at='2026-09-27T00:00:00Z'
+    readonly authorization_state_at='2026-09-27T00:00:00.000Z'
+    readonly forged_closure_occurred_at='2026-09-27T00:00:01Z'
+    readonly first_racer_occurred_at='2026-09-27T00:00:02Z'
+    readonly second_racer_occurred_at='2026-09-27T00:00:03Z'
+    ;;
+  RECOVERY)
+    readonly authorization_event_id='40000000-0000-4000-8000-000000000001'
+    readonly forged_closure_event_id='40000000-0000-4000-8000-000000000002'
+    readonly authorization_trace_id='40000000-0000-4000-8000-000000000004'
+    readonly forged_closure_trace_id='40000000-0000-4000-8000-000000000005'
+    readonly valid_closure_trace_id='40000000-0000-4000-8000-000000000006'
+    readonly duplicate_closure_trace_id='40000000-0000-4000-8000-000000000007'
+    readonly authorization_occurred_at='2026-09-27T01:00:00Z'
+    readonly authorization_state_at='2026-09-27T01:00:00.000Z'
+    readonly forged_closure_occurred_at='2026-09-27T01:00:01Z'
+    readonly first_racer_occurred_at='2026-09-27T01:00:02Z'
+    readonly second_racer_occurred_at='2026-09-27T01:00:03Z'
+    ;;
+  *)
+    echo "Unsupported audit lineage fixture '$fixture'" >&2
+    exit 2
+    ;;
+esac
 readonly error_log="$(mktemp)"
 readonly first_racer_error_log="$(mktemp)"
 readonly second_racer_error_log="$(mktemp)"
@@ -36,9 +63,9 @@ INSERT INTO audit_logs (
   'SUPERVISOR', '$supervisor_id',
   'road_event.closure_authorized', 'RoadEvent', '$authorization_event_id',
   '{"status":"RECOVERY","version":12,"closureAuthorization":null}'::jsonb,
-  '{"status":"RECOVERY","version":13,"closureAuthorization":{"actorId":"$supervisor_id","reason":"Cross-incident lineage guard fixture","authorizedAt":"2026-09-27T00:00:00.000Z","sourceSnapshot":{"inputVersion":1,"snapshotDigest":"1111111111111111111111111111111111111111111111111111111111111111","policyVersion":"ros-eye.input-snapshot.v2","cognitiveRevision":1,"cognitiveDigest":"6666666666666666666666666666666666666666666666666666666666666666"}}}'::jsonb,
+  '{"status":"RECOVERY","version":13,"closureAuthorization":{"actorId":"$supervisor_id","reason":"Cross-incident lineage guard fixture","authorizedAt":"$authorization_state_at","sourceSnapshot":{"inputVersion":1,"snapshotDigest":"1111111111111111111111111111111111111111111111111111111111111111","policyVersion":"ros-eye.input-snapshot.v2","cognitiveRevision":1,"cognitiveDigest":"6666666666666666666666666666666666666666666666666666666666666666"}}}'::jsonb,
   'Cross-incident lineage guard fixture', '$authorization_trace_id',
-  '$authorization_event_id', NULL, '2026-09-27T00:00:00Z'
+  '$authorization_event_id', NULL, '$authorization_occurred_at'
 );
 SQL
 
@@ -51,10 +78,10 @@ INSERT INTO audit_logs (
 ) VALUES (
   'SUPERVISOR', '$supervisor_id',
   'road_event.closed', 'RoadEvent', '$forged_closure_event_id',
-  '{"status":"RECOVERY","version":13,"closureAuthorization":{"actorId":"$supervisor_id","reason":"Cross-incident lineage guard fixture","authorizedAt":"2026-09-27T00:00:00.000Z","sourceSnapshot":{"inputVersion":1,"snapshotDigest":"1111111111111111111111111111111111111111111111111111111111111111","policyVersion":"ros-eye.input-snapshot.v2","cognitiveRevision":1,"cognitiveDigest":"6666666666666666666666666666666666666666666666666666666666666666"}}}'::jsonb,
+  '{"status":"RECOVERY","version":13,"closureAuthorization":{"actorId":"$supervisor_id","reason":"Cross-incident lineage guard fixture","authorizedAt":"$authorization_state_at","sourceSnapshot":{"inputVersion":1,"snapshotDigest":"1111111111111111111111111111111111111111111111111111111111111111","policyVersion":"ros-eye.input-snapshot.v2","cognitiveRevision":1,"cognitiveDigest":"6666666666666666666666666666666666666666666666666666666666666666"}}}'::jsonb,
   '{"status":"CLOSED","version":14,"closureAuthorization":null}'::jsonb,
   'Forged cross-incident closure must fail', '$forged_closure_trace_id',
-  '$forged_closure_event_id', '$authorization_trace_id', '2026-09-27T00:00:01Z'
+  '$forged_closure_event_id', '$authorization_trace_id', '$forged_closure_occurred_at'
 );
 SQL
 then
@@ -91,7 +118,7 @@ INSERT INTO audit_logs (
 ) VALUES (
   'SUPERVISOR', '$supervisor_id',
   'road_event.closed', 'RoadEvent', '$authorization_event_id',
-  '{"status":"RECOVERY","version":13,"closureAuthorization":{"actorId":"$supervisor_id","reason":"Cross-incident lineage guard fixture","authorizedAt":"2026-09-27T00:00:00.000Z","sourceSnapshot":{"inputVersion":1,"snapshotDigest":"1111111111111111111111111111111111111111111111111111111111111111","policyVersion":"ros-eye.input-snapshot.v2","cognitiveRevision":1,"cognitiveDigest":"6666666666666666666666666666666666666666666666666666666666666666"}}}'::jsonb,
+  '{"status":"RECOVERY","version":13,"closureAuthorization":{"actorId":"$supervisor_id","reason":"Cross-incident lineage guard fixture","authorizedAt":"$authorization_state_at","sourceSnapshot":{"inputVersion":1,"snapshotDigest":"1111111111111111111111111111111111111111111111111111111111111111","policyVersion":"ros-eye.input-snapshot.v2","cognitiveRevision":1,"cognitiveDigest":"6666666666666666666666666666666666666666666666666666666666666666"}}}'::jsonb,
   '{"status":"CLOSED","version":14,"closureAuthorization":null}'::jsonb,
   '$reason', '$trace_id',
   '$authorization_event_id', '$authorization_trace_id', '$occurred_at'
@@ -105,13 +132,13 @@ set +e
 run_closure_racer \
   "$valid_closure_trace_id" \
   'Concurrent authorization consumer A' \
-  '2026-09-27T00:00:02Z' \
+  "$first_racer_occurred_at" \
   "$first_racer_error_log" &
 first_racer_pid=$!
 run_closure_racer \
   "$duplicate_closure_trace_id" \
   'Concurrent authorization consumer B' \
-  '2026-09-27T00:00:03Z' \
+  "$second_racer_occurred_at" \
   "$second_racer_error_log" &
 second_racer_pid=$!
 wait "$first_racer_pid"
@@ -184,4 +211,6 @@ printf '%s\n' \
   "$loser_trace_id" \
   'RACE_TRACE_STATE' \
   "$race_trace_state" \
+  'FIXTURE' \
+  "$fixture" \
   > "$ROS_POSTGRES_AUDIT_LINEAGE_PROOF_FILE"
