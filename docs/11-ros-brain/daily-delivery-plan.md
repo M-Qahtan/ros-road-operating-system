@@ -1488,6 +1488,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A PRE-DISCARD QUEUE SUCCESS CANNOT REPOPULATE OR DISPLACE THE RESTORED BROWSER SESSION.** |
 | Next handoff | Prove a late failure from a pre-discard coalesced queue cannot stale the restored session or expose its obsolete error after the restored list succeeds. |
 
+### Obsolete queue failure cannot stale the restored session
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `d3920279d4956c7ba7c8cea066ff8401d6a582cd` was one hundred and fifty-seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | After browser-session discard and a successful authenticated list restoration, a late `503` failure from the pre-discard coalesced queue cannot make the restored view stale, replace its incident set, expose an error, or restore retry or command authority. |
+| Failure isolation | The old request carried database diagnostic text to exercise the sanitization boundary. Because discard advanced read intent and queue generation, both obsolete callers resolved to the current restored state while its incident list, `ready` phase, freshness, and null error remained unchanged and the diagnostic text remained absent. |
+| Local evidence | The deterministic authenticated-browser journey passed **58/58** immediately against the existing bounded controller behavior. It proved the obsolete callers shared one Promise, the restored session completed through its own list read before the old failure was released, both obsolete results resolved to the exact current state, and total traffic remained three list reads, zero detail reads, zero Timeline reads, and zero mutation requests. Build and no-emit TypeScript passed, followed by **772/772** workspace tests (API 670, dashboard 58, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local browser-session failure-isolation evidence only, not deployment or durable database proof. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A LATE PRE-DISCARD QUEUE FAILURE CANNOT STALE OR LEAK INTO THE RESTORED SESSION.** |
+| Next handoff | Prove a second browser-session discard while restoration is pending invalidates both older queue generations so only the latest explicit restoration can publish state. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

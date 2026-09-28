@@ -950,6 +950,99 @@ test('browser-session discard supersedes coalesced queue recovery without leakin
   assert.equal(mutationRequests, 0);
 });
 
+test('late pre-discard queue failure cannot stale or expose error in the restored session', async () => {
+  const obsoleteIncident: RoadEventResponse = {
+    id: '62626262-6262-4262-8262-626262626262',
+    status: 'RECOVERY', latitude: 24.73, longitude: 46.69,
+    occurredAt: '2026-09-28T23:00:00.000Z', version: 16, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const restoredIncident: RoadEventResponse = {
+    ...obsoleteIncident,
+    id: '63636363-6363-4363-8363-636363636363',
+    version: 5,
+    severity: { level: 'S2', score: 49, confidence: 0.92, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+  };
+  const obsoleteQueueBarrier = barrier();
+  const obsoleteQueueStarted = barrier();
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname.startsWith('/api/v1/road-events/')) {
+      detailReads += 1;
+      throw new Error('incident detail must remain unreachable');
+    }
+    const request = ++listReads;
+    if (request === 2) {
+      obsoleteQueueStarted.release();
+      await obsoleteQueueBarrier.wait;
+      return new Response(JSON.stringify({
+        success: false,
+        data: null,
+        error: { code: 'DATABASE_SECRET', message: 'postgres://admin:secret@obsolete-session-db' },
+        traceId: 'trace-obsolete-session-queue'
+      }), { status: 503, headers: { 'content-type': 'application/json' } });
+    }
+    return ok({
+      items: [request === 3 ? restoredIncident : obsoleteIncident],
+      total: 1, limit: 100, offset: 0
+    });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-28T23:01:00.000Z')
+  );
+
+  await controller.load();
+  const obsoleteQueue = controller.load();
+  await obsoleteQueueStarted.wait;
+  const repeatedObsoleteQueue = controller.load();
+  assert.equal(repeatedObsoleteQueue, obsoleteQueue);
+  assert.equal(listReads, 2);
+
+  controller.discardBrowserSession();
+  const restored = await controller.load();
+  assert.equal(restored.phase, 'ready');
+  assert.deepEqual(restored.events.map(({ id }) => id), [restoredIncident.id]);
+  assert.equal(restored.selected, null);
+  assert.deepEqual(restored.timeline, []);
+  assert.equal(restored.stale, false);
+  assert.equal(restored.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(listReads, 3);
+
+  obsoleteQueueBarrier.release();
+  const [obsoleteResult, repeatedObsoleteResult] = await Promise.all([obsoleteQueue, repeatedObsoleteQueue]);
+  assert.equal(obsoleteResult, controller.state);
+  assert.equal(repeatedObsoleteResult, controller.state);
+  assert.equal(controller.state.phase, 'ready');
+  assert.deepEqual(controller.state.events.map(({ id }) => id), [restoredIncident.id]);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.error, null);
+  assert.doesNotMatch(JSON.stringify(controller.state), /postgres|admin|secret|obsolete-session-db/i);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(listReads, 3);
+  assert.equal(detailReads, 0);
+  assert.equal(timelineReads, 0);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',
