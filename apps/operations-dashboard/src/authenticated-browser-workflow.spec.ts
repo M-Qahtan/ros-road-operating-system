@@ -650,6 +650,96 @@ test('authenticated queue reload invalidates pending incident recovery before a 
   assert.equal(mutationRequests, 0);
 });
 
+test('failed authenticated queue reload invalidates pending recovery and exposes only sanitized queue failure', async () => {
+  const incident: RoadEventResponse = {
+    id: '58585858-5858-4858-8858-585858585858',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-09-28T07:00:00.000Z', version: 14, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const recoveryBarrier = barrier();
+  const recoveryStarted = barrier();
+  let detailMode: 'TRUSTED' | 'UNTRUSTED' = 'TRUSTED';
+  let listMode: 'TRUSTED' | 'FAILURE' = 'TRUSTED';
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname === `/api/v1/road-events/${incident.id}`) {
+      detailReads += 1;
+      if (detailReads === 3) {
+        recoveryStarted.release();
+        await recoveryBarrier.wait;
+      }
+      if (detailMode === 'TRUSTED') return ok(incident);
+      return new Response(JSON.stringify({
+        success: true,
+        data: { ...incident, internalSecret: 'must-not-survive-failed-queue-reload' },
+        error: null,
+        traceId: 'trace-failed-queue-reload-detail'
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    listReads += 1;
+    if (listMode === 'TRUSTED') {
+      return ok({ items: [incident], total: 1, limit: 100, offset: 0 });
+    }
+    return new Response(JSON.stringify({
+      success: false,
+      data: null,
+      error: { code: 'DATABASE_SECRET', message: 'postgres://admin:secret@internal-db' },
+      traceId: 'trace-failed-queue-reload'
+    }), { status: 503, headers: { 'content-type': 'application/json' } });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-28T07:01:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(incident.id);
+  detailMode = 'UNTRUSTED';
+  await controller.select(incident.id);
+  detailMode = 'TRUSTED';
+  const obsoleteRecovery = controller.retrySelection();
+  await recoveryStarted.wait;
+
+  listMode = 'FAILURE';
+  const failedReload = await controller.load();
+  assert.equal(failedReload.phase, 'failure');
+  assert.equal(failedReload.selected, null);
+  assert.deepEqual(failedReload.timeline, []);
+  assert.equal(failedReload.stale, true);
+  assert.equal(failedReload.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+  assert.doesNotMatch(failedReload.error ?? '', /postgres|admin|secret|internal-db/i);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.throws(() => controller.retrySelection(), /لا توجد محاولة تحميل فاشلة/);
+
+  recoveryBarrier.release();
+  const obsoleteResult = await obsoleteRecovery;
+  assert.equal(obsoleteResult, controller.state);
+  assert.equal(controller.state.phase, 'failure');
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.throws(() => controller.retrySelection(), /لا توجد محاولة تحميل فاشلة/);
+  assert.equal(listReads, 2);
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

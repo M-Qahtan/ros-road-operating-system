@@ -1428,6 +1428,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AN AUTHENTICATED QUEUE RELOAD NOW DISPOSES PENDING INCIDENT RECOVERY OWNERSHIP BEFORE ANY LATER SELECTION.** |
 | Next handoff | Prove a failed authenticated queue reload also invalidates the pending incident recovery and exposes only the sanitized queue failure, without restoring incident retry or authority. |
 
+### Failed queue reload remains sanitized and cannot revive incident recovery
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-28, GitHub candidate `93655414e3894b11ba3aef67dd13899d47ed7bcb` was one hundred and fifty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | A `503` queue reload failure that supersedes a pending incident recovery leaves only a sanitized `failure/stale` queue state. Incident detail, Timeline, failed-selection retry eligibility, ambiguous command identity, and server diagnostic text remain absent before and after the obsolete detail read completes. |
+| Race ownership | The prior queue-reload ownership fix already invalidates the retry generation before the list request, independent of whether that request succeeds or fails. This cycle adds direct deterministic evidence for the negative branch without broadening production authority or adding speculative code. |
+| Local evidence | The new authenticated browser journey passed **55/55** immediately against the bounded production fix and proved two list reads, three detail/Timeline reads, zero mutation requests, exact sanitized Arabic failure text, no database secret leakage, no callable incident retry after failure, and no state change after the obsolete read completed. Build and no-emit TypeScript passed, followed by **769/769** workspace tests (API 670, dashboard 55, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is executable browser-boundary evidence, not operational deployment or durable database proof. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A FAILED AUTHENTICATED QUEUE RELOAD CANNOT REVIVE INCIDENT RECOVERY OR LEAK SERVER DIAGNOSTICS.** |
+| Next handoff | Prove one explicit authenticated queue retry recovers from the sanitized list failure with one list read only, without issuing detail recovery or mutation requests. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
