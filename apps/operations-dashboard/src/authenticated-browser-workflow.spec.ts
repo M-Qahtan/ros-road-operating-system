@@ -545,6 +545,111 @@ test('newer incident failure cannot coalesce onto an older incident recovery in 
   assert.equal(mutationRequests, 0);
 });
 
+test('authenticated queue reload invalidates pending incident recovery before a later selection', async () => {
+  const olderIncident: RoadEventResponse = {
+    id: '56565656-5656-4656-8656-565656565656',
+    status: 'RECOVERY', latitude: 24.72, longitude: 46.68,
+    occurredAt: '2026-09-28T00:00:00.000Z', version: 14, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const newerIncident: RoadEventResponse = {
+    ...olderIncident,
+    id: '57575757-5757-4757-8757-575757575757',
+    occurredAt: '2026-09-28T00:01:00.000Z'
+  };
+  const olderRecoveryBarrier = barrier();
+  const olderRecoveryStarted = barrier();
+  const newerRecoveryBarrier = barrier();
+  const newerRecoveryStarted = barrier();
+  const detailModes = new Map<string, 'TRUSTED' | 'UNTRUSTED'>([
+    [olderIncident.id, 'TRUSTED'],
+    [newerIncident.id, 'TRUSTED']
+  ]);
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    const incident = [olderIncident, newerIncident].find(
+      ({ id }) => target.pathname === `/api/v1/road-events/${id}`
+    );
+    if (incident !== undefined) {
+      detailReads += 1;
+      if (incident.id === olderIncident.id && detailReads === 3) {
+        olderRecoveryStarted.release();
+        await olderRecoveryBarrier.wait;
+      }
+      if (incident.id === newerIncident.id && detailReads === 5) {
+        newerRecoveryStarted.release();
+        await newerRecoveryBarrier.wait;
+      }
+      if (detailModes.get(incident.id) === 'TRUSTED') return ok(incident);
+      return new Response(JSON.stringify({
+        success: true,
+        data: { ...incident, internalSecret: 'must-not-survive-queue-reload' },
+        error: null,
+        traceId: 'trace-queue-reload-retry'
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    listReads += 1;
+    return ok({ items: [olderIncident, newerIncident], total: 2, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-28T00:02:00.000Z')
+  );
+
+  await controller.load();
+  await controller.select(olderIncident.id);
+  detailModes.set(olderIncident.id, 'UNTRUSTED');
+  await controller.select(olderIncident.id);
+  detailModes.set(olderIncident.id, 'TRUSTED');
+  const obsoleteRecovery = controller.retrySelection();
+  await olderRecoveryStarted.wait;
+
+  const reloaded = await controller.load();
+  assert.equal(reloaded.phase, 'ready');
+  assert.equal(reloaded.selected, null);
+  assert.deepEqual(reloaded.timeline, []);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.throws(() => controller.retrySelection(), /لا توجد محاولة تحميل فاشلة/);
+
+  detailModes.set(newerIncident.id, 'UNTRUSTED');
+  const newerFailure = await controller.select(newerIncident.id);
+  assert.equal(newerFailure.phase, 'failure');
+  assert.equal(newerFailure.stale, true);
+  detailModes.set(newerIncident.id, 'TRUSTED');
+  const currentRecovery = controller.retrySelection();
+  assert.notEqual(currentRecovery, obsoleteRecovery);
+  await newerRecoveryStarted.wait;
+
+  olderRecoveryBarrier.release();
+  const obsoleteResult = await obsoleteRecovery;
+  assert.equal(obsoleteResult.phase, 'failure');
+  assert.equal(obsoleteResult.selected, null);
+  assert.equal(controller.retrySelection(), currentRecovery);
+
+  newerRecoveryBarrier.release();
+  const recovered = await currentRecovery;
+  assert.equal(recovered.phase, 'ready');
+  assert.equal(recovered.selected?.id, newerIncident.id);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(listReads, 2);
+  assert.equal(detailReads, 5);
+  assert.equal(timelineReads, 5);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

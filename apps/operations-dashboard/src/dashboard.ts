@@ -97,6 +97,8 @@ export class OperationsDashboardController {
   }
 
   async load(): Promise<DashboardState> {
+    ++this.retryGeneration;
+    this.retryInFlight = null;
     const intent = ++this.readIntent;
     this.failedSelectionId = null;
     this.current = { ...this.current, phase: 'loading', error: null };

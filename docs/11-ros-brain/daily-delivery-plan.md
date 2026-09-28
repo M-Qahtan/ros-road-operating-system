@@ -1416,6 +1416,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A NEWER INCIDENT FAILURE CANNOT INHERIT OR BE CLEARED BY AN OLDER INCIDENT'S PENDING RECOVERY PROMISE.** |
 | Next handoff | Prove an authenticated queue reload supersedes a pending incident recovery so a later failed selection cannot inherit the obsolete promise. |
 
+### Queue reload invalidates pending incident recovery ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-28, GitHub candidate `0864a40f55dfa0fb4de8deb7d728095231d57063` was one hundred and fifty-one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | Starting an authenticated queue reload now invalidates any pending incident-recovery owner before requesting the list. A successful reload leaves no failed-selection retry path, and a later failed selection creates a distinct recovery promise for its own incident. |
+| Race ownership | Queue reload advances both the read intent and retry generation. The obsolete detail read may finish after a newer incident recovery starts, but cannot repopulate detail, clear the current retry, or become callable after the queue has reset selection state. |
+| Local evidence | The deterministic regression first failed **53/54** because `retrySelection()` returned the obsolete promise after a successful queue reload. After the bounded controller fix, the dashboard suite passed **54/54** and proved two queue reads, five bounded detail/Timeline reads, no retry immediately after reload, distinct old/new promises, recovery of the newer incident only, and zero mutation requests. Build and no-emit TypeScript passed, followed by **768/768** workspace tests (API 670, dashboard 54, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This change controls process-local authenticated reads only. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **AN AUTHENTICATED QUEUE RELOAD NOW DISPOSES PENDING INCIDENT RECOVERY OWNERSHIP BEFORE ANY LATER SELECTION.** |
+| Next handoff | Prove a failed authenticated queue reload also invalidates the pending incident recovery and exposes only the sanitized queue failure, without restoring incident retry or authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
