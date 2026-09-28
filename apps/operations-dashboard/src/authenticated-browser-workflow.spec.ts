@@ -771,6 +771,79 @@ test('failed authenticated queue reload invalidates pending recovery and exposes
   assert.equal(mutationRequests, 0);
 });
 
+test('newer authenticated selection supersedes a coalesced queue recovery and survives its late completion', async () => {
+  const incident: RoadEventResponse = {
+    id: '59595959-5959-4959-8959-595959595959',
+    status: 'RECOVERY', latitude: 24.73, longitude: 46.69,
+    occurredAt: '2026-09-28T21:00:00.000Z', version: 15, closureAuthorization: null,
+    severity: { level: 'S4', score: 97, confidence: 0.96, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const queueBarrier = barrier();
+  const queueStarted = barrier();
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname === `/api/v1/road-events/${incident.id}`) {
+      detailReads += 1;
+      return ok(incident);
+    }
+    listReads += 1;
+    if (listReads === 2) {
+      queueStarted.release();
+      await queueBarrier.wait;
+    }
+    return ok({ items: [incident], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-28T21:01:00.000Z')
+  );
+
+  await controller.load();
+  const firstQueueRecovery = controller.load();
+  await queueStarted.wait;
+  const repeatedQueueRecovery = controller.load();
+  assert.equal(repeatedQueueRecovery, firstQueueRecovery);
+  assert.equal(listReads, 2);
+
+  const selected = await controller.select(incident.id);
+  assert.equal(selected.phase, 'ready');
+  assert.equal(selected.selected?.id, incident.id);
+  assert.deepEqual(selected.timeline, []);
+  assert.equal(selected.stale, false);
+  assert.equal(selected.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+
+  queueBarrier.release();
+  const [obsoleteQueue, repeatedObsoleteQueue] = await Promise.all([firstQueueRecovery, repeatedQueueRecovery]);
+  assert.equal(obsoleteQueue, controller.state);
+  assert.equal(repeatedObsoleteQueue, controller.state);
+  assert.equal(controller.state.phase, 'ready');
+  assert.equal(controller.state.selected?.id, incident.id);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(listReads, 2);
+  assert.equal(detailReads, 1);
+  assert.equal(timelineReads, 1);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

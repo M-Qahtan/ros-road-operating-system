@@ -1464,6 +1464,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **CONCURRENT EXPLICIT QUEUE RECOVERIES NOW HAVE ONE AUTHENTICATED READ OWNER AND ONE CURRENT RESULT.** |
 | Next handoff | Prove a newer authenticated incident selection supersedes a coalesced queue recovery and cannot be overwritten when the obsolete list read completes late. |
 
+### Newer incident selection survives obsolete queue completion
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `afd7d69839bc9ca51fba5cbc35426b250ed72be9` was one hundred and fifty-five commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | A newer authenticated incident selection supersedes a coalesced queue recovery. When the obsolete list request completes late, both queue callers resolve to the current incident state and cannot replace the selected incident, Timeline, freshness, or error state. |
+| Race ownership | Selection invalidates the queue-load generation and advances read intent before its detail/Timeline pair. The obsolete shared queue Promise may settle afterward, but intent comparison makes it return the current selection without applying list output, and its old generation cannot clear a later queue owner. |
+| Local evidence | The new deterministic authenticated-browser journey passed **56/56** immediately against the prior bounded fix. It proved two callers shared the pending queue Promise and one list read, selection used exactly one detail and one Timeline read, late queue completion preserved the selected incident and `ready` state, failed-selection retry and ambiguous command identity stayed absent, and mutation requests remained zero. Build and no-emit TypeScript passed, followed by **770/770** workspace tests (API 670, dashboard 56, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is browser-boundary race evidence only, not deployment or durable database proof. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A LATE COALESCED QUEUE RESULT CANNOT OVERWRITE A NEWER AUTHENTICATED INCIDENT SELECTION.** |
+| Next handoff | Prove browser-session discard supersedes a coalesced queue recovery so late success cannot repopulate the cleared session or leak queue state into a restored session. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
