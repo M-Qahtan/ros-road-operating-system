@@ -1440,6 +1440,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FAILED AUTHENTICATED QUEUE RELOAD CANNOT REVIVE INCIDENT RECOVERY OR LEAK SERVER DIAGNOSTICS.** |
 | Next handoff | Prove one explicit authenticated queue retry recovers from the sanitized list failure with one list read only, without issuing detail recovery or mutation requests. |
 
+### Explicit queue retry recovers through the list boundary only
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-28, GitHub candidate `db9fcc7bd739bab97697607d72a2fc082f0add6e` was one hundred and fifty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | After a sanitized `503` list failure and late completion of an obsolete incident recovery, one explicit authenticated queue reload returns the controller to `ready` with the trusted incident list while selection and Timeline remain empty. Queue failure text, stale state, failed-selection retry eligibility, and ambiguous command identity remain absent. |
+| Read boundary | The explicit recovery advances the list-read count from two to three exactly once. Detail and Timeline reads remain fixed at three and mutation requests remain zero, proving that list recovery does not silently reopen incident recovery or an authority-bearing path. |
+| Local evidence | The extended authenticated browser journey passed **55/55** immediately against the existing bounded production behavior and asserted `ready`, the exact incident identifier, `stale=false`, `error=null`, no selected incident or Timeline, no callable selection retry, three total list reads, unchanged detail/Timeline counts, and zero mutation requests. Build and no-emit TypeScript passed, followed by **769/769** workspace tests (API 670, dashboard 55, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is executable browser-boundary recovery evidence, not operational deployment or durable database proof. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE EXPLICIT AUTHENTICATED QUEUE RETRY RECOVERS THROUGH ONE LIST READ WITHOUT INCIDENT OR MUTATION TRAFFIC.** |
+| Next handoff | Prove concurrent explicit queue retries coalesce into one authenticated list read and one current result without detail, Timeline, or mutation traffic. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

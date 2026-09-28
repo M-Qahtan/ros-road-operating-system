@@ -738,6 +738,21 @@ test('failed authenticated queue reload invalidates pending recovery and exposes
   assert.equal(detailReads, 3);
   assert.equal(timelineReads, 3);
   assert.equal(mutationRequests, 0);
+
+  listMode = 'TRUSTED';
+  const recoveredQueue = await controller.load();
+  assert.equal(recoveredQueue.phase, 'ready');
+  assert.deepEqual(recoveredQueue.events.map(({ id }) => id), [incident.id]);
+  assert.equal(recoveredQueue.selected, null);
+  assert.deepEqual(recoveredQueue.timeline, []);
+  assert.equal(recoveredQueue.stale, false);
+  assert.equal(recoveredQueue.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.throws(() => controller.retrySelection(), /لا توجد محاولة تحميل فاشلة/);
+  assert.equal(listReads, 3);
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
+  assert.equal(mutationRequests, 0);
 });
 
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
