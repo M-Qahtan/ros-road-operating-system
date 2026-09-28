@@ -1476,6 +1476,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A LATE COALESCED QUEUE RESULT CANNOT OVERWRITE A NEWER AUTHENTICATED INCIDENT SELECTION.** |
 | Next handoff | Prove browser-session discard supersedes a coalesced queue recovery so late success cannot repopulate the cleared session or leak queue state into a restored session. |
 
+### Browser-session discard isolates obsolete queue ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `46f248bafad719069e63a55eb46aebc26e4c357f` was one hundred and fifty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Browser-session discard supersedes a coalesced authenticated queue recovery. The obsolete success cannot repopulate the cleared controller, and a restored queue read has a distinct Promise and exposes only its own trusted incident set. |
+| Race ownership | Discard advances read intent and queue generation, clears the shared owner, and empties all browser-visible state. A pre-discard queue completion returns the current cleared/restoring state, and its old `finally` callback cannot clear or replace the restored session's in-flight queue owner. |
+| Local evidence | The deterministic authenticated-browser journey passed **57/57** immediately against the existing bounded controller behavior. It proved the two obsolete callers shared one Promise, discard cleared events, selection, Timeline, freshness error, retry eligibility, and command identity, the restored read used a distinct owner, the obsolete completion left restoration pending and empty, a repeated restored caller still shared the new Promise, and only the restored incident became visible. Total traffic remained three list reads, zero detail reads, zero Timeline reads, and zero mutation requests. Build and no-emit TypeScript passed, followed by **771/771** workspace tests (API 670, dashboard 57, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local browser-session and read-ownership evidence only, not credential rotation, deployment, or durable database proof. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A PRE-DISCARD QUEUE SUCCESS CANNOT REPOPULATE OR DISPLACE THE RESTORED BROWSER SESSION.** |
+| Next handoff | Prove a late failure from a pre-discard coalesced queue cannot stale the restored session or expose its obsolete error after the restored list succeeds. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

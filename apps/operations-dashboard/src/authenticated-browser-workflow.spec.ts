@@ -844,6 +844,112 @@ test('newer authenticated selection supersedes a coalesced queue recovery and su
   assert.equal(mutationRequests, 0);
 });
 
+test('browser-session discard supersedes coalesced queue recovery without leaking into restored ownership', async () => {
+  const obsoleteIncident: RoadEventResponse = {
+    id: '60606060-6060-4060-8060-606060606060',
+    status: 'RECOVERY', latitude: 24.73, longitude: 46.69,
+    occurredAt: '2026-09-28T22:00:00.000Z', version: 15, closureAuthorization: null,
+    severity: { level: 'S4', score: 97, confidence: 0.96, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const restoredIncident: RoadEventResponse = {
+    ...obsoleteIncident,
+    id: '61616161-6161-4161-8161-616161616161',
+    version: 4,
+    severity: { level: 'S2', score: 51, confidence: 0.91, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+  };
+  const obsoleteQueueBarrier = barrier();
+  const obsoleteQueueStarted = barrier();
+  const restoredQueueBarrier = barrier();
+  const restoredQueueStarted = barrier();
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname.startsWith('/api/v1/road-events/')) {
+      detailReads += 1;
+      throw new Error('incident detail must remain unreachable');
+    }
+    const request = ++listReads;
+    if (request === 2) {
+      obsoleteQueueStarted.release();
+      await obsoleteQueueBarrier.wait;
+    }
+    if (request === 3) {
+      restoredQueueStarted.release();
+      await restoredQueueBarrier.wait;
+    }
+    return ok({
+      items: [request === 3 ? restoredIncident : obsoleteIncident],
+      total: 1, limit: 100, offset: 0
+    });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-28T22:01:00.000Z')
+  );
+
+  await controller.load();
+  const obsoleteQueue = controller.load();
+  await obsoleteQueueStarted.wait;
+  const repeatedObsoleteQueue = controller.load();
+  assert.equal(repeatedObsoleteQueue, obsoleteQueue);
+  assert.equal(listReads, 2);
+
+  const discarded = controller.discardBrowserSession();
+  assert.equal(discarded.phase, 'loading');
+  assert.deepEqual(discarded.events, []);
+  assert.equal(discarded.selected, null);
+  assert.deepEqual(discarded.timeline, []);
+  assert.equal(discarded.stale, false);
+  assert.equal(discarded.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+
+  const restoredQueue = controller.load();
+  await restoredQueueStarted.wait;
+  assert.notEqual(restoredQueue, obsoleteQueue);
+  assert.equal(listReads, 3);
+
+  obsoleteQueueBarrier.release();
+  const [obsoleteResult, repeatedObsoleteResult] = await Promise.all([obsoleteQueue, repeatedObsoleteQueue]);
+  assert.equal(obsoleteResult, controller.state);
+  assert.equal(repeatedObsoleteResult, controller.state);
+  assert.equal(controller.state.phase, 'loading');
+  assert.deepEqual(controller.state.events, []);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  const repeatedRestoredQueue = controller.load();
+  assert.equal(repeatedRestoredQueue, restoredQueue);
+  assert.equal(listReads, 3);
+
+  restoredQueueBarrier.release();
+  const [restoredResult, repeatedRestoredResult] = await Promise.all([restoredQueue, repeatedRestoredQueue]);
+  assert.equal(repeatedRestoredResult, restoredResult);
+  assert.equal(restoredResult.phase, 'ready');
+  assert.deepEqual(restoredResult.events.map(({ id }) => id), [restoredIncident.id]);
+  assert.equal(restoredResult.selected, null);
+  assert.deepEqual(restoredResult.timeline, []);
+  assert.equal(restoredResult.stale, false);
+  assert.equal(restoredResult.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(listReads, 3);
+  assert.equal(detailReads, 0);
+  assert.equal(timelineReads, 0);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',
