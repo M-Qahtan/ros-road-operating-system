@@ -1452,6 +1452,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE EXPLICIT AUTHENTICATED QUEUE RETRY RECOVERS THROUGH ONE LIST READ WITHOUT INCIDENT OR MUTATION TRAFFIC.** |
 | Next handoff | Prove concurrent explicit queue retries coalesce into one authenticated list read and one current result without detail, Timeline, or mutation traffic. |
 
+### Concurrent queue recovery has one authenticated owner
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-28, GitHub candidate `3429d46ded9a3300b74cb141c20e413e0bea5a2d` was one hundred and fifty-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | Concurrent explicit authenticated queue recoveries now share the exact in-flight Promise and therefore perform one list read. Both callers receive the same current `ready` result without opening incident detail, Timeline, failed-selection retry, ambiguous command, or mutation paths. |
+| Race ownership | A dedicated queue-load generation owns the shared Promise. A newer incident selection or browser-session discard advances that generation and clears the owner, so an obsolete queue read cannot be inherited by a newer operator intent and its `finally` callback cannot clear a later queue owner. |
+| Local evidence | The deterministic browser test first failed **54/55** because the second recovery returned a distinct Promise and began a second list request. After the bounded controller fix, the dashboard suite passed **55/55** and proved reference-equal Promises, one additional list read, identical results, unchanged detail/Timeline counts, and zero mutation requests. Build and no-emit TypeScript passed, followed by **769/769** workspace tests (API 670, dashboard 55, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | Coalescing is process-local and read-only. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **CONCURRENT EXPLICIT QUEUE RECOVERIES NOW HAVE ONE AUTHENTICATED READ OWNER AND ONE CURRENT RESULT.** |
+| Next handoff | Prove a newer authenticated incident selection supersedes a coalesced queue recovery and cannot be overwritten when the obsolete list read completes late. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

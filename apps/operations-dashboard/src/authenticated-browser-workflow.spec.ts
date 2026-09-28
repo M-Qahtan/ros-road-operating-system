@@ -659,6 +659,8 @@ test('failed authenticated queue reload invalidates pending recovery and exposes
   };
   const recoveryBarrier = barrier();
   const recoveryStarted = barrier();
+  const queueRecoveryBarrier = barrier();
+  const queueRecoveryStarted = barrier();
   let detailMode: 'TRUSTED' | 'UNTRUSTED' = 'TRUSTED';
   let listMode: 'TRUSTED' | 'FAILURE' = 'TRUSTED';
   let listReads = 0;
@@ -692,6 +694,10 @@ test('failed authenticated queue reload invalidates pending recovery and exposes
     }
     listReads += 1;
     if (listMode === 'TRUSTED') {
+      if (listReads === 3) {
+        queueRecoveryStarted.release();
+        await queueRecoveryBarrier.wait;
+      }
       return ok({ items: [incident], total: 1, limit: 100, offset: 0 });
     }
     return new Response(JSON.stringify({
@@ -740,7 +746,17 @@ test('failed authenticated queue reload invalidates pending recovery and exposes
   assert.equal(mutationRequests, 0);
 
   listMode = 'TRUSTED';
-  const recoveredQueue = await controller.load();
+  const firstQueueRecovery = controller.load();
+  await queueRecoveryStarted.wait;
+  const repeatedQueueRecovery = controller.load();
+  assert.equal(repeatedQueueRecovery, firstQueueRecovery);
+  assert.equal(listReads, 3);
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
+  assert.equal(mutationRequests, 0);
+  queueRecoveryBarrier.release();
+  const [recoveredQueue, repeatedQueue] = await Promise.all([firstQueueRecovery, repeatedQueueRecovery]);
+  assert.equal(repeatedQueue, recoveredQueue);
   assert.equal(recoveredQueue.phase, 'ready');
   assert.deepEqual(recoveredQueue.events.map(({ id }) => id), [incident.id]);
   assert.equal(recoveredQueue.selected, null);

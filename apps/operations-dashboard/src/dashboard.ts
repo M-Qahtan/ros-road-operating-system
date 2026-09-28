@@ -62,6 +62,8 @@ export class OperationsDashboardController {
     phase: 'loading', events: [], selected: null, timeline: [], stale: false, error: null, lastUpdatedAt: null
   };
   private failedSelectionId: string | null = null;
+  private queueLoadInFlight: Promise<DashboardState> | null = null;
+  private queueLoadGeneration = 0;
   private retryInFlight: Promise<DashboardState> | null = null;
   private retryGeneration = 0;
   private criticalActionInFlight: { readonly key: string; readonly result: Promise<DashboardState> } | null = null;
@@ -96,7 +98,16 @@ export class OperationsDashboardController {
     return nextStatus !== 'CLOSED' || (selected !== null && selected.closureAuthorization !== null);
   }
 
-  async load(): Promise<DashboardState> {
+  load(): Promise<DashboardState> {
+    if (this.queueLoadInFlight !== null) return this.queueLoadInFlight;
+    const generation = ++this.queueLoadGeneration;
+    this.queueLoadInFlight = this.readQueue().finally(() => {
+      if (generation === this.queueLoadGeneration) this.queueLoadInFlight = null;
+    });
+    return this.queueLoadInFlight;
+  }
+
+  private async readQueue(): Promise<DashboardState> {
     ++this.retryGeneration;
     this.retryInFlight = null;
     const intent = ++this.readIntent;
@@ -130,6 +141,8 @@ export class OperationsDashboardController {
   }
 
   async select(id: string): Promise<DashboardState> {
+    ++this.queueLoadGeneration;
+    this.queueLoadInFlight = null;
     ++this.retryGeneration;
     this.retryInFlight = null;
     return this.readSelection(id);
@@ -260,6 +273,8 @@ export class OperationsDashboardController {
 
   discardBrowserSession(): DashboardState {
     ++this.readIntent;
+    ++this.queueLoadGeneration;
+    this.queueLoadInFlight = null;
     ++this.retryGeneration;
     this.retryInFlight = null;
     this.failedSelectionId = null;
