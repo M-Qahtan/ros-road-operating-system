@@ -128,6 +128,12 @@ export class OperationsDashboardController {
   }
 
   async select(id: string): Promise<DashboardState> {
+    ++this.retryGeneration;
+    this.retryInFlight = null;
+    return this.readSelection(id);
+  }
+
+  private async readSelection(id: string): Promise<DashboardState> {
     const intent = ++this.readIntent;
     try {
       const [selected, timeline] = await Promise.all([this.gateway.getById(id), this.gateway.timeline(id)]);
@@ -171,7 +177,7 @@ export class OperationsDashboardController {
     const id = this.failedSelectionId;
     if (id === null) throw new Error('لا توجد محاولة تحميل فاشلة لإعادتها');
     const generation = ++this.retryGeneration;
-    this.retryInFlight = this.select(id).finally(() => {
+    this.retryInFlight = this.readSelection(id).finally(() => {
       if (generation === this.retryGeneration) this.retryInFlight = null;
     });
     return this.retryInFlight;

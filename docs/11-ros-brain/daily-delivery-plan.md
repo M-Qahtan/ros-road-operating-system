@@ -1404,6 +1404,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A RECOVERED BROWSER SESSION CAN NO LONGER INHERIT OR BE CLEARED BY AN OBSOLETE PRIOR-SESSION RECOVERY PROMISE.** |
 | Next handoff | Prove a newer failed selection for a different incident in the same session cannot coalesce onto an older incident's still-pending recovery promise. |
 
+### Retry promise ownership follows the selected incident
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-28, GitHub candidate `fc43c6494e6f65be5075d1aef86607ae854b6199` was one hundred and fifty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Added behavior | Starting an explicit incident selection now invalidates any pending selection-retry owner before beginning the new authenticated detail/Timeline read. A subsequent failure for another incident therefore creates its own recovery promise and cannot coalesce onto the older incident's pending recovery. |
+| Race ownership | Explicit selection and retry share one private read path but have distinct ownership entry points. The public selection advances the retry generation and clears the old owner; retry registers the current generation around the private read. The obsolete read may complete later, but its read intent and generation cannot replace state or clear the newer retry. |
+| Local evidence | The deterministic regression first failed **52/53** because the newer incident received the exact older recovery promise. After the bounded controller fix, the dashboard suite passed **53/53** and proved distinct promises, five bounded detail/Timeline reads, late obsolete completion while the current recovery remained owned, recovery of the newer incident only, and zero mutation requests. Build and no-emit TypeScript passed, followed by **767/767** workspace tests (API 670, dashboard 53, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This change controls process-local read recovery only. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A NEWER INCIDENT FAILURE CANNOT INHERIT OR BE CLEARED BY AN OLDER INCIDENT'S PENDING RECOVERY PROMISE.** |
+| Next handoff | Prove an authenticated queue reload supersedes a pending incident recovery so a later failed selection cannot inherit the obsolete promise. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
