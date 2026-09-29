@@ -1429,6 +1429,122 @@ test('session discard invalidates a pending post-failure queue retry', async () 
   assert.equal(mutationRequests, 0);
 });
 
+test('new-session restoration failure survives late obsolete retry success', async () => {
+  const obsoleteRetryIncident: RoadEventResponse = {
+    id: '73737373-7373-4373-8373-737373737373',
+    status: 'RECOVERY', latitude: 24.74, longitude: 46.7,
+    occurredAt: '2026-09-29T03:00:00.000Z', version: 5, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const retryBarrier = barrier();
+  const retryStarted = barrier();
+  const restorationBarrier = barrier();
+  const restorationStarted = barrier();
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname.startsWith('/api/v1/road-events/')) {
+      detailReads += 1;
+      throw new Error('incident detail must remain unreachable');
+    }
+    const request = ++listReads;
+    if (request === 1) {
+      return new Response(JSON.stringify({
+        success: false,
+        data: null,
+        error: { code: 'DATABASE_SECRET', message: 'postgres://admin:secret@failed-session-db' },
+        traceId: 'trace-pre-discard-failure'
+      }), { status: 503, headers: { 'content-type': 'application/json' } });
+    }
+    if (request === 2) {
+      retryStarted.release();
+      await retryBarrier.wait;
+      return ok({ items: [obsoleteRetryIncident], total: 1, limit: 100, offset: 0 });
+    }
+    restorationStarted.release();
+    await restorationBarrier.wait;
+    return new Response(JSON.stringify({
+      success: false,
+      data: null,
+      error: { code: 'RESTORATION_SECRET', message: 'postgres://restorer:new-secret@new-session-db' },
+      traceId: 'trace-new-session-failure'
+    }), { status: 503, headers: { 'content-type': 'application/json' } });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-29T03:01:00.000Z')
+  );
+
+  const failed = await controller.load();
+  assert.equal(failed.phase, 'failure');
+  assert.deepEqual(failed.events, []);
+  assert.equal(failed.stale, true);
+  assert.doesNotMatch(JSON.stringify(failed), /postgres|admin|secret|failed-session-db/i);
+
+  const retry = controller.load();
+  await retryStarted.wait;
+  const repeatedRetry = controller.load();
+  assert.equal(repeatedRetry, retry);
+
+  controller.discardBrowserSession();
+  const restoration = controller.load();
+  await restorationStarted.wait;
+  const repeatedRestoration = controller.load();
+  assert.equal(repeatedRestoration, restoration);
+  assert.notEqual(restoration, retry);
+  assert.equal(listReads, 3);
+
+  restorationBarrier.release();
+  const [restorationFailure, repeatedRestorationFailure] = await Promise.all([restoration, repeatedRestoration]);
+  assert.equal(repeatedRestorationFailure, restorationFailure);
+  assert.equal(restorationFailure.phase, 'failure');
+  assert.deepEqual(restorationFailure.events, []);
+  assert.equal(restorationFailure.selected, null);
+  assert.deepEqual(restorationFailure.timeline, []);
+  assert.equal(restorationFailure.stale, true);
+  assert.equal(restorationFailure.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+  assert.doesNotMatch(
+    JSON.stringify(restorationFailure),
+    /postgres|admin|restorer|secret|failed-session-db|new-session-db|73737373/i
+  );
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+
+  retryBarrier.release();
+  const [obsoleteResult, repeatedObsoleteResult] = await Promise.all([retry, repeatedRetry]);
+  assert.equal(obsoleteResult, controller.state);
+  assert.equal(repeatedObsoleteResult, controller.state);
+  assert.equal(controller.state, restorationFailure);
+  assert.equal(controller.state.phase, 'failure');
+  assert.deepEqual(controller.state.events, []);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.state.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+  assert.doesNotMatch(
+    JSON.stringify(controller.state),
+    /postgres|admin|restorer|secret|failed-session-db|new-session-db|73737373/i
+  );
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(listReads, 3);
+  assert.equal(detailReads, 0);
+  assert.equal(timelineReads, 0);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

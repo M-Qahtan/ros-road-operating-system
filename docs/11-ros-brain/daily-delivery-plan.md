@@ -1548,6 +1548,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **DISCARD INVALIDATES THE PENDING POST-FAILURE RETRY; ONLY THE NEW SESSION RESTORATION CAN PUBLISH.** |
 | Next handoff | Make the new-session restoration fail after discard while the obsolete retry succeeds late, and prove only the new sanitized failure remains visible without incident, retry, or command authority. |
 
+### New-session failure survives an obsolete retry success
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `9bf83ef07584d236bb9e3008aaeaa370a277f2a2` was one hundred and sixty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | When new-session restoration fails after discard, that sanitized `failure/stale` result remains the only visible state even if the pre-discard retry later succeeds. The old incident cannot repopulate the queue, become selected, or restore retry or critical-command authority. |
+| Race ownership | The obsolete retry callers share one Promise and the restoration callers share a distinct Promise. The restoration failure completes first and becomes current; releasing the obsolete success afterward returns the current sanitized failure to both obsolete callers without replacing it. |
+| Local evidence | The deterministic authenticated-browser journey passed **62/62** directly. It proved one initial sanitized failure, one pending obsolete retry, one discard, one failing new-session restoration, three total list reads, absence of both server diagnostics and the obsolete incident, and zero detail, Timeline, or mutation requests. Build and no-emit TypeScript passed, followed by **776/776** workspace tests (API 670, dashboard 62, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local browser-session and authenticated read-recovery evidence only, not credential rotation, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE NEW SANITIZED RESTORATION FAILURE REMAINS CURRENT AFTER THE OBSOLETE RETRY SUCCEEDS.** |
+| Next handoff | Retry explicitly after this new-session failure and prove one fresh authenticated list generation can recover without inheriting the obsolete result or opening detail, Timeline, or mutation traffic. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
