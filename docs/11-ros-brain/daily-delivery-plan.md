@@ -1608,6 +1608,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **QUEUE REFRESH CLEARS THE PRIOR SELECTION BEFORE REVISION 2 CAN BE EXPLICITLY SELECTED; MUTATIONS REMAIN ZERO.** |
 | Next handoff | Make the revision refresh fail after it clears the prior selection, then prove the sanitized failure cannot restore revision `1` and one explicit list retry recovers revision `2` before any selection, with mutation traffic still zero. |
 
+### Failed revision refresh recovers through one explicit list retry
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `1bbd827f39d330e249379f4650d0e43d5228ee2a` was one hundred and sixty-seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | A `503` from the revision refresh leaves the selected detail and Timeline cleared, marks the queue `failure/stale`, exposes only the approved Arabic service message, and keeps transition and closure controls disabled. One later explicit list request recovers revision `2` while selection remains empty; only a subsequent explicit selection reads its detail and Timeline. |
+| Failure and recovery boundary | The simulated database URL and refresh error code never reach dashboard state. The failed refresh cannot restore selected revision `1` or grant a selection retry, and the list retry performs exactly one additional list read before revision `2` can be selected. No transition or closure-authorization request is emitted. |
+| Local evidence | The rebuilt deterministic authenticated-browser journey passed **62/62** directly. Build and no-emit TypeScript passed, followed by **776/776** workspace tests (API 670, dashboard 62, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. Across the complete journey it recorded six list reads, four detail reads, four Timeline reads, and zero mutations. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated failure/recovery evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **SANITIZED REVISION-REFRESH FAILURE CANNOT RESTORE REVISION 1; ONE LIST RETRY RECOVERS REVISION 2 BEFORE SELECTION.** |
+| Next handoff | Hold revision `2` detail and Timeline reads pending, publish revision `3` through a queue refresh, and prove that the newer refresh supersedes the pending revision-2 selection before only revision `3` can be selected, with mutation traffic still zero. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

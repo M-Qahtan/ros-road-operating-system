@@ -1531,6 +1531,14 @@ test('new-session restoration failure survives obsolete retry and recovers indep
     }
     revisionRefreshStarted.release();
     await revisionRefreshBarrier.wait;
+    if (request === 5) {
+      return new Response(JSON.stringify({
+        success: false,
+        data: null,
+        error: { code: 'REVISION_REFRESH_SECRET', message: 'postgres://reader:secret@revision-refresh-db' },
+        traceId: 'trace-revision-refresh-failure'
+      }), { status: 503, headers: { 'content-type': 'application/json' } });
+    }
     return ok({ items: [newerRecoveredIncident], total: 1, limit: 100, offset: 0 });
   };
   const controller = new OperationsDashboardController(
@@ -1668,7 +1676,22 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   assert.equal(controller.canAuthorizeClosure(), false);
 
   revisionRefreshBarrier.release();
-  const refreshedRevision = await revisionRefresh;
+  const failedRevisionRefresh = await revisionRefresh;
+  assert.equal(failedRevisionRefresh.phase, 'failure');
+  assert.equal(failedRevisionRefresh.selected, null);
+  assert.deepEqual(failedRevisionRefresh.timeline, []);
+  assert.equal(failedRevisionRefresh.stale, true);
+  assert.equal(failedRevisionRefresh.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+  assert.doesNotMatch(
+    JSON.stringify(failedRevisionRefresh),
+    /postgres|reader|secret|revision-refresh-db/i
+  );
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(listReads, 5);
+
+  const refreshedRevision = await controller.load();
   assert.equal(refreshedRevision.phase, 'ready');
   assert.equal(refreshedRevision.events[0]?.id, newerRecoveredIncident.id);
   assert.equal(refreshedRevision.events[0]?.version, newerRecoveredIncident.version);
@@ -1676,7 +1699,7 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   assert.deepEqual(refreshedRevision.timeline, []);
   assert.equal(refreshedRevision.stale, false);
   assert.equal(refreshedRevision.error, null);
-  assert.equal(listReads, 5);
+  assert.equal(listReads, 6);
 
   const selectedNewerRevision = await controller.select(newerRecoveredIncident.id);
   assert.equal(selectedNewerRevision.phase, 'ready');
