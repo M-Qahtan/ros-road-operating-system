@@ -1620,6 +1620,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **SANITIZED REVISION-REFRESH FAILURE CANNOT RESTORE REVISION 1; ONE LIST RETRY RECOVERS REVISION 2 BEFORE SELECTION.** |
 | Next handoff | Hold revision `2` detail and Timeline reads pending, publish revision `3` through a queue refresh, and prove that the newer refresh supersedes the pending revision-2 selection before only revision `3` can be selected, with mutation traffic still zero. |
 
+### Revision-3 refresh supersedes a pending revision-2 selection
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `b3afa25e338b05259a3197e72777bac4e7b6e3a7` was one hundred and sixty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Detail and Timeline reads for revision `2` remain deterministically pending while a newer authenticated queue refresh publishes revision `3`. The refresh clears selection and Timeline; completion of both obsolete revision-2 reads cannot overwrite the revision-3 queue or restore a selection. Only a later explicit selection publishes revision `3` and its append-only Timeline. |
+| Concurrency and authority boundary | The obsolete compound selection returns the current revision-3 queue state after losing read intent. Transition and closure controls stay disabled until revision `3` is explicitly selected, the final Timeline tail binds to revision `3`, and no transition or closure-authorization request is emitted. |
+| Local evidence | The rebuilt deterministic authenticated-browser journey passed **62/62** directly after one TypeScript-only test-fixture correction. Build and no-emit TypeScript passed, followed by **776/776** workspace tests (API 670, dashboard 62, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. Across the complete journey it recorded seven list reads, six detail reads, six Timeline reads, and zero mutations. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated concurrency/read evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **REVISION 3 SUPERSEDES BOTH PENDING REVISION-2 READS; ONLY AN EXPLICIT LATER SELECTION CAN PUBLISH REVISION 3.** |
+| Next handoff | Make the superseded revision-2 Timeline read fail after revision `3` is refreshed, then prove that the obsolete failure cannot stale or expose an error in the revision-3 queue before revision `3` is explicitly selected, with mutation traffic still zero. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
