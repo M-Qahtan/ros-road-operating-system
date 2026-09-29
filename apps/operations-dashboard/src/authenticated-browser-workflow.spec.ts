@@ -1043,6 +1043,127 @@ test('late pre-discard queue failure cannot stale or expose error in the restore
   assert.equal(mutationRequests, 0);
 });
 
+test('repeated browser-session discard permits only the latest queue generation to publish', async () => {
+  const initialIncident: RoadEventResponse = {
+    id: '64646464-6464-4464-8464-646464646464',
+    status: 'RECOVERY', latitude: 24.73, longitude: 46.69,
+    occurredAt: '2026-09-29T00:00:00.000Z', version: 17, closureAuthorization: null,
+    severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const firstRestorationIncident: RoadEventResponse = {
+    ...initialIncident,
+    id: '65656565-6565-4565-8565-656565656565', version: 6
+  };
+  const latestIncident: RoadEventResponse = {
+    ...initialIncident,
+    id: '66666666-6666-4666-8666-666666666666', version: 2,
+    severity: { level: 'S2', score: 47, confidence: 0.93, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+  };
+  const obsoleteBarrier = barrier();
+  const obsoleteStarted = barrier();
+  const firstRestorationBarrier = barrier();
+  const firstRestorationStarted = barrier();
+  const latestBarrier = barrier();
+  const latestStarted = barrier();
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname.startsWith('/api/v1/road-events/')) {
+      detailReads += 1;
+      throw new Error('incident detail must remain unreachable');
+    }
+    const request = ++listReads;
+    if (request === 2) {
+      obsoleteStarted.release();
+      await obsoleteBarrier.wait;
+    }
+    if (request === 3) {
+      firstRestorationStarted.release();
+      await firstRestorationBarrier.wait;
+    }
+    if (request === 4) {
+      latestStarted.release();
+      await latestBarrier.wait;
+    }
+    const incident = request === 4
+      ? latestIncident
+      : request === 3 ? firstRestorationIncident : initialIncident;
+    return ok({ items: [incident], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-29T00:01:00.000Z')
+  );
+
+  await controller.load();
+  const obsoleteQueue = controller.load();
+  await obsoleteStarted.wait;
+  const repeatedObsoleteQueue = controller.load();
+  assert.equal(repeatedObsoleteQueue, obsoleteQueue);
+
+  controller.discardBrowserSession();
+  const firstRestoration = controller.load();
+  await firstRestorationStarted.wait;
+  const repeatedFirstRestoration = controller.load();
+  assert.equal(repeatedFirstRestoration, firstRestoration);
+
+  controller.discardBrowserSession();
+  const latestRestoration = controller.load();
+  await latestStarted.wait;
+  assert.notEqual(latestRestoration, firstRestoration);
+  assert.notEqual(latestRestoration, obsoleteQueue);
+  assert.equal(listReads, 4);
+
+  firstRestorationBarrier.release();
+  const [firstResult, repeatedFirstResult] = await Promise.all([firstRestoration, repeatedFirstRestoration]);
+  assert.equal(firstResult, controller.state);
+  assert.equal(repeatedFirstResult, controller.state);
+  assert.equal(controller.state.phase, 'loading');
+  assert.deepEqual(controller.state.events, []);
+
+  obsoleteBarrier.release();
+  const [obsoleteResult, repeatedObsoleteResult] = await Promise.all([obsoleteQueue, repeatedObsoleteQueue]);
+  assert.equal(obsoleteResult, controller.state);
+  assert.equal(repeatedObsoleteResult, controller.state);
+  assert.equal(controller.state.phase, 'loading');
+  assert.deepEqual(controller.state.events, []);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.error, null);
+  const repeatedLatestRestoration = controller.load();
+  assert.equal(repeatedLatestRestoration, latestRestoration);
+  assert.equal(listReads, 4);
+
+  latestBarrier.release();
+  const [latestResult, repeatedLatestResult] = await Promise.all([latestRestoration, repeatedLatestRestoration]);
+  assert.equal(repeatedLatestResult, latestResult);
+  assert.equal(latestResult.phase, 'ready');
+  assert.deepEqual(latestResult.events.map(({ id }) => id), [latestIncident.id]);
+  assert.equal(latestResult.selected, null);
+  assert.deepEqual(latestResult.timeline, []);
+  assert.equal(latestResult.stale, false);
+  assert.equal(latestResult.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(listReads, 4);
+  assert.equal(detailReads, 0);
+  assert.equal(timelineReads, 0);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

@@ -1500,6 +1500,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A LATE PRE-DISCARD QUEUE FAILURE CANNOT STALE OR LEAK INTO THE RESTORED SESSION.** |
 | Next handoff | Prove a second browser-session discard while restoration is pending invalidates both older queue generations so only the latest explicit restoration can publish state. |
 
+### Repeated browser-session discard preserves latest queue ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `71d4f7ae8f66665e4dbd3792753de09ce74cf511` was one hundred and fifty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping local execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Two successive browser-session discards invalidate both older authenticated queue generations. Their late successes cannot repopulate or replace browser-visible state, and only the latest explicit restoration publishes its trusted incident list. |
+| Race ownership | Each discard advances read intent and queue generation, clears the shared owner, and empties browser-visible state. Both obsolete generations resolve to the current cleared/loading state, their old `finally` callbacks cannot clear the latest in-flight owner, and a repeated latest-generation caller still receives that exact Promise. |
+| Local evidence | The deterministic authenticated-browser journey passed **59/59** immediately against the existing bounded controller behavior. It proved four total list reads, shared ownership within each obsolete generation, distinct ownership after each discard, no publication from either obsolete completion, and publication only from the latest restoration. Detail, Timeline, and mutation traffic remained zero. Build and no-emit TypeScript passed, followed by **773/773** workspace tests (API 670, dashboard 59, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local browser-session and read-ownership evidence only, not credential rotation, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **TWO SUCCESSIVE SESSION DISCARDS INVALIDATE BOTH OLDER QUEUE GENERATIONS; ONLY THE LATEST EXPLICIT RESTORATION CAN PUBLISH.** |
+| Next handoff | Prove that a failure in the latest restoration after two discards remains the sole sanitized failure and cannot inherit either obsolete generation or expose their incident data. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
