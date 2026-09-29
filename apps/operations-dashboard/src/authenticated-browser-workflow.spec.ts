@@ -1942,7 +1942,7 @@ test('superseded revision detail failure cannot stale the newer queue', async ()
   assert.equal(mutationRequests, 0);
 });
 
-test('newer selection stays usable while superseded timeline remains pending and later fails', async () => {
+test('newer refresh clears selection while an older timeline remains pending and later fails', async () => {
   const revisionTwo: RoadEventResponse = {
     id: '76767676-7676-4676-8676-767676767676',
     status: 'RECOVERY', latitude: 24.74, longitude: 46.7,
@@ -1953,6 +1953,11 @@ test('newer selection stays usable while superseded timeline remains pending and
     ...revisionTwo,
     version: 3,
     severity: { ...revisionTwo.severity, score: 45 }
+  };
+  const revisionFour: RoadEventResponse = {
+    ...revisionThree,
+    version: 4,
+    severity: { ...revisionThree.severity, score: 47 }
   };
   const revisionThreeTimeline: AuditTimelineEntryContract[] = [{
     action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
@@ -1967,6 +1972,7 @@ test('newer selection stays usable while superseded timeline remains pending and
   const detailReturned = barrier();
   const timelineReturned = barrier();
   let revisionThreePublished = false;
+  let revisionFourPublished = false;
   let holdRevisionTwoSelection = false;
   let listReads = 0;
   let detailReads = 0;
@@ -2018,7 +2024,7 @@ test('newer selection stays usable while superseded timeline remains pending and
     }
     listReads += 1;
     return ok({
-      items: [revisionThreePublished ? revisionThree : revisionTwo],
+      items: [revisionFourPublished ? revisionFour : revisionThreePublished ? revisionThree : revisionTwo],
       total: 1, limit: 100, offset: 0
     });
   };
@@ -2073,13 +2079,26 @@ test('newer selection stays usable while superseded timeline remains pending and
   assert.equal(selectedRevisionThree.stale, false);
   assert.equal(selectedRevisionThree.error, null);
 
+  revisionFourPublished = true;
+  const revisionFourQueue = await controller.load();
+  assert.equal(revisionFourQueue.phase, 'ready');
+  assert.equal(revisionFourQueue.events[0]?.version, revisionFour.version);
+  assert.equal(revisionFourQueue.selected, null);
+  assert.deepEqual(revisionFourQueue.timeline, []);
+  assert.equal(revisionFourQueue.stale, false);
+  assert.equal(revisionFourQueue.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+
   timelineRelease.release();
   await timelineReturned.wait;
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(controller.state, selectedRevisionThree);
+  assert.equal(controller.state, revisionFourQueue);
   assert.equal(controller.state.phase, 'ready');
-  assert.equal(controller.state.events[0]?.version, revisionThree.version);
-  assert.deepEqual(controller.state.timeline, revisionThreeTimeline);
+  assert.equal(controller.state.events[0]?.version, revisionFour.version);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
   assert.equal(controller.state.stale, false);
   assert.equal(controller.state.error, null);
   assert.doesNotMatch(
@@ -2087,7 +2106,9 @@ test('newer selection stays usable while superseded timeline remains pending and
     /first-reader|late-reader|secret|obsolete-detail-db|obsolete-timeline-db|OBSOLETE_(DETAIL|TIMELINE)_SECRET/i
   );
   assert.equal(controller.canRetrySelection(), false);
-  assert.equal(listReads, 2);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(listReads, 3);
   assert.equal(detailReads, 2);
   assert.equal(timelineReads, 2);
   assert.equal(mutationRequests, 0);

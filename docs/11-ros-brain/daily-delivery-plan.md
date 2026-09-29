@@ -1704,6 +1704,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **REVISION 3 CAN BECOME THE ACTIVE SELECTION BEFORE AN OBSOLETE TIMELINE READ SETTLES, AND THAT LATE FAILURE CANNOT ROLL IT BACK.** |
 | Next handoff | Start a revision `4` queue refresh while the obsolete revision-2 Timeline remains pending after revision `3` is selected, then prove revision `4` clears that selection and the eventual old failure cannot restore revision `3`, create retry authority, or issue mutation traffic. |
 
+### Revision 4 refresh supersedes selection while obsolete Timeline is pending
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `7335c60d12b2941142de0c024217fb81e2d04ff7` was one hundred and seventy-five commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Revision `3` can own the active selection and its exact append-only Timeline while the obsolete revision-2 Timeline remains pending. A subsequent authenticated queue refresh publishes revision `4`, clears the revision-3 selection and Timeline, and becomes the identical current state object. When the old Timeline later rejects, it cannot restore revision `3` or alter the revision-4 queue. |
+| Failure and authority boundary | Simulated secret database diagnostics and private error codes from the obsolete response remain absent from state. The superseded failure creates no selection retry; transition and closure controls stay unavailable, and mutation routes remain unreachable throughout the case. |
+| Local evidence | The strengthened deterministic authenticated-browser case passed within **65/65** dashboard tests. Build and no-emit TypeScript passed, followed by **779/779** workspace tests (API 670, dashboard 65, mobile 36, domain 8), repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The case recorded three list reads, two detail reads, two Timeline reads, and zero mutations. Six unaffected workspace tasks reused Turbo cache during the broad changed-state run; the dashboard test ran freshly. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated concurrency/liveness evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **REVISION 4 REFRESH CLEARS THE ACTIVE REVISION-3 SELECTION BEFORE THE OBSOLETE TIMELINE SETTLES, AND ITS LATE FAILURE CANNOT RESTORE OR STALE THAT SELECTION.** |
+| Next handoff | Select revision `4` and load its exact append-only Timeline while the obsolete revision-2 Timeline remains pending, then prove the eventual old failure cannot roll back the active revision-4 selection, create retry authority, or issue mutation traffic. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
