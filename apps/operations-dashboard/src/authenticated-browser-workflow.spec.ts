@@ -1942,7 +1942,7 @@ test('superseded revision detail failure cannot stale the newer queue', async ()
   assert.equal(mutationRequests, 0);
 });
 
-test('newer refresh clears selection while an older timeline remains pending and later fails', async () => {
+test('latest selection stays active while an older timeline remains pending and later fails', async () => {
   const revisionTwo: RoadEventResponse = {
     id: '76767676-7676-4676-8676-767676767676',
     status: 'RECOVERY', latitude: 24.74, longitude: 46.7,
@@ -1965,6 +1965,15 @@ test('newer refresh clears selection while an older timeline remains pending and
     reason: 'new authoritative revision', traceId: 'trace-dual-failure-revision-three',
     correlationId: revisionThree.id, occurredAt: '2026-09-29T05:01:00.000Z'
   }];
+  const revisionFourTimeline: AuditTimelineEntryContract[] = [
+    ...revisionThreeTimeline,
+    {
+      action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
+      beforeState: { version: revisionThree.version }, afterState: { version: revisionFour.version },
+      reason: 'latest authoritative revision', traceId: 'trace-dual-failure-revision-four',
+      correlationId: revisionFour.id, occurredAt: '2026-09-29T05:02:00.000Z'
+    }
+  ];
   const detailRelease = barrier();
   const timelineRelease = barrier();
   const detailStarted = barrier();
@@ -2002,7 +2011,7 @@ test('newer refresh clears selection while an older timeline remains pending and
           traceId: 'trace-late-obsolete-timeline-failure'
         }), { status: 503, headers: { 'content-type': 'application/json' } });
       }
-      return ok(revisionThreeTimeline);
+      return ok(revisionFourPublished ? revisionFourTimeline : revisionThreeTimeline);
     }
     if (target.pathname === `/api/v1/road-events/${revisionTwo.id}`) {
       detailReads += 1;
@@ -2020,7 +2029,7 @@ test('newer refresh clears selection while an older timeline remains pending and
           traceId: 'trace-first-obsolete-detail-failure'
         }), { status: 503, headers: { 'content-type': 'application/json' } });
       }
-      return ok(revisionThree);
+      return ok(revisionFourPublished ? revisionFour : revisionThree);
     }
     listReads += 1;
     return ok({
@@ -2091,14 +2100,25 @@ test('newer refresh clears selection while an older timeline remains pending and
   assert.equal(controller.canTransition(), false);
   assert.equal(controller.canAuthorizeClosure(), false);
 
+  const selectedRevisionFour = await controller.select(revisionFour.id);
+  assert.equal(selectedRevisionFour.phase, 'ready');
+  assert.equal(selectedRevisionFour.events[0]?.version, revisionFour.version);
+  assert.equal(selectedRevisionFour.selected?.version, revisionFour.version);
+  assert.deepEqual(selectedRevisionFour.timeline, revisionFourTimeline);
+  assert.equal(selectedRevisionFour.timeline.at(-1)?.correlationId, revisionFour.id);
+  assert.deepEqual(selectedRevisionFour.timeline.at(-1)?.afterState, { version: revisionFour.version });
+  assert.equal(selectedRevisionFour.stale, false);
+  assert.equal(selectedRevisionFour.error, null);
+  const revisionFourCanTransition = controller.canTransition();
+  const revisionFourCanAuthorizeClosure = controller.canAuthorizeClosure();
+
   timelineRelease.release();
   await timelineReturned.wait;
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(controller.state, revisionFourQueue);
+  assert.equal(controller.state, selectedRevisionFour);
   assert.equal(controller.state.phase, 'ready');
   assert.equal(controller.state.events[0]?.version, revisionFour.version);
-  assert.equal(controller.state.selected, null);
-  assert.deepEqual(controller.state.timeline, []);
+  assert.deepEqual(controller.state.timeline, revisionFourTimeline);
   assert.equal(controller.state.stale, false);
   assert.equal(controller.state.error, null);
   assert.doesNotMatch(
@@ -2106,11 +2126,11 @@ test('newer refresh clears selection while an older timeline remains pending and
     /first-reader|late-reader|secret|obsolete-detail-db|obsolete-timeline-db|OBSOLETE_(DETAIL|TIMELINE)_SECRET/i
   );
   assert.equal(controller.canRetrySelection(), false);
-  assert.equal(controller.canTransition(), false);
-  assert.equal(controller.canAuthorizeClosure(), false);
+  assert.equal(controller.canTransition(), revisionFourCanTransition);
+  assert.equal(controller.canAuthorizeClosure(), revisionFourCanAuthorizeClosure);
   assert.equal(listReads, 3);
-  assert.equal(detailReads, 2);
-  assert.equal(timelineReads, 2);
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
   assert.equal(mutationRequests, 0);
 });
 
