@@ -2134,7 +2134,7 @@ test('latest selection stays active while an older timeline remains pending and 
   assert.equal(mutationRequests, 0);
 });
 
-test('newer selection stays usable while superseded detail remains pending and later fails', async () => {
+test('latest selection stays active while an older detail remains pending and later fails', async () => {
   const revisionTwo: RoadEventResponse = {
     id: '78787878-7878-4878-8878-787878787878',
     status: 'RECOVERY', latitude: 24.75, longitude: 46.71,
@@ -2146,12 +2146,26 @@ test('newer selection stays usable while superseded detail remains pending and l
     version: 3,
     severity: { ...revisionTwo.severity, score: 46 }
   };
+  const revisionFour: RoadEventResponse = {
+    ...revisionThree,
+    version: 4,
+    severity: { ...revisionThree.severity, score: 48 }
+  };
   const revisionThreeTimeline: AuditTimelineEntryContract[] = [{
     action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
     beforeState: { version: revisionTwo.version }, afterState: { version: revisionThree.version },
     reason: 'new authoritative revision', traceId: 'trace-reverse-failure-revision-three',
     correlationId: revisionThree.id, occurredAt: '2026-09-29T06:01:00.000Z'
   }];
+  const revisionFourTimeline: AuditTimelineEntryContract[] = [
+    ...revisionThreeTimeline,
+    {
+      action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
+      beforeState: { version: revisionThree.version }, afterState: { version: revisionFour.version },
+      reason: 'latest authoritative revision', traceId: 'trace-reverse-failure-revision-four',
+      correlationId: revisionFour.id, occurredAt: '2026-09-29T06:02:00.000Z'
+    }
+  ];
   const detailRelease = barrier();
   const timelineRelease = barrier();
   const detailStarted = barrier();
@@ -2159,6 +2173,7 @@ test('newer selection stays usable while superseded detail remains pending and l
   const detailReturned = barrier();
   const timelineReturned = barrier();
   let revisionThreePublished = false;
+  let revisionFourPublished = false;
   let holdRevisionTwoSelection = false;
   let listReads = 0;
   let detailReads = 0;
@@ -2188,7 +2203,7 @@ test('newer selection stays usable while superseded detail remains pending and l
           traceId: 'trace-first-obsolete-timeline-failure'
         }), { status: 503, headers: { 'content-type': 'application/json' } });
       }
-      return ok(revisionThreeTimeline);
+      return ok(revisionFourPublished ? revisionFourTimeline : revisionThreeTimeline);
     }
     if (target.pathname === `/api/v1/road-events/${revisionTwo.id}`) {
       detailReads += 1;
@@ -2206,11 +2221,11 @@ test('newer selection stays usable while superseded detail remains pending and l
           traceId: 'trace-late-obsolete-detail-failure'
         }), { status: 503, headers: { 'content-type': 'application/json' } });
       }
-      return ok(revisionThree);
+      return ok(revisionFourPublished ? revisionFour : revisionThree);
     }
     listReads += 1;
     return ok({
-      items: [revisionThreePublished ? revisionThree : revisionTwo],
+      items: [revisionFourPublished ? revisionFour : revisionThreePublished ? revisionThree : revisionTwo],
       total: 1, limit: 100, offset: 0
     });
   };
@@ -2265,13 +2280,37 @@ test('newer selection stays usable while superseded detail remains pending and l
   assert.equal(selectedRevisionThree.stale, false);
   assert.equal(selectedRevisionThree.error, null);
 
+  revisionFourPublished = true;
+  const revisionFourQueue = await controller.load();
+  assert.equal(revisionFourQueue.phase, 'ready');
+  assert.equal(revisionFourQueue.events[0]?.version, revisionFour.version);
+  assert.equal(revisionFourQueue.selected, null);
+  assert.deepEqual(revisionFourQueue.timeline, []);
+  assert.equal(revisionFourQueue.stale, false);
+  assert.equal(revisionFourQueue.error, null);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+
+  const selectedRevisionFour = await controller.select(revisionFour.id);
+  assert.equal(selectedRevisionFour.phase, 'ready');
+  assert.equal(selectedRevisionFour.events[0]?.version, revisionFour.version);
+  assert.equal(selectedRevisionFour.selected?.version, revisionFour.version);
+  assert.deepEqual(selectedRevisionFour.timeline, revisionFourTimeline);
+  assert.equal(selectedRevisionFour.timeline.at(-1)?.correlationId, revisionFour.id);
+  assert.deepEqual(selectedRevisionFour.timeline.at(-1)?.afterState, { version: revisionFour.version });
+  assert.equal(selectedRevisionFour.stale, false);
+  assert.equal(selectedRevisionFour.error, null);
+  const revisionFourCanTransition = controller.canTransition();
+  const revisionFourCanAuthorizeClosure = controller.canAuthorizeClosure();
+
   detailRelease.release();
   await detailReturned.wait;
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(controller.state, selectedRevisionThree);
+  assert.equal(controller.state, selectedRevisionFour);
   assert.equal(controller.state.phase, 'ready');
-  assert.equal(controller.state.events[0]?.version, revisionThree.version);
-  assert.deepEqual(controller.state.timeline, revisionThreeTimeline);
+  assert.equal(controller.state.events[0]?.version, revisionFour.version);
+  assert.deepEqual(controller.state.timeline, revisionFourTimeline);
   assert.equal(controller.state.stale, false);
   assert.equal(controller.state.error, null);
   assert.doesNotMatch(
@@ -2279,9 +2318,11 @@ test('newer selection stays usable while superseded detail remains pending and l
     /first-reader|late-reader|secret|obsolete-detail-db|obsolete-timeline-db|OBSOLETE_(DETAIL|TIMELINE)_SECRET/i
   );
   assert.equal(controller.canRetrySelection(), false);
-  assert.equal(listReads, 2);
-  assert.equal(detailReads, 2);
-  assert.equal(timelineReads, 2);
+  assert.equal(controller.canTransition(), revisionFourCanTransition);
+  assert.equal(controller.canAuthorizeClosure(), revisionFourCanAuthorizeClosure);
+  assert.equal(listReads, 3);
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
   assert.equal(mutationRequests, 0);
 });
 
