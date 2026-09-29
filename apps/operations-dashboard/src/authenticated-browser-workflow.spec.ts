@@ -1813,6 +1813,135 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   assert.equal(mutationRequests, 0);
 });
 
+test('superseded revision detail failure cannot stale the newer queue', async () => {
+  const revisionTwo: RoadEventResponse = {
+    id: '75757575-7575-4575-8575-757575757575',
+    status: 'RECOVERY', latitude: 24.74, longitude: 46.7,
+    occurredAt: '2026-09-29T04:00:00.000Z', version: 2, closureAuthorization: null,
+    severity: { level: 'S2', score: 43, confidence: 0.94, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+  };
+  const revisionTwoTimeline: AuditTimelineEntryContract[] = [{
+    action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
+    beforeState: { version: 1 }, afterState: { version: revisionTwo.version },
+    reason: 'authoritative refresh', traceId: 'trace-revision-two',
+    correlationId: revisionTwo.id, occurredAt: revisionTwo.occurredAt
+  }];
+  const revisionThree: RoadEventResponse = {
+    ...revisionTwo,
+    version: 3,
+    severity: { ...revisionTwo.severity, score: 45 }
+  };
+  const revisionThreeTimeline: AuditTimelineEntryContract[] = [
+    ...revisionTwoTimeline,
+    {
+      action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
+      beforeState: { version: revisionTwo.version }, afterState: { version: revisionThree.version },
+      reason: 'new authoritative revision', traceId: 'trace-revision-three',
+      correlationId: revisionThree.id, occurredAt: '2026-09-29T04:01:00.000Z'
+    }
+  ];
+  const pendingRevisionTwoBarrier = barrier();
+  const pendingDetailStarted = barrier();
+  const pendingTimelineStarted = barrier();
+  let revisionThreePublished = false;
+  let holdRevisionTwoSelection = false;
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      assert.equal(target.pathname, `/api/v1/road-events/${revisionTwo.id}/timeline`);
+      if (holdRevisionTwoSelection) {
+        pendingTimelineStarted.release();
+        await pendingRevisionTwoBarrier.wait;
+        return ok(revisionTwoTimeline);
+      }
+      return ok(revisionThreeTimeline);
+    }
+    if (target.pathname === `/api/v1/road-events/${revisionTwo.id}`) {
+      detailReads += 1;
+      if (holdRevisionTwoSelection) {
+        pendingDetailStarted.release();
+        await pendingRevisionTwoBarrier.wait;
+        return new Response(JSON.stringify({
+          success: false,
+          data: null,
+          error: {
+            code: 'OBSOLETE_REVISION_DETAIL_SECRET',
+            message: 'postgres://obsolete-reader:secret@revision-two-detail-db'
+          },
+          traceId: 'trace-obsolete-revision-two-detail-failure'
+        }), { status: 503, headers: { 'content-type': 'application/json' } });
+      }
+      return ok(revisionThree);
+    }
+    listReads += 1;
+    return ok({
+      items: [revisionThreePublished ? revisionThree : revisionTwo],
+      total: 1, limit: 100, offset: 0
+    });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-29T04:02:00.000Z')
+  );
+
+  const initialQueue = await controller.load();
+  assert.equal(initialQueue.events[0]?.version, revisionTwo.version);
+
+  holdRevisionTwoSelection = true;
+  const pendingRevisionTwoSelection = controller.select(revisionTwo.id);
+  await Promise.all([pendingDetailStarted.wait, pendingTimelineStarted.wait]);
+
+  revisionThreePublished = true;
+  holdRevisionTwoSelection = false;
+  const revisionThreeQueue = await controller.load();
+  assert.equal(revisionThreeQueue.phase, 'ready');
+  assert.equal(revisionThreeQueue.events[0]?.version, revisionThree.version);
+  assert.equal(revisionThreeQueue.selected, null);
+  assert.deepEqual(revisionThreeQueue.timeline, []);
+  assert.equal(revisionThreeQueue.stale, false);
+  assert.equal(revisionThreeQueue.error, null);
+
+  pendingRevisionTwoBarrier.release();
+  const supersededRevisionTwoSelection = await pendingRevisionTwoSelection;
+  assert.equal(supersededRevisionTwoSelection, controller.state);
+  assert.equal(supersededRevisionTwoSelection.phase, 'ready');
+  assert.equal(supersededRevisionTwoSelection.events[0]?.version, revisionThree.version);
+  assert.equal(supersededRevisionTwoSelection.selected, null);
+  assert.deepEqual(supersededRevisionTwoSelection.timeline, []);
+  assert.equal(supersededRevisionTwoSelection.stale, false);
+  assert.equal(supersededRevisionTwoSelection.error, null);
+  assert.doesNotMatch(
+    JSON.stringify(supersededRevisionTwoSelection),
+    /obsolete-reader|secret|revision-two-detail-db|OBSOLETE_REVISION_DETAIL_SECRET/i
+  );
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+
+  const selectedRevisionThree = await controller.select(revisionThree.id);
+  assert.equal(selectedRevisionThree.phase, 'ready');
+  assert.equal(selectedRevisionThree.selected?.version, revisionThree.version);
+  assert.deepEqual(selectedRevisionThree.timeline, revisionThreeTimeline);
+  assert.equal(selectedRevisionThree.timeline.at(-1)?.correlationId, revisionThree.id);
+  assert.deepEqual(selectedRevisionThree.timeline.at(-1)?.afterState, { version: revisionThree.version });
+  assert.equal(selectedRevisionThree.stale, false);
+  assert.equal(selectedRevisionThree.error, null);
+  assert.equal(listReads, 2);
+  assert.equal(detailReads, 2);
+  assert.equal(timelineReads, 2);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',
