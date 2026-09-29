@@ -1668,6 +1668,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **FIRST AND LATE SUPERSEDED READ FAILURES CANNOT STALE, LEAK INTO, OR CREATE RETRY AUTHORITY IN THE REVISION-3 QUEUE.** |
 | Next handoff | Reverse the independent completion order so the superseded revision-2 Timeline rejects first and detail rejects later after revision `3` refresh, then prove the same stable queue identity, sanitized state, absence of unhandled rejection, zero retry authority, and zero mutation traffic. |
 
+### Reverse-ordered obsolete read failures cannot stale revision 3
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `8020c9eafba76a4fd17bfd792ce88084e305b160` was one hundred and seventy-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Revision `2` detail and Timeline reads remain independently pending while an authenticated queue refresh publishes revision `3`. In the reverse order, the obsolete Timeline fails first with `503`, and the superseded selection resolves to the current revision-3 queue. The obsolete detail then fails later; its separately handled rejection cannot replace that same queue object, mark it stale, expose an error, or create retry authority. |
+| Failure and authority boundary | Both obsolete responses carry distinct simulated secret database URLs and private error codes; none reaches dashboard state or becomes an unhandled rejection. Selection and Timeline remain empty, and retry, transition, and closure controls remain disabled until an explicit revision-3 selection binds the exact incident and its append-only Timeline. |
+| Local evidence | The new deterministic authenticated-browser case passed within **65/65** dashboard tests. Build and no-emit TypeScript passed, followed by **779/779** workspace tests (API 670, dashboard 65, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The focused case recorded two list reads, two detail reads, two Timeline reads, and zero mutations. Six unaffected workspace tasks reused Turbo cache; the changed dashboard test ran freshly. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated concurrency/failure evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **BOTH INDEPENDENT FAILURE ORDERS PRESERVE THE SAME SANITIZED REVISION-3 QUEUE WITHOUT RETRY OR MUTATION AUTHORITY.** |
+| Next handoff | Keep the superseded revision-2 detail read pending after the obsolete Timeline rejects, then prove revision `3` can be selected and its append-only Timeline loaded before the old detail settles; its eventual failure must not overwrite that active selection, create retry authority, or issue mutation traffic. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
