@@ -1596,6 +1596,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **TIMELINE FAILURE FAILS CLOSED; ONE COALESCED SELECTION RETRY RESTORES ONLY THE RECOVERED INCIDENT.** |
 | Next handoff | Refresh the queue after recovered selection, publish a newer revision of the same incident, and prove the refresh clears the old detail and Timeline before only the newer revision can be selected, with mutation traffic still zero. |
 
+### Queue refresh clears the prior selection before a newer revision
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `72c53a535f28ddc74a7429a1353376448c241165` was one hundred and sixty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Starting an authenticated queue refresh immediately clears the selected detail and Timeline while the request is pending and disables transition and closure controls. When the list publishes revision `2` of the same incident, the refreshed queue contains only that revision and keeps selection empty until the operator explicitly selects it. |
+| Revision and authority boundary | The later selection reads detail and append-only Timeline for the same incident identifier, exposes selected revision `2`, and requires the Timeline tail to bind to revision `2`. Revision `1` cannot remain selected through the refresh, and neither the refresh nor the later selection emits a transition or closure-authorization request. |
+| Local evidence | A rebuilt deterministic authenticated-browser journey first reproduced the stale-selection gap, then passed **62/62** after the bounded controller fix. Build and no-emit TypeScript passed, followed by **776/776** workspace tests (API 670, dashboard 62, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. Across the complete journey it recorded five list reads, four detail reads, four Timeline reads, and zero mutations. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated refresh and read evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **QUEUE REFRESH CLEARS THE PRIOR SELECTION BEFORE REVISION 2 CAN BE EXPLICITLY SELECTED; MUTATIONS REMAIN ZERO.** |
+| Next handoff | Make the revision refresh fail after it clears the prior selection, then prove the sanitized failure cannot restore revision `1` and one explicit list retry recovers revision `2` before any selection, with mutation traffic still zero. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

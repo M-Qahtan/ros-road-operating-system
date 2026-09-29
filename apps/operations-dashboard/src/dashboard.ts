@@ -112,7 +112,7 @@ export class OperationsDashboardController {
     this.retryInFlight = null;
     const intent = ++this.readIntent;
     this.failedSelectionId = null;
-    this.current = { ...this.current, phase: 'loading', error: null };
+    this.current = { ...this.current, phase: 'loading', selected: null, timeline: [], error: null };
     try {
       const page = await this.gateway.list();
       if (intent !== this.readIntent) return this.current;

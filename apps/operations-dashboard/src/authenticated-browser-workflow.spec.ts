@@ -1447,17 +1447,34 @@ test('new-session restoration failure survives obsolete retry and recovers indep
     reason: null, traceId: 'trace-recovered-incident', correlationId: recoveredIncident.id,
     occurredAt: recoveredIncident.occurredAt
   }];
+  const newerRecoveredIncident: RoadEventResponse = {
+    ...recoveredIncident,
+    version: 2,
+    severity: { ...recoveredIncident.severity, score: 43 }
+  };
+  const newerRecoveredTimeline: AuditTimelineEntryContract[] = [
+    ...recoveredTimeline,
+    {
+      action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
+      beforeState: { version: recoveredIncident.version }, afterState: { version: newerRecoveredIncident.version },
+      reason: 'authoritative refresh', traceId: 'trace-newer-recovered-incident',
+      correlationId: newerRecoveredIncident.id, occurredAt: '2026-09-29T03:02:00.000Z'
+    }
+  ];
   const retryBarrier = barrier();
   const retryStarted = barrier();
   const restorationBarrier = barrier();
   const restorationStarted = barrier();
   const recoveryBarrier = barrier();
   const recoveryStarted = barrier();
+  const revisionRefreshBarrier = barrier();
+  const revisionRefreshStarted = barrier();
   let listReads = 0;
   let detailReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
   let timelineFails = false;
+  let newerRevisionPublished = false;
   const fetcher: typeof fetch = async (input, init) => {
     assertTrustedRequest(init);
     const target = new URL(String(input), 'https://dashboard.example.test');
@@ -1476,12 +1493,12 @@ test('new-session restoration failure survives obsolete retry and recovers indep
           traceId: 'trace-recovered-timeline-failure'
         }), { status: 503, headers: { 'content-type': 'application/json' } });
       }
-      return ok(recoveredTimeline);
+      return ok(newerRevisionPublished ? newerRecoveredTimeline : recoveredTimeline);
     }
     if (target.pathname.startsWith('/api/v1/road-events/')) {
       detailReads += 1;
       assert.equal(target.pathname, `/api/v1/road-events/${recoveredIncident.id}`);
-      return ok(recoveredIncident);
+      return ok(newerRevisionPublished ? newerRecoveredIncident : recoveredIncident);
     }
     const request = ++listReads;
     if (request === 1) {
@@ -1507,9 +1524,14 @@ test('new-session restoration failure survives obsolete retry and recovers indep
         traceId: 'trace-new-session-failure'
       }), { status: 503, headers: { 'content-type': 'application/json' } });
     }
-    recoveryStarted.release();
-    await recoveryBarrier.wait;
-    return ok({ items: [recoveredIncident], total: 1, limit: 100, offset: 0 });
+    if (request === 4) {
+      recoveryStarted.release();
+      await recoveryBarrier.wait;
+      return ok({ items: [recoveredIncident], total: 1, limit: 100, offset: 0 });
+    }
+    revisionRefreshStarted.release();
+    await revisionRefreshBarrier.wait;
+    return ok({ items: [newerRecoveredIncident], total: 1, limit: 100, offset: 0 });
   };
   const controller = new OperationsDashboardController(
     new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
@@ -1635,6 +1657,39 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   assert.equal(controller.ambiguousCriticalActionView(), null);
   assert.equal(detailReads, 3);
   assert.equal(timelineReads, 3);
+
+  newerRevisionPublished = true;
+  const revisionRefresh = controller.load();
+  await revisionRefreshStarted.wait;
+  assert.equal(controller.state.phase, 'loading');
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.canTransition(), false);
+  assert.equal(controller.canAuthorizeClosure(), false);
+
+  revisionRefreshBarrier.release();
+  const refreshedRevision = await revisionRefresh;
+  assert.equal(refreshedRevision.phase, 'ready');
+  assert.equal(refreshedRevision.events[0]?.id, newerRecoveredIncident.id);
+  assert.equal(refreshedRevision.events[0]?.version, newerRecoveredIncident.version);
+  assert.equal(refreshedRevision.selected, null);
+  assert.deepEqual(refreshedRevision.timeline, []);
+  assert.equal(refreshedRevision.stale, false);
+  assert.equal(refreshedRevision.error, null);
+  assert.equal(listReads, 5);
+
+  const selectedNewerRevision = await controller.select(newerRecoveredIncident.id);
+  assert.equal(selectedNewerRevision.phase, 'ready');
+  assert.equal(selectedNewerRevision.selected?.id, newerRecoveredIncident.id);
+  assert.equal(selectedNewerRevision.selected?.version, newerRecoveredIncident.version);
+  assert.deepEqual(selectedNewerRevision.timeline, newerRecoveredTimeline);
+  assert.equal(selectedNewerRevision.timeline.at(-1)?.correlationId, newerRecoveredIncident.id);
+  assert.deepEqual(selectedNewerRevision.timeline.at(-1)?.afterState, { version: newerRecoveredIncident.version });
+  assert.equal(selectedNewerRevision.stale, false);
+  assert.equal(selectedNewerRevision.error, null);
+  assert.doesNotMatch(JSON.stringify(selectedNewerRevision), /73737373|postgres|auditor|secret|timeline-db/i);
+  assert.equal(detailReads, 4);
+  assert.equal(timelineReads, 4);
   assert.equal(mutationRequests, 0);
 });
 
