@@ -1,0 +1,11 @@
+schema_version: 2
+coordination_enabled: true
+project_id: ros-road-operating-system
+project_name: ROS — Road Operating System
+task_prefix: ROS
+canonical_paths:
+  active: .codex/coordination/active
+  archive: .codex/coordination/archive
+access:
+  cross_project_task_access: false
+  cross_project_state_changes: false
