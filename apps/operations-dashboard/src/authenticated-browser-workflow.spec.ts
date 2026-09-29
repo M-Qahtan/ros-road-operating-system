@@ -1164,6 +1164,134 @@ test('repeated browser-session discard permits only the latest queue generation 
   assert.equal(mutationRequests, 0);
 });
 
+test('latest queue failure after repeated discard remains the only visible failure', async () => {
+  const initialIncident: RoadEventResponse = {
+    id: '67676767-6767-4767-8767-676767676767',
+    status: 'RECOVERY', latitude: 24.73, longitude: 46.69,
+    occurredAt: '2026-09-29T01:00:00.000Z', version: 18, closureAuthorization: null,
+    severity: { level: 'S4', score: 99, confidence: 0.98, reasonCodes: ['life_threat'], requiresHumanReview: true }
+  };
+  const obsoleteIncident: RoadEventResponse = {
+    ...initialIncident,
+    id: '68686868-6868-4868-8868-686868686868', version: 7
+  };
+  const firstRestorationIncident: RoadEventResponse = {
+    ...initialIncident,
+    id: '69696969-6969-4969-8969-696969696969', version: 3
+  };
+  const obsoleteBarrier = barrier();
+  const obsoleteStarted = barrier();
+  const firstRestorationBarrier = barrier();
+  const firstRestorationStarted = barrier();
+  const latestBarrier = barrier();
+  const latestStarted = barrier();
+  let listReads = 0;
+  let detailReads = 0;
+  let timelineReads = 0;
+  let mutationRequests = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    assertTrustedRequest(init);
+    const target = new URL(String(input), 'https://dashboard.example.test');
+    if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+      mutationRequests += 1;
+      throw new Error('critical mutation must remain unreachable');
+    }
+    if (target.pathname.endsWith('/timeline')) {
+      timelineReads += 1;
+      return ok([]);
+    }
+    if (target.pathname.startsWith('/api/v1/road-events/')) {
+      detailReads += 1;
+      throw new Error('incident detail must remain unreachable');
+    }
+    const request = ++listReads;
+    if (request === 2) {
+      obsoleteStarted.release();
+      await obsoleteBarrier.wait;
+      return ok({ items: [obsoleteIncident], total: 1, limit: 100, offset: 0 });
+    }
+    if (request === 3) {
+      firstRestorationStarted.release();
+      await firstRestorationBarrier.wait;
+      return ok({ items: [firstRestorationIncident], total: 1, limit: 100, offset: 0 });
+    }
+    if (request === 4) {
+      latestStarted.release();
+      await latestBarrier.wait;
+      return new Response(JSON.stringify({
+        success: false,
+        data: null,
+        error: { code: 'DATABASE_SECRET', message: 'postgres://admin:secret@latest-session-db' },
+        traceId: 'trace-latest-session-queue'
+      }), { status: 503, headers: { 'content-type': 'application/json' } });
+    }
+    return ok({ items: [initialIncident], total: 1, limit: 100, offset: 0 });
+  };
+  const controller = new OperationsDashboardController(
+    new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+    () => new Date('2026-09-29T01:01:00.000Z')
+  );
+
+  await controller.load();
+  const obsoleteQueue = controller.load();
+  await obsoleteStarted.wait;
+  const repeatedObsoleteQueue = controller.load();
+  assert.equal(repeatedObsoleteQueue, obsoleteQueue);
+
+  controller.discardBrowserSession();
+  const firstRestoration = controller.load();
+  await firstRestorationStarted.wait;
+  const repeatedFirstRestoration = controller.load();
+  assert.equal(repeatedFirstRestoration, firstRestoration);
+
+  controller.discardBrowserSession();
+  const latestRestoration = controller.load();
+  await latestStarted.wait;
+  const repeatedLatestRestoration = controller.load();
+  assert.equal(repeatedLatestRestoration, latestRestoration);
+  assert.equal(listReads, 4);
+
+  firstRestorationBarrier.release();
+  const [firstResult, repeatedFirstResult] = await Promise.all([firstRestoration, repeatedFirstRestoration]);
+  assert.equal(firstResult, controller.state);
+  assert.equal(repeatedFirstResult, controller.state);
+  assert.equal(controller.state.phase, 'loading');
+  assert.deepEqual(controller.state.events, []);
+
+  latestBarrier.release();
+  const [latestResult, repeatedLatestResult] = await Promise.all([latestRestoration, repeatedLatestRestoration]);
+  assert.equal(repeatedLatestResult, latestResult);
+  assert.equal(latestResult.phase, 'failure');
+  assert.deepEqual(latestResult.events, []);
+  assert.equal(latestResult.selected, null);
+  assert.deepEqual(latestResult.timeline, []);
+  assert.equal(latestResult.stale, true);
+  assert.equal(latestResult.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+  assert.doesNotMatch(JSON.stringify(latestResult), /postgres|admin|secret|latest-session-db/i);
+
+  obsoleteBarrier.release();
+  const [obsoleteResult, repeatedObsoleteResult] = await Promise.all([obsoleteQueue, repeatedObsoleteQueue]);
+  assert.equal(obsoleteResult, controller.state);
+  assert.equal(repeatedObsoleteResult, controller.state);
+  assert.equal(controller.state, latestResult);
+  assert.equal(controller.state.phase, 'failure');
+  assert.deepEqual(controller.state.events, []);
+  assert.equal(controller.state.selected, null);
+  assert.deepEqual(controller.state.timeline, []);
+  assert.equal(controller.state.stale, true);
+  assert.equal(controller.state.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+  assert.doesNotMatch(
+    JSON.stringify(controller.state),
+    /postgres|admin|secret|latest-session-db|67676767|68686868|69696969/i
+  );
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(listReads, 4);
+  assert.equal(detailReads, 0);
+  assert.equal(timelineReads, 0);
+  assert.equal(mutationRequests, 0);
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',

@@ -1512,6 +1512,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **TWO SUCCESSIVE SESSION DISCARDS INVALIDATE BOTH OLDER QUEUE GENERATIONS; ONLY THE LATEST EXPLICIT RESTORATION CAN PUBLISH.** |
 | Next handoff | Prove that a failure in the latest restoration after two discards remains the sole sanitized failure and cannot inherit either obsolete generation or expose their incident data. |
 
+### Latest queue failure remains isolated after repeated discard
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `d0619487e5557454227ddeb29e1045a5176c6aa7` was one hundred and fifty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | After two browser-session discards, a `503` failure in the latest explicit queue restoration is the only browser-visible outcome. A prior generation may succeed before that failure and the oldest generation may succeed afterward, but neither can publish incident data, replace the latest failure, or restore selection, Timeline, retry, or command authority. |
+| Failure isolation | The latest failure exposes only the approved Arabic availability message and `failure/stale` state. Database code, connection text, trace context, and every incident identifier from the initial and obsolete generations remain absent while all obsolete callers resolve to the exact current state. |
+| Local evidence | The deterministic authenticated-browser journey passed **60/60** directly against the existing bounded controller behavior. It proved four total list reads, shared ownership within each generation, one obsolete success before and one after the latest failure, empty events/selection/Timeline, and zero detail, Timeline, or mutation requests. Build and no-emit TypeScript passed, followed by **774/774** workspace tests (API 670, dashboard 60, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local browser-session failure-isolation evidence only, not deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONLY THE LATEST SANITIZED QUEUE FAILURE SURVIVES TWO SESSION DISCARDS; BOTH OBSOLETE GENERATIONS REMAIN NON-PUBLISHING.** |
+| Next handoff | Prove one explicit authenticated queue retry after this latest failure starts a new generation and recovers with one list read, without inheriting either obsolete Promise or opening detail, Timeline, or mutation traffic. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
