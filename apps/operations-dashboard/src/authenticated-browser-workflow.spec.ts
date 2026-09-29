@@ -2082,7 +2082,7 @@ test('first and late superseded read failures cannot stale the newer queue', asy
   assert.equal(mutationRequests, 0);
 });
 
-test('reverse-ordered superseded read failures cannot stale the newer queue', async () => {
+test('newer selection stays usable while superseded detail remains pending and later fails', async () => {
   const revisionTwo: RoadEventResponse = {
     id: '78787878-7878-4878-8878-787878787878',
     status: 'RECOVERY', latitude: 24.75, longitude: 46.71,
@@ -2189,10 +2189,6 @@ test('reverse-ordered superseded read failures cannot stale the newer queue', as
   const supersededRevisionTwoSelection = await pendingRevisionTwoSelection;
   assert.equal(supersededRevisionTwoSelection, revisionThreeQueue);
   assert.equal(controller.canRetrySelection(), false);
-
-  detailRelease.release();
-  await detailReturned.wait;
-  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(controller.state, revisionThreeQueue);
   assert.equal(controller.state.phase, 'ready');
   assert.equal(controller.state.events[0]?.version, revisionThree.version);
@@ -2216,6 +2212,21 @@ test('reverse-ordered superseded read failures cannot stale the newer queue', as
   assert.deepEqual(selectedRevisionThree.timeline[0]?.afterState, { version: revisionThree.version });
   assert.equal(selectedRevisionThree.stale, false);
   assert.equal(selectedRevisionThree.error, null);
+
+  detailRelease.release();
+  await detailReturned.wait;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(controller.state, selectedRevisionThree);
+  assert.equal(controller.state.phase, 'ready');
+  assert.equal(controller.state.events[0]?.version, revisionThree.version);
+  assert.deepEqual(controller.state.timeline, revisionThreeTimeline);
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.error, null);
+  assert.doesNotMatch(
+    JSON.stringify(controller.state),
+    /first-reader|late-reader|secret|obsolete-detail-db|obsolete-timeline-db|OBSOLETE_(DETAIL|TIMELINE)_SECRET/i
+  );
+  assert.equal(controller.canRetrySelection(), false);
   assert.equal(listReads, 2);
   assert.equal(detailReads, 2);
   assert.equal(timelineReads, 2);
