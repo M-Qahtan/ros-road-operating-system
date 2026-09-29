@@ -1524,6 +1524,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONLY THE LATEST SANITIZED QUEUE FAILURE SURVIVES TWO SESSION DISCARDS; BOTH OBSOLETE GENERATIONS REMAIN NON-PUBLISHING.** |
 | Next handoff | Prove one explicit authenticated queue retry after this latest failure starts a new generation and recovers with one list read, without inheriting either obsolete Promise or opening detail, Timeline, or mutation traffic. |
 
+### Explicit retry after repeated-discard failure owns a new generation
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `ca35d2347425bfc9f1eb93572ddd3cbd219e8362` was one hundred and sixty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | After the latest authenticated queue restoration fails following two session discards, one explicit queue retry starts a distinct generation and returns the controller to `ready` with only its trusted incident. A concurrent retry shares that new Promise, while neither obsolete generation nor the failed Promise is inherited. |
+| Recovery ownership | The explicit retry advances list traffic from four reads to five exactly once. Its result clears stale/error state, keeps selection and Timeline empty, and remains current after the oldest pending success completes late; no older `finally` callback can clear or replace the recovered owner. |
+| Local evidence | The extended deterministic authenticated-browser journey passed **60/60** directly. It proved reference-equal concurrent retry Promises, reference inequality against all three previous generations, one additional list read, exact recovered incident identity, and zero detail, Timeline, or mutation requests. Build and no-emit TypeScript passed, followed by **774/774** workspace tests (API 670, dashboard 60, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated read-recovery evidence only, not deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE EXPLICIT RETRY OWNS ONE NEW AUTHENTICATED QUEUE GENERATION AND SURVIVES THE OLDEST LATE COMPLETION.** |
+| Next handoff | Discard the browser session while this post-failure retry is pending and prove its late success cannot repopulate the cleared state or displace a new-session restoration. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

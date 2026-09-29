@@ -1164,7 +1164,7 @@ test('repeated browser-session discard permits only the latest queue generation 
   assert.equal(mutationRequests, 0);
 });
 
-test('latest queue failure after repeated discard remains the only visible failure', async () => {
+test('latest queue failure after repeated discard recovers through a new isolated generation', async () => {
   const initialIncident: RoadEventResponse = {
     id: '67676767-6767-4767-8767-676767676767',
     status: 'RECOVERY', latitude: 24.73, longitude: 46.69,
@@ -1178,6 +1178,11 @@ test('latest queue failure after repeated discard remains the only visible failu
   const firstRestorationIncident: RoadEventResponse = {
     ...initialIncident,
     id: '69696969-6969-4969-8969-696969696969', version: 3
+  };
+  const recoveredIncident: RoadEventResponse = {
+    ...initialIncident,
+    id: '70707070-7070-4070-8070-707070707070', version: 1,
+    severity: { level: 'S2', score: 45, confidence: 0.94, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
   };
   const obsoleteBarrier = barrier();
   const obsoleteStarted = barrier();
@@ -1225,7 +1230,7 @@ test('latest queue failure after repeated discard remains the only visible failu
         traceId: 'trace-latest-session-queue'
       }), { status: 503, headers: { 'content-type': 'application/json' } });
     }
-    return ok({ items: [initialIncident], total: 1, limit: 100, offset: 0 });
+    return ok({ items: [request === 5 ? recoveredIncident : initialIncident], total: 1, limit: 100, offset: 0 });
   };
   const controller = new OperationsDashboardController(
     new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
@@ -1269,24 +1274,40 @@ test('latest queue failure after repeated discard remains the only visible failu
   assert.equal(latestResult.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
   assert.doesNotMatch(JSON.stringify(latestResult), /postgres|admin|secret|latest-session-db/i);
 
+  const retry = controller.load();
+  const repeatedRetry = controller.load();
+  assert.equal(repeatedRetry, retry);
+  assert.notEqual(retry, latestRestoration);
+  assert.notEqual(retry, firstRestoration);
+  assert.notEqual(retry, obsoleteQueue);
+  const [recovered, repeatedRecovered] = await Promise.all([retry, repeatedRetry]);
+  assert.equal(repeatedRecovered, recovered);
+  assert.equal(recovered.phase, 'ready');
+  assert.deepEqual(recovered.events.map(({ id }) => id), [recoveredIncident.id]);
+  assert.equal(recovered.selected, null);
+  assert.deepEqual(recovered.timeline, []);
+  assert.equal(recovered.stale, false);
+  assert.equal(recovered.error, null);
+  assert.equal(listReads, 5);
+
   obsoleteBarrier.release();
   const [obsoleteResult, repeatedObsoleteResult] = await Promise.all([obsoleteQueue, repeatedObsoleteQueue]);
   assert.equal(obsoleteResult, controller.state);
   assert.equal(repeatedObsoleteResult, controller.state);
-  assert.equal(controller.state, latestResult);
-  assert.equal(controller.state.phase, 'failure');
-  assert.deepEqual(controller.state.events, []);
+  assert.equal(controller.state, recovered);
+  assert.equal(controller.state.phase, 'ready');
+  assert.deepEqual(controller.state.events.map(({ id }) => id), [recoveredIncident.id]);
   assert.equal(controller.state.selected, null);
   assert.deepEqual(controller.state.timeline, []);
-  assert.equal(controller.state.stale, true);
-  assert.equal(controller.state.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+  assert.equal(controller.state.stale, false);
+  assert.equal(controller.state.error, null);
   assert.doesNotMatch(
     JSON.stringify(controller.state),
     /postgres|admin|secret|latest-session-db|67676767|68686868|69696969/i
   );
   assert.equal(controller.canRetrySelection(), false);
   assert.equal(controller.ambiguousCriticalActionView(), null);
-  assert.equal(listReads, 4);
+  assert.equal(listReads, 5);
   assert.equal(detailReads, 0);
   assert.equal(timelineReads, 0);
   assert.equal(mutationRequests, 0);
