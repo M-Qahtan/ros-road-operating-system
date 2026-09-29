@@ -1632,6 +1632,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **REVISION 3 SUPERSEDES BOTH PENDING REVISION-2 READS; ONLY AN EXPLICIT LATER SELECTION CAN PUBLISH REVISION 3.** |
 | Next handoff | Make the superseded revision-2 Timeline read fail after revision `3` is refreshed, then prove that the obsolete failure cannot stale or expose an error in the revision-3 queue before revision `3` is explicitly selected, with mutation traffic still zero. |
 
+### Obsolete revision-2 Timeline failure cannot stale revision 3
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `dfd694f734d52d2b611e0bbaefd684b14d9f7fb9` was one hundred and sixty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Revision `2` detail and Timeline reads remain deterministically pending while an authenticated queue refresh publishes revision `3`. After revision `3` owns the queue, the obsolete detail succeeds but the obsolete Timeline returns `503`; that losing failure cannot replace the ready revision-3 queue, mark it stale, expose an error, or create a selection retry. |
+| Failure and authority boundary | The obsolete response carries a simulated secret database URL and private error code, neither of which reaches dashboard state. Selection and Timeline stay empty until revision `3` is explicitly selected, and transition and closure controls remain disabled beforehand. The later revision-3 selection binds to its append-only Timeline without replaying the obsolete request. |
+| Local evidence | The rebuilt deterministic authenticated-browser journey passed **62/62** directly. Build and no-emit TypeScript passed, followed by **776/776** workspace tests (API 670, dashboard 62, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. Across the complete journey it recorded seven list reads, six detail reads, six Timeline reads, and zero mutations. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated concurrency/failure evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A SUPERSEDED REVISION-2 TIMELINE FAILURE CANNOT STALE OR LEAK INTO THE REVISION-3 QUEUE.** |
+| Next handoff | Make the superseded revision-2 detail read fail while its Timeline succeeds after revision `3` is refreshed, then prove the symmetric losing failure cannot alter or leak into the revision-3 queue before explicit revision-3 selection, with mutation traffic still zero. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

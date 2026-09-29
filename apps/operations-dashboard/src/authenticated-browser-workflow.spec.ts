@@ -1494,6 +1494,7 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   let newerRevisionPublished = false;
   let latestRevisionPublished = false;
   let holdRevisionTwoSelection = false;
+  let failPendingRevisionTwoTimeline = false;
   const fetcher: typeof fetch = async (input, init) => {
     assertTrustedRequest(init);
     const target = new URL(String(input), 'https://dashboard.example.test');
@@ -1507,6 +1508,17 @@ test('new-session restoration failure survives obsolete retry and recovers indep
       if (holdRevisionTwoSelection) {
         pendingRevisionTwoTimelineStarted.release();
         await pendingRevisionTwoBarrier.wait;
+        if (failPendingRevisionTwoTimeline) {
+          return new Response(JSON.stringify({
+            success: false,
+            data: null,
+            error: {
+              code: 'OBSOLETE_REVISION_TIMELINE_SECRET',
+              message: 'postgres://obsolete-reader:secret@revision-two-timeline-db'
+            },
+            traceId: 'trace-obsolete-revision-two-timeline-failure'
+          }), { status: 503, headers: { 'content-type': 'application/json' } });
+        }
         return ok(newerRecoveredTimeline);
       }
       if (timelineFails) {
@@ -1751,6 +1763,7 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   assert.equal(timelineReads, 4);
 
   holdRevisionTwoSelection = true;
+  failPendingRevisionTwoTimeline = true;
   const pendingRevisionTwoSelection = controller.select(newerRecoveredIncident.id);
   await Promise.all([pendingRevisionTwoDetailStarted.wait, pendingRevisionTwoTimelineStarted.wait]);
 
@@ -1769,9 +1782,16 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   pendingRevisionTwoBarrier.release();
   const supersededRevisionTwoSelection = await pendingRevisionTwoSelection;
   assert.equal(supersededRevisionTwoSelection, controller.state);
+  assert.equal(supersededRevisionTwoSelection.phase, 'ready');
   assert.equal(supersededRevisionTwoSelection.events[0]?.version, latestRecoveredIncident.version);
   assert.equal(supersededRevisionTwoSelection.selected, null);
   assert.deepEqual(supersededRevisionTwoSelection.timeline, []);
+  assert.equal(supersededRevisionTwoSelection.stale, false);
+  assert.equal(supersededRevisionTwoSelection.error, null);
+  assert.doesNotMatch(
+    JSON.stringify(supersededRevisionTwoSelection),
+    /obsolete-reader|secret|revision-two-timeline-db|OBSOLETE_REVISION_TIMELINE_SECRET/i
+  );
   assert.equal(controller.canRetrySelection(), false);
   assert.equal(controller.canTransition(), false);
   assert.equal(controller.canAuthorizeClosure(), false);
