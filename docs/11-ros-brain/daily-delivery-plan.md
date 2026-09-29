@@ -1536,6 +1536,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE EXPLICIT RETRY OWNS ONE NEW AUTHENTICATED QUEUE GENERATION AND SURVIVES THE OLDEST LATE COMPLETION.** |
 | Next handoff | Discard the browser session while this post-failure retry is pending and prove its late success cannot repopulate the cleared state or displace a new-session restoration. |
 
+### Session discard isolates a pending post-failure retry
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `6cb4e13a3e9cdb72bcee788525f9875a10b52d39` was one hundred and sixty-one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Browser-session discard while an explicit post-failure queue retry is pending invalidates that retry. Its late success cannot repopulate the cleared controller, and a new-session restoration owns a distinct Promise and publishes only its trusted incident. |
+| Race ownership | The obsolete retry callers share one Promise, while the restoration callers share a different Promise. Releasing the old success first leaves the controller empty and `loading`; the obsolete `finally` callback cannot clear the restoration owner, and a repeated restoration call remains coalesced without another list read. |
+| Local evidence | The deterministic authenticated-browser journey passed **61/61** directly. It proved an initial sanitized `503`, one pending retry, one session discard, one new-session restoration, three total list reads, absence of the obsolete incident and server diagnostics, and zero detail, Timeline, or mutation requests. Build and no-emit TypeScript passed, followed by **775/775** workspace tests (API 670, dashboard 61, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local browser-session and authenticated read-recovery evidence only, not credential rotation, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **DISCARD INVALIDATES THE PENDING POST-FAILURE RETRY; ONLY THE NEW SESSION RESTORATION CAN PUBLISH.** |
+| Next handoff | Make the new-session restoration fail after discard while the obsolete retry succeeds late, and prove only the new sanitized failure remains visible without incident, retry, or command authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
