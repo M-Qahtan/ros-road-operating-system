@@ -1572,6 +1572,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE FRESH AUTHENTICATED LIST GENERATION RECOVERS WITHOUT INHERITING EITHER OBSOLETE GENERATION.** |
 | Next handoff | Select the newly recovered incident and prove only its exact identifier and revision can drive detail and Timeline reads, while the obsolete incident remains unreachable and mutation traffic stays zero. |
 
+### Recovered incident owns exact detail and Timeline reads
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `24d00b6f8995dc620c92d3ceae615dfe3f184cc5` was one hundred and sixty-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | Selecting the incident published by the fresh recovery issues exactly one authenticated detail read and one authenticated Timeline read for that incident identifier. The selected detail and Timeline both bind to recovered revision `1`; the pre-discard incident remains absent and cannot drive a read. |
+| Boundary evidence | The HTTP boundary asserts the exact encoded detail and Timeline paths before returning data. The controller exposes only incident `74747474-7474-4474-8474-747474747474`, with the Timeline correlation identifier and `afterState.version` matching its selected revision. No transition or closure-authorization request is emitted. |
+| Local evidence | The deterministic authenticated-browser journey passed **62/62** directly. Build and no-emit TypeScript passed, followed by **776/776** workspace tests (API 670, dashboard 62, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The journey retained four list reads, added one detail and one Timeline read, kept mutation traffic at zero, and exposed neither obsolete incident data nor server diagnostics. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated read evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONLY THE RECOVERED INCIDENT IDENTIFIER AND REVISION REACH DETAIL AND TIMELINE; MUTATIONS REMAIN ZERO.** |
+| Next handoff | Make the recovered incident's Timeline read fail with sanitized server diagnostics, then prove selection fails closed and one explicit selection retry restores only the same incident and revision without mutation traffic. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

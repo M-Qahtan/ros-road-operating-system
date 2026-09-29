@@ -1441,6 +1441,12 @@ test('new-session restoration failure survives obsolete retry and recovers indep
     id: '74747474-7474-4474-8474-747474747474', version: 1,
     severity: { level: 'S2', score: 41, confidence: 0.94, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
   };
+  const recoveredTimeline: AuditTimelineEntryContract[] = [{
+    action: 'road_event.created', actorType: 'SYSTEM', actorId: null,
+    beforeState: null, afterState: { version: recoveredIncident.version },
+    reason: null, traceId: 'trace-recovered-incident', correlationId: recoveredIncident.id,
+    occurredAt: recoveredIncident.occurredAt
+  }];
   const retryBarrier = barrier();
   const retryStarted = barrier();
   const restorationBarrier = barrier();
@@ -1460,11 +1466,13 @@ test('new-session restoration failure survives obsolete retry and recovers indep
     }
     if (target.pathname.endsWith('/timeline')) {
       timelineReads += 1;
-      return ok([]);
+      assert.equal(target.pathname, `/api/v1/road-events/${recoveredIncident.id}/timeline`);
+      return ok(recoveredTimeline);
     }
     if (target.pathname.startsWith('/api/v1/road-events/')) {
       detailReads += 1;
-      throw new Error('incident detail must remain unreachable');
+      assert.equal(target.pathname, `/api/v1/road-events/${recoveredIncident.id}`);
+      return ok(recoveredIncident);
     }
     const request = ++listReads;
     if (request === 1) {
@@ -1576,8 +1584,17 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   assert.equal(controller.canRetrySelection(), false);
   assert.equal(controller.ambiguousCriticalActionView(), null);
   assert.equal(listReads, 4);
-  assert.equal(detailReads, 0);
-  assert.equal(timelineReads, 0);
+
+  const selected = await controller.select(recoveredIncident.id);
+  assert.equal(selected.phase, 'ready');
+  assert.equal(selected.selected?.id, recoveredIncident.id);
+  assert.equal(selected.selected?.version, recoveredIncident.version);
+  assert.deepEqual(selected.timeline, recoveredTimeline);
+  assert.equal(selected.timeline[0]?.correlationId, recoveredIncident.id);
+  assert.deepEqual(selected.timeline[0]?.afterState, { version: recoveredIncident.version });
+  assert.doesNotMatch(JSON.stringify(selected), /73737373|postgres|secret/i);
+  assert.equal(detailReads, 1);
+  assert.equal(timelineReads, 1);
   assert.equal(mutationRequests, 0);
 });
 
