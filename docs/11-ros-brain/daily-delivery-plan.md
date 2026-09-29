@@ -1740,6 +1740,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **REVISION 4 CAN BECOME THE ACTIVE EXACT-LINEAGE SELECTION BEFORE THE OBSOLETE DETAIL SETTLES, AND THAT LATE FAILURE CANNOT ROLL IT BACK OR ESCALATE AUTHORITY.** |
 | Next handoff | Replace the trusted browser session while revision `4` is selected and the obsolete revision-2 detail remains pending, then prove the late failure cannot contaminate restored-session ownership, restore the discarded selection, create retry authority, or issue mutation traffic. |
 
+### Session replacement isolates obsolete detail from restored ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `3f3da0641140be39d14e8b97e7c907761f5338e0` was one hundred and seventy-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | Revision `4` can own the selected incident and its exact two-entry append-only Timeline while an obsolete revision-2 detail read remains pending. Replacing the trusted browser session clears that selection and history, then restores a fresh revision-4 queue with no inherited selection. When the old detail later rejects, it cannot repopulate the discarded selection or replace the restored-session state object. |
+| Failure and authority boundary | Simulated secret database diagnostics and private error codes from both obsolete readers remain absent from restored state. The late rejection creates no selection retry; transition and closure controls remain disabled after restoration, and mutation routes remain unreachable throughout the case. |
+| Local evidence | The new deterministic authenticated-browser case passed within **66/66** dashboard tests. Build and no-emit TypeScript passed, followed by **780/780** workspace application/module tests (API 670, dashboard 66, mobile 36, domain 8), **8/8** contract tests, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The case recorded three list reads, two detail reads, two Timeline reads, and zero mutations. Six unaffected tasks reused Turbo cache during each broad phase; the changed dashboard task ran freshly. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated session-isolation evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **SESSION REPLACEMENT CLEARS REVISION-4 OWNERSHIP, AND A LATE OBSOLETE DETAIL FAILURE CANNOT REPOPULATE OR CONTAMINATE THE RESTORED SESSION.** |
+| Next handoff | Mirror the session-isolation proof with the obsolete revision-2 Timeline still pending after revision `4` is selected, then prove its late rejection cannot contaminate restored-session ownership, restore the discarded selection, create retry authority, or issue mutation traffic. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
