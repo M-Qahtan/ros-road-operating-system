@@ -1457,6 +1457,7 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   let detailReads = 0;
   let timelineReads = 0;
   let mutationRequests = 0;
+  let timelineFails = false;
   const fetcher: typeof fetch = async (input, init) => {
     assertTrustedRequest(init);
     const target = new URL(String(input), 'https://dashboard.example.test');
@@ -1467,6 +1468,14 @@ test('new-session restoration failure survives obsolete retry and recovers indep
     if (target.pathname.endsWith('/timeline')) {
       timelineReads += 1;
       assert.equal(target.pathname, `/api/v1/road-events/${recoveredIncident.id}/timeline`);
+      if (timelineFails) {
+        return new Response(JSON.stringify({
+          success: false,
+          data: null,
+          error: { code: 'TIMELINE_SECRET', message: 'postgres://auditor:secret@timeline-db' },
+          traceId: 'trace-recovered-timeline-failure'
+        }), { status: 503, headers: { 'content-type': 'application/json' } });
+      }
       return ok(recoveredTimeline);
     }
     if (target.pathname.startsWith('/api/v1/road-events/')) {
@@ -1595,6 +1604,37 @@ test('new-session restoration failure survives obsolete retry and recovers indep
   assert.doesNotMatch(JSON.stringify(selected), /73737373|postgres|secret/i);
   assert.equal(detailReads, 1);
   assert.equal(timelineReads, 1);
+
+  timelineFails = true;
+  const failedSelection = await controller.select(recoveredIncident.id);
+  assert.equal(failedSelection.phase, 'failure');
+  assert.equal(failedSelection.selected, null);
+  assert.deepEqual(failedSelection.timeline, []);
+  assert.equal(failedSelection.stale, true);
+  assert.equal(failedSelection.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+  assert.doesNotMatch(JSON.stringify(failedSelection), /postgres|auditor|secret|timeline-db/i);
+  assert.equal(controller.canRetrySelection(), true);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(detailReads, 2);
+  assert.equal(timelineReads, 2);
+
+  timelineFails = false;
+  const selectionRetry = controller.retrySelection();
+  const repeatedSelectionRetry = controller.retrySelection();
+  assert.equal(repeatedSelectionRetry, selectionRetry);
+  const [retriedSelection, repeatedRetriedSelection] = await Promise.all([selectionRetry, repeatedSelectionRetry]);
+  assert.equal(repeatedRetriedSelection, retriedSelection);
+  assert.equal(retriedSelection.phase, 'ready');
+  assert.equal(retriedSelection.selected?.id, recoveredIncident.id);
+  assert.equal(retriedSelection.selected?.version, recoveredIncident.version);
+  assert.deepEqual(retriedSelection.timeline, recoveredTimeline);
+  assert.equal(retriedSelection.stale, false);
+  assert.equal(retriedSelection.error, null);
+  assert.doesNotMatch(JSON.stringify(retriedSelection), /73737373|postgres|auditor|secret|timeline-db/i);
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(detailReads, 3);
+  assert.equal(timelineReads, 3);
   assert.equal(mutationRequests, 0);
 });
 

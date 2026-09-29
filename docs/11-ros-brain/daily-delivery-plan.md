@@ -1584,6 +1584,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONLY THE RECOVERED INCIDENT IDENTIFIER AND REVISION REACH DETAIL AND TIMELINE; MUTATIONS REMAIN ZERO.** |
 | Next handoff | Make the recovered incident's Timeline read fail with sanitized server diagnostics, then prove selection fails closed and one explicit selection retry restores only the same incident and revision without mutation traffic. |
 
+### Timeline failure fails closed and selection retry recovers
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `4ea1c29c3b7c3b1f55456c06af316114e7998d43` was one hundred and sixty-five commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | A `503` while reading the recovered incident's Timeline clears the selected incident and Timeline, marks the view `failure/stale`, and exposes only the approved Arabic service message. One explicit selection retry restores the same incident identifier, revision `1`, and Timeline; a concurrent retry caller coalesces onto that Promise. |
+| Failure and recovery boundary | The failing compound selection performs one detail and one Timeline read, leaks none of the simulated database diagnostic, and grants no retry or critical-command authority beyond the explicit read retry. Recovery performs one additional detail/Timeline pair, clears `stale/error`, and never sends transition or closure-authorization traffic. |
+| Local evidence | The deterministic authenticated-browser journey passed **62/62** directly. Build and no-emit TypeScript passed, followed by **776/776** workspace tests (API 670, dashboard 62, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. Across initial selection, failed selection, and coalesced retry the journey recorded three detail and three Timeline reads, four list reads, and zero mutations. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated read-recovery evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **TIMELINE FAILURE FAILS CLOSED; ONE COALESCED SELECTION RETRY RESTORES ONLY THE RECOVERED INCIDENT.** |
+| Next handoff | Refresh the queue after recovered selection, publish a newer revision of the same incident, and prove the refresh clears the old detail and Timeline before only the newer revision can be selected, with mutation traffic still zero. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
