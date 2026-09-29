@@ -1429,17 +1429,24 @@ test('session discard invalidates a pending post-failure queue retry', async () 
   assert.equal(mutationRequests, 0);
 });
 
-test('new-session restoration failure survives late obsolete retry success', async () => {
+test('new-session restoration failure survives obsolete retry and recovers independently', async () => {
   const obsoleteRetryIncident: RoadEventResponse = {
     id: '73737373-7373-4373-8373-737373737373',
     status: 'RECOVERY', latitude: 24.74, longitude: 46.7,
     occurredAt: '2026-09-29T03:00:00.000Z', version: 5, closureAuthorization: null,
     severity: { level: 'S4', score: 98, confidence: 0.97, reasonCodes: ['life_threat'], requiresHumanReview: true }
   };
+  const recoveredIncident: RoadEventResponse = {
+    ...obsoleteRetryIncident,
+    id: '74747474-7474-4474-8474-747474747474', version: 1,
+    severity: { level: 'S2', score: 41, confidence: 0.94, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+  };
   const retryBarrier = barrier();
   const retryStarted = barrier();
   const restorationBarrier = barrier();
   const restorationStarted = barrier();
+  const recoveryBarrier = barrier();
+  const recoveryStarted = barrier();
   let listReads = 0;
   let detailReads = 0;
   let timelineReads = 0;
@@ -1473,14 +1480,19 @@ test('new-session restoration failure survives late obsolete retry success', asy
       await retryBarrier.wait;
       return ok({ items: [obsoleteRetryIncident], total: 1, limit: 100, offset: 0 });
     }
-    restorationStarted.release();
-    await restorationBarrier.wait;
-    return new Response(JSON.stringify({
-      success: false,
-      data: null,
-      error: { code: 'RESTORATION_SECRET', message: 'postgres://restorer:new-secret@new-session-db' },
-      traceId: 'trace-new-session-failure'
-    }), { status: 503, headers: { 'content-type': 'application/json' } });
+    if (request === 3) {
+      restorationStarted.release();
+      await restorationBarrier.wait;
+      return new Response(JSON.stringify({
+        success: false,
+        data: null,
+        error: { code: 'RESTORATION_SECRET', message: 'postgres://restorer:new-secret@new-session-db' },
+        traceId: 'trace-new-session-failure'
+      }), { status: 503, headers: { 'content-type': 'application/json' } });
+    }
+    recoveryStarted.release();
+    await recoveryBarrier.wait;
+    return ok({ items: [recoveredIncident], total: 1, limit: 100, offset: 0 });
   };
   const controller = new OperationsDashboardController(
     new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
@@ -1539,7 +1551,31 @@ test('new-session restoration failure survives late obsolete retry success', asy
   );
   assert.equal(controller.canRetrySelection(), false);
   assert.equal(controller.ambiguousCriticalActionView(), null);
-  assert.equal(listReads, 3);
+
+  const recovery = controller.load();
+  await recoveryStarted.wait;
+  const repeatedRecovery = controller.load();
+  assert.equal(repeatedRecovery, recovery);
+  assert.notEqual(recovery, restoration);
+  assert.notEqual(recovery, retry);
+  assert.equal(listReads, 4);
+
+  recoveryBarrier.release();
+  const [recovered, repeatedRecovered] = await Promise.all([recovery, repeatedRecovery]);
+  assert.equal(repeatedRecovered, recovered);
+  assert.equal(recovered.phase, 'ready');
+  assert.deepEqual(recovered.events.map(({ id }) => id), [recoveredIncident.id]);
+  assert.equal(recovered.selected, null);
+  assert.deepEqual(recovered.timeline, []);
+  assert.equal(recovered.stale, false);
+  assert.equal(recovered.error, null);
+  assert.doesNotMatch(
+    JSON.stringify(recovered),
+    /postgres|admin|restorer|secret|failed-session-db|new-session-db|73737373/i
+  );
+  assert.equal(controller.canRetrySelection(), false);
+  assert.equal(controller.ambiguousCriticalActionView(), null);
+  assert.equal(listReads, 4);
   assert.equal(detailReads, 0);
   assert.equal(timelineReads, 0);
   assert.equal(mutationRequests, 0);

@@ -1560,6 +1560,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE NEW SANITIZED RESTORATION FAILURE REMAINS CURRENT AFTER THE OBSOLETE RETRY SUCCEEDS.** |
 | Next handoff | Retry explicitly after this new-session failure and prove one fresh authenticated list generation can recover without inheriting the obsolete result or opening detail, Timeline, or mutation traffic. |
 
+### Explicit retry recovers in a fresh post-failure generation
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-29, GitHub candidate `cf8369ba7fab266f39f9810d8019deda2b5660de` was one hundred and sixty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the tested local base, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The unrelated workflow edit remained excluded, and the approved cadence remains hourly. |
+| Proved behavior | After the new-session restoration failure remains current through the obsolete retry completion, one explicit retry starts a fresh authenticated list generation and recovers to `ready` with only the new incident. A concurrent caller coalesces onto that same Promise instead of inheriting either older generation or issuing a duplicate read. |
+| Generation ownership | The recovery Promise is distinct from both the pre-discard retry and the failed restoration. It adds exactly one fourth list read, publishes only incident `74747474-7474-4474-8474-747474747474`, clears `stale/error`, and leaves selection, Timeline, retry authority, and critical-command authority empty. |
+| Local evidence | The deterministic authenticated-browser journey passed **62/62** directly. Build and no-emit TypeScript passed, followed by **776/776** workspace tests (API 670, dashboard 62, mobile 36, domain 8), **32/32** perception and coverage contract cases, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The journey recorded four total list reads and zero detail, Timeline, or mutation requests, with no obsolete incident or server diagnostic leakage. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local browser-session and authenticated read-recovery evidence only, not credential rotation, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, mutation replay, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE FRESH AUTHENTICATED LIST GENERATION RECOVERS WITHOUT INHERITING EITHER OBSOLETE GENERATION.** |
+| Next handoff | Select the newly recovered incident and prove only its exact identifier and revision can drive detail and Timeline reads, while the obsolete incident remains unreachable and mutation traffic stays zero. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
