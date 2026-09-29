@@ -1752,6 +1752,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **SESSION REPLACEMENT CLEARS REVISION-4 OWNERSHIP, AND A LATE OBSOLETE DETAIL FAILURE CANNOT REPOPULATE OR CONTAMINATE THE RESTORED SESSION.** |
 | Next handoff | Mirror the session-isolation proof with the obsolete revision-2 Timeline still pending after revision `4` is selected, then prove its late rejection cannot contaminate restored-session ownership, restore the discarded selection, create retry authority, or issue mutation traffic. |
 
+### Session replacement isolates obsolete Timeline from restored ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `a1a7ba6b4ce4e54ba91f95d6377e1f4779e82f4f` was one hundred and seventy-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | Revision `4` can own the selected incident and its exact two-entry append-only Timeline while an obsolete revision-2 Timeline read remains pending. Replacing the trusted browser session clears that selection and history, then restores a fresh revision-4 queue with no inherited selection. When the old Timeline later rejects, it cannot repopulate the discarded selection or replace the restored-session state object. |
+| Failure and authority boundary | Simulated secret database diagnostics and private error codes from both obsolete readers remain absent from restored state. The late rejection creates no selection retry; transition and closure controls remain disabled after restoration, and mutation routes remain unreachable throughout the case. |
+| Local evidence | The new deterministic authenticated-browser case passed within **67/67** dashboard tests. Build and no-emit TypeScript passed, followed by **781/781** workspace application/module tests (API 670, dashboard 67, mobile 36, domain 8), **8/8** contract tests, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests. The case recorded three list reads, two detail reads, two Timeline reads, and zero mutations. Six unaffected tasks reused Turbo cache during each broad phase; the changed dashboard task ran freshly. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated session-isolation evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **SESSION REPLACEMENT CLEARS REVISION-4 OWNERSHIP, AND A LATE OBSOLETE TIMELINE FAILURE CANNOT REPOPULATE OR CONTAMINATE THE RESTORED SESSION.** |
+| Next handoff | Keep both obsolete revision-2 Detail and Timeline reads pending through revision `4` selection and session replacement, then settle them independently after restoration and prove neither completion order can contaminate ownership, restore the discarded selection, create retry authority, or issue mutation traffic. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
