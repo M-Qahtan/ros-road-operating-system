@@ -1824,6 +1824,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FRESH REVISION-4 SELECTION MADE BEFORE THE OBSOLETE PAIR SETTLES REMAINS THE IDENTICAL ACTIVE STATE AFTER EITHER COMPLETION ORDER, WITHOUT OLD DATA OR AUTHORITY LEAKAGE.** |
 | Next handoff | After the fresh revision-4 selection survives both obsolete completions, replace the trusted session again and prove the completed old promise cannot contaminate a second restored generation. |
 
+### Second restored generation rejects completed obsolete ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `4f2487bcd16a321bf04611c1ac6b1c7a6f5eddf4` was one hundred and eighty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | After the coherent obsolete revision-2 selection promise completes and a fresh revision-4 selection has been established, a second trusted-session replacement restores another clean revision-4 queue. The completed old promise remains a distinct prior-generation state and cannot republish its selection or Timeline after a full event-loop turn, for either old-reader completion order and either fresh-reselection timing. |
+| Failure and authority boundary | The second restored generation contains no revision-2 reason or trace data, no selected incident, and no Timeline. Retry, transition, and closure controls remain disabled, while mutation routes remain unreachable. |
+| Local evidence | The deterministic authenticated-browser matrix passed within **70/70** dashboard tests. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8). All four configured contract checks passed: the 11-case perception gate plus benchmark **4/4**, adapter certification **9/9**, and epistemic coverage **8/8**. Repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests also passed. Every before/after and Detail/Timeline completion combination recorded four list reads, three detail reads, three Timeline reads, and zero mutations. The changed dashboard task ran freshly; eligible unaffected tasks reused Turbo cache. The PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated generation-isolation evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A COMPLETED OBSOLETE PROMISE CANNOT CROSS A SECOND TRUSTED-SESSION REPLACEMENT OR CONTAMINATE ITS CLEAN REVISION-4 QUEUE GENERATION.** |
+| Next handoff | Select revision `4` again inside the second restored generation and prove its new authenticated Detail and Timeline reads remain independent of every completed prior-generation promise. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

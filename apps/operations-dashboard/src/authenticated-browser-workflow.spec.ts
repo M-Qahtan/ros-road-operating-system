@@ -3124,7 +3124,26 @@ test('session replacement preserves fresh reselection before or after coherent o
       JSON.stringify(controller.state),
       /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i
     );
-    assert.equal(listReads, 3);
+
+    controller.discardBrowserSession();
+    const secondRestoredQueue = await controller.load();
+    assert.equal(secondRestoredQueue.phase, 'ready');
+    assert.equal(secondRestoredQueue.events[0]?.version, revisionFour.version);
+    assert.equal(secondRestoredQueue.selected, null);
+    assert.deepEqual(secondRestoredQueue.timeline, []);
+    assert.equal(secondRestoredQueue.stale, false);
+    assert.equal(secondRestoredQueue.error, null);
+    assert.notEqual(supersededRevisionTwoSelection, secondRestoredQueue);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(controller.state, secondRestoredQueue);
+    assert.doesNotMatch(
+      JSON.stringify(controller.state),
+      /coherent-obsolete-success|trace-coherent/i
+    );
+    assert.equal(controller.canRetrySelection(), false);
+    assert.equal(controller.canTransition(), false);
+    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(listReads, 4);
     assert.equal(detailReads, 3);
     assert.equal(timelineReads, 3);
     assert.equal(mutationRequests, 0);
