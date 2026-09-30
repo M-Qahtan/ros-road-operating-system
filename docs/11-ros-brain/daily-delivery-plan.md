@@ -1872,6 +1872,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE THIRD-GENERATION REVISION-4 SELECTION REMAINS THE EXACT AUTHORITATIVE STATE AFTER BOTH PENDING SECOND-GENERATION READERS COMPLETE IN EITHER ORDER, WITHOUT AUTHORITY DRIFT OR MUTATION.** |
 | Next handoff | Replace the trusted session again after the third-generation selection survives both late readers and prove no completed second-generation promise can contaminate a fourth restored queue. |
 
+### Fourth restored generation rejects completed predecessor ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `5980506315f45f7387e95db7931d4a533bc5fa80` was one hundred and ninety commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | After the third-generation revision-4 selection remains authoritative through both late second-generation readers, another trusted-session replacement publishes a clean fourth-generation revision-4 queue. The completed second-generation promise cannot republish selection or Timeline state after a full event-loop turn. |
+| Failure and authority boundary | The fourth generation contains no selected incident or Timeline, exposes no retry, transition, or closure authority, and reaches no mutation route. |
+| Local evidence | The deterministic authenticated-browser matrix passed within **70/70** dashboard tests. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8). All four configured contract checks passed: the 11-case perception gate plus benchmark **4/4**, adapter certification **9/9**, and epistemic coverage **8/8**. Repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests also passed. Every before/after and Detail/Timeline completion combination recorded six list reads, six detail reads, six Timeline reads, and zero mutations. The changed dashboard task ran freshly; eligible unaffected tasks reused Turbo cache. The PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated generation-isolation evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE FOURTH RESTORED GENERATION REMAINS THE EXACT CLEAN REVISION-4 QUEUE AFTER A FULL EVENT-LOOP TURN, INDEPENDENT OF EVERY COMPLETED SECOND-GENERATION PROMISE.** |
+| Next handoff | Select revision `4` within the fourth restored generation and prove its new authenticated Detail and Timeline reads remain independent of every completed predecessor promise. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

@@ -2969,7 +2969,7 @@ test('session replacement isolates mixed obsolete success and failure in every r
   await runOrder('timeline', 'timeline', '86868686-8686-4686-8686-868686868686');
 });
 
-test('session replacement preserves a newer selection across pending reads from the prior generation', async () => {
+test('session replacement preserves a newer selection and isolates its completed predecessor from the next generation', async () => {
   const runOrder = async (
     first: 'detail' | 'timeline',
     reselectTiming: 'before' | 'after',
@@ -3229,7 +3229,22 @@ test('session replacement preserves a newer selection across pending reads from 
     assert.equal(controller.canRetrySelection(), false);
     assert.equal(controller.canTransition(), transitionAuthorityBeforeObsoleteCompletion);
     assert.equal(controller.canAuthorizeClosure(), closureAuthorityBeforeObsoleteCompletion);
-    assert.equal(listReads, 5);
+
+    controller.discardBrowserSession();
+    const fourthRestoredQueue = await controller.load();
+    assert.equal(fourthRestoredQueue.phase, 'ready');
+    assert.equal(fourthRestoredQueue.events[0]?.version, revisionFour.version);
+    assert.equal(fourthRestoredQueue.selected, null);
+    assert.deepEqual(fourthRestoredQueue.timeline, []);
+    assert.equal(fourthRestoredQueue.stale, false);
+    assert.equal(fourthRestoredQueue.error, null);
+    assert.notEqual(fourthRestoredQueue, supersededSecondGenerationSelection);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(controller.state, fourthRestoredQueue);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.equal(controller.canTransition(), false);
+    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(listReads, 6);
     assert.equal(detailReads, 6);
     assert.equal(timelineReads, 6);
     assert.equal(mutationRequests, 0);
