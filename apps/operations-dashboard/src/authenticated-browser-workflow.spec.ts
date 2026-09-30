@@ -3264,7 +3264,26 @@ test('session replacement preserves a newer selection and isolates its completed
     assert.equal(controller.state, fourthGenerationSelection);
     assert.equal(controller.canTransition(), fourthTransitionAuthority);
     assert.equal(controller.canAuthorizeClosure(), fourthClosureAuthority);
-    assert.equal(listReads, 6);
+
+    controller.discardBrowserSession();
+    const fifthRestoredQueue = await controller.load();
+    assert.equal(fifthRestoredQueue.phase, 'ready');
+    assert.equal(fifthRestoredQueue.events[0]?.version, revisionFour.version);
+    assert.equal(fifthRestoredQueue.selected, null);
+    assert.deepEqual(fifthRestoredQueue.timeline, []);
+    assert.equal(fifthRestoredQueue.stale, false);
+    assert.equal(fifthRestoredQueue.error, null);
+    assert.notEqual(fifthRestoredQueue, fourthGenerationSelection);
+    assert.doesNotMatch(
+      JSON.stringify(fifthRestoredQueue),
+      /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(controller.state, fifthRestoredQueue);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.equal(controller.canTransition(), false);
+    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(listReads, 7);
     assert.equal(detailReads, 7);
     assert.equal(timelineReads, 7);
     assert.equal(mutationRequests, 0);

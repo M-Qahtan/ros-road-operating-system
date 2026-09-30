@@ -1896,6 +1896,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE FOURTH-GENERATION REVISION-4 SELECTION OWNS FRESH DETAIL AND TIMELINE READS AND REMAINS INDEPENDENT OF EVERY COMPLETED PREDECESSOR PROMISE.** |
 | Next handoff | Replace the trusted session while the fourth-generation selection is active and prove the fifth restored queue cannot inherit selection or Timeline ownership from any completed predecessor generation. |
 
+### Fifth restored generation rejects all predecessor ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `8efc53dc345306bf340d1b9b1984269a26d7bbfa` was one hundred and ninety-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | Replacing the trusted session while the fourth-generation revision-4 selection is active publishes a distinct, clean fifth-generation revision-4 queue. It remains the exact controller state after a full event-loop turn and inherits neither selection nor Timeline state from any predecessor generation. |
+| Failure and authority boundary | No predecessor diagnostics or Timeline appear in the fifth generation. It exposes no retry, transition, or closure authority and reaches no mutation route. |
+| Local evidence | The deterministic authenticated-browser matrix passed within **70/70** dashboard tests. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8). All four configured contract checks passed: the 11-case perception gate plus benchmark **4/4**, adapter certification **9/9**, and epistemic coverage **8/8**. Repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests also passed. Every before/after and Detail/Timeline completion combination recorded seven list reads, seven Detail reads, seven Timeline reads, and zero mutations. The changed dashboard task ran freshly; eligible unaffected tasks reused Turbo cache. The PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated generation-isolation evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE FIFTH RESTORED GENERATION REMAINS A DISTINCT CLEAN REVISION-4 QUEUE, INDEPENDENT OF SELECTION AND TIMELINE OWNERSHIP FROM EVERY PREDECESSOR GENERATION.** |
+| Next handoff | Replace the manually unrolled generation assertions with a bounded deterministic generation-isolation matrix that proves the same ownership invariants over repeated select-and-discard cycles without weakening the explicit failure-order coverage. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
