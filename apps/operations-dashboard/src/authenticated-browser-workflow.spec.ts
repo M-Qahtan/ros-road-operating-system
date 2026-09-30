@@ -3021,6 +3021,9 @@ test('session replacement preserves a newer selection across ordered obsolete re
     const secondGenerationTimelineStarted = barrier();
     const secondGenerationDetailReturned = barrier();
     const secondGenerationTimelineReturned = barrier();
+    const generationRestorationFailureRelease = barrier();
+    const generationRestorationFailureStarted = barrier();
+    const generationRestorationFailureReturned = barrier();
     let revisionFourPublished = false;
     let holdRevisionTwoSelection = false;
     let holdSecondGenerationSelection = false;
@@ -3070,6 +3073,9 @@ test('session replacement preserves a newer selection across ordered obsolete re
       listReads += 1;
       if (failNextQueueRestoration) {
         failNextQueueRestoration = false;
+        generationRestorationFailureStarted.release();
+        await generationRestorationFailureRelease.wait;
+        generationRestorationFailureReturned.release();
         return new Response(JSON.stringify({
           success: false,
           data: null,
@@ -3244,32 +3250,56 @@ test('session replacement preserves a newer selection across ordered obsolete re
     assert.equal(controller.canAuthorizeClosure(), closureAuthorityBeforeObsoleteCompletion);
 
     let predecessorState = supersededSecondGenerationSelection;
-    for (const generation of [4, 5, 6, 7] as const) {
+    for (const generation of [4, 5, 7] as const) {
       controller.discardBrowserSession();
       failNextQueueRestoration = generation === 5;
-      const restoredQueue = await controller.load();
-      assert.notEqual(restoredQueue, predecessorState);
+      const pendingRestoration = controller.load();
 
       if (generation === 5) {
-        assert.equal(restoredQueue.phase, 'failure');
-        assert.deepEqual(restoredQueue.events, []);
-        assert.equal(restoredQueue.selected, null);
-        assert.deepEqual(restoredQueue.timeline, []);
-        assert.equal(restoredQueue.stale, true);
-        assert.equal(restoredQueue.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+        await generationRestorationFailureStarted.wait;
+        controller.discardBrowserSession();
+        const recoveredQueue = await controller.load();
+        assert.notEqual(recoveredQueue, predecessorState);
+        assert.equal(recoveredQueue.phase, 'ready');
+        assert.equal(recoveredQueue.events[0]?.version, revisionFour.version);
+        assert.equal(recoveredQueue.selected, null);
+        assert.deepEqual(recoveredQueue.timeline, []);
+        assert.equal(recoveredQueue.stale, false);
+        assert.equal(recoveredQueue.error, null);
         assert.doesNotMatch(
-          JSON.stringify(restoredQueue),
+          JSON.stringify(recoveredQueue),
           /postgres|generation-reader|secret|restoration-db/i,
         );
+
+        generationRestorationFailureRelease.release();
+        await generationRestorationFailureReturned.wait;
+        const supersededFailure = await pendingRestoration;
+        assert.equal(supersededFailure, recoveredQueue);
         await new Promise<void>((resolve) => setImmediate(resolve));
-        assert.equal(controller.state, restoredQueue);
+        assert.equal(controller.state, recoveredQueue);
+        assert.equal(controller.state.stale, false);
+        assert.equal(controller.state.error, null);
         assert.equal(controller.canRetrySelection(), false);
         assert.equal(controller.canTransition(), false);
         assert.equal(controller.canAuthorizeClosure(), false);
-        predecessorState = restoredQueue;
+
+        const recoveredSelection = await controller.select(revisionFour.id);
+        assert.notEqual(recoveredSelection, recoveredQueue);
+        assert.equal(recoveredSelection.selected?.version, revisionFour.version);
+        assert.deepEqual(recoveredSelection.timeline, revisionFourTimeline);
+        assert.equal(recoveredSelection.stale, false);
+        assert.equal(recoveredSelection.error, null);
+        assert.equal(controller.state, recoveredSelection);
+        assert.doesNotMatch(
+          JSON.stringify(recoveredSelection),
+          /postgres|generation-reader|secret|restoration-db|coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
+        );
+        predecessorState = recoveredSelection;
         continue;
       }
 
+      const restoredQueue = await pendingRestoration;
+      assert.notEqual(restoredQueue, predecessorState);
       assert.equal(restoredQueue.phase, 'ready');
       assert.equal(restoredQueue.events[0]?.version, revisionFour.version);
       assert.equal(restoredQueue.selected, null);
