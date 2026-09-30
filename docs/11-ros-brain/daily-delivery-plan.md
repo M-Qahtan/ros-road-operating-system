@@ -1920,6 +1920,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE BOUNDED MATRIX PROVES LINEAR, DISTINCT OWNERSHIP ACROSS RESTORED GENERATIONS 4–6 WITHOUT WEAKENING THE FOUR EXPLICIT OBSOLETE-READ COMPLETION ORDERS.** |
 | Next handoff | Inject one deterministic queue-restoration failure inside the bounded generation sequence and prove the following trusted generation recovers cleanly without inheriting selection, Timeline, retry, or mutation authority. |
 
+### Bounded generation failure recovers through a new trusted session
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `c473a00804c2cf289ccb697c015c97e215137b23` was one hundred and ninety-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | The bounded matrix now injects exactly one authenticated queue-restoration failure in generation 5. The failure is sanitized and fail-closed; replacing that trusted session lets generation 6 recover a clean revision-4 queue, perform fresh Detail and Timeline reads, and then leave generation 7 as a clean unselected queue. |
+| Failure and authority boundary | The generation-5 failure exposes no server diagnostic, event, selection, Timeline, retry, transition, or closure authority. Generations 6 and 7 inherit none of its failure state or any predecessor selection, and no mutation route is reached. The four explicit obsolete Detail/Timeline completion orders remain unchanged. |
+| Local evidence | The deterministic authenticated-browser matrix passed within **70/70** dashboard tests. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8). All four configured contract checks passed: the 11-case perception gate plus benchmark **4/4**, adapter certification **9/9**, and epistemic coverage **8/8**. Repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests also passed. Every explicit completion-order combination recorded nine list reads, eight Detail reads, eight Timeline reads, one sanitized restoration failure, and zero mutations. The changed dashboard task ran freshly; eligible unaffected tasks reused Turbo cache. The PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This remains process-local authenticated recovery evidence, not production behavior change, mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A SANITIZED GENERATION-5 RESTORATION FAILURE CANNOT CROSS THE TRUSTED-SESSION BOUNDARY; GENERATIONS 6 AND 7 RECOVER CLEANLY WITHOUT INHERITED STATE OR AUTHORITY.** |
+| Next handoff | Hold the generation-5 failure pending until generation 6 has published, then prove its late completion cannot replace or stale the newer recovered queue. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

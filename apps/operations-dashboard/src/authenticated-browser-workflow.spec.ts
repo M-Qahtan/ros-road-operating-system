@@ -3024,6 +3024,7 @@ test('session replacement preserves a newer selection across ordered obsolete re
     let revisionFourPublished = false;
     let holdRevisionTwoSelection = false;
     let holdSecondGenerationSelection = false;
+    let failNextQueueRestoration = false;
     let listReads = 0;
     let detailReads = 0;
     let timelineReads = 0;
@@ -3067,6 +3068,18 @@ test('session replacement preserves a newer selection across ordered obsolete re
         return ok(revisionFour);
       }
       listReads += 1;
+      if (failNextQueueRestoration) {
+        failNextQueueRestoration = false;
+        return new Response(JSON.stringify({
+          success: false,
+          data: null,
+          error: {
+            code: 'GENERATION_RESTORATION_SECRET',
+            message: 'postgres://generation-reader:secret@restoration-db'
+          },
+          traceId: 'trace-generation-restoration-failure'
+        }), { status: 503, headers: { 'content-type': 'application/json' } });
+      }
       return ok({
         items: [revisionFourPublished ? revisionFour : revisionTwo],
         total: 1, limit: 100, offset: 0
@@ -3231,16 +3244,38 @@ test('session replacement preserves a newer selection across ordered obsolete re
     assert.equal(controller.canAuthorizeClosure(), closureAuthorityBeforeObsoleteCompletion);
 
     let predecessorState = supersededSecondGenerationSelection;
-    for (const generation of [4, 5, 6] as const) {
+    for (const generation of [4, 5, 6, 7] as const) {
       controller.discardBrowserSession();
+      failNextQueueRestoration = generation === 5;
       const restoredQueue = await controller.load();
+      assert.notEqual(restoredQueue, predecessorState);
+
+      if (generation === 5) {
+        assert.equal(restoredQueue.phase, 'failure');
+        assert.deepEqual(restoredQueue.events, []);
+        assert.equal(restoredQueue.selected, null);
+        assert.deepEqual(restoredQueue.timeline, []);
+        assert.equal(restoredQueue.stale, true);
+        assert.equal(restoredQueue.error, 'خدمة ROS غير متاحة مؤقتًا. أعد المحاولة لاحقًا.');
+        assert.doesNotMatch(
+          JSON.stringify(restoredQueue),
+          /postgres|generation-reader|secret|restoration-db/i,
+        );
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(controller.state, restoredQueue);
+        assert.equal(controller.canRetrySelection(), false);
+        assert.equal(controller.canTransition(), false);
+        assert.equal(controller.canAuthorizeClosure(), false);
+        predecessorState = restoredQueue;
+        continue;
+      }
+
       assert.equal(restoredQueue.phase, 'ready');
       assert.equal(restoredQueue.events[0]?.version, revisionFour.version);
       assert.equal(restoredQueue.selected, null);
       assert.deepEqual(restoredQueue.timeline, []);
       assert.equal(restoredQueue.stale, false);
       assert.equal(restoredQueue.error, null);
-      assert.notEqual(restoredQueue, predecessorState);
       assert.doesNotMatch(
         JSON.stringify(restoredQueue),
         /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
@@ -3251,7 +3286,7 @@ test('session replacement preserves a newer selection across ordered obsolete re
       assert.equal(controller.canTransition(), false);
       assert.equal(controller.canAuthorizeClosure(), false);
 
-      if (generation === 6) {
+      if (generation === 7) {
         predecessorState = restoredQueue;
         continue;
       }
@@ -3278,7 +3313,7 @@ test('session replacement preserves a newer selection across ordered obsolete re
       predecessorState = generationSelection;
     }
 
-    assert.equal(listReads, 8);
+    assert.equal(listReads, 9);
     assert.equal(detailReads, 8);
     assert.equal(timelineReads, 8);
     assert.equal(mutationRequests, 0);
