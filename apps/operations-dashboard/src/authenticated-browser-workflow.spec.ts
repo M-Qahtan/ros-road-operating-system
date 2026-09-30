@@ -3244,9 +3244,29 @@ test('session replacement preserves a newer selection and isolates its completed
     assert.equal(controller.canRetrySelection(), false);
     assert.equal(controller.canTransition(), false);
     assert.equal(controller.canAuthorizeClosure(), false);
+
+    const fourthGenerationSelection = await controller.select(revisionFour.id);
+    assert.notEqual(fourthGenerationSelection, thirdGenerationSelection);
+    assert.notEqual(fourthGenerationSelection, fourthRestoredQueue);
+    assert.equal(fourthGenerationSelection.selected?.version, revisionFour.version);
+    assert.deepEqual(fourthGenerationSelection.timeline, revisionFourTimeline);
+    assert.equal(fourthGenerationSelection.stale, false);
+    assert.equal(fourthGenerationSelection.error, null);
+    assert.equal(controller.state, fourthGenerationSelection);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.doesNotMatch(
+      JSON.stringify(fourthGenerationSelection),
+      /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
+    );
+    const fourthTransitionAuthority = controller.canTransition();
+    const fourthClosureAuthority = controller.canAuthorizeClosure();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(controller.state, fourthGenerationSelection);
+    assert.equal(controller.canTransition(), fourthTransitionAuthority);
+    assert.equal(controller.canAuthorizeClosure(), fourthClosureAuthority);
     assert.equal(listReads, 6);
-    assert.equal(detailReads, 6);
-    assert.equal(timelineReads, 6);
+    assert.equal(detailReads, 7);
+    assert.equal(timelineReads, 7);
     assert.equal(mutationRequests, 0);
   };
 
