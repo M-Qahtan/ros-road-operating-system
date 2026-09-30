@@ -2969,8 +2969,12 @@ test('session replacement isolates mixed obsolete success and failure in every r
   await runOrder('timeline', 'timeline', '86868686-8686-4686-8686-868686868686');
 });
 
-test('session replacement isolates a coherent obsolete selection in either completion order', async () => {
-  const runOrder = async (first: 'detail' | 'timeline', incidentId: string) => {
+test('session replacement preserves fresh reselection before or after coherent obsolete completion', async () => {
+  const runOrder = async (
+    first: 'detail' | 'timeline',
+    reselectTiming: 'before' | 'after',
+    incidentId: string
+  ) => {
     const revisionTwo: RoadEventResponse = {
       id: incidentId,
       status: 'RECOVERY', latitude: 24.78, longitude: 46.74,
@@ -3081,6 +3085,11 @@ test('session replacement isolates a coherent obsolete selection in either compl
     assert.equal(restoredQueue.stale, false);
     assert.equal(restoredQueue.error, null);
 
+    let reselectedRevisionFour = reselectTiming === 'before'
+      ? await controller.select(revisionFour.id)
+      : null;
+    const expectedDuringObsoleteCompletion = reselectedRevisionFour ?? restoredQueue;
+
     const firstRelease = first === 'detail' ? detailRelease : timelineRelease;
     const firstReturned = first === 'detail' ? detailReturned : timelineReturned;
     const secondRelease = first === 'detail' ? timelineRelease : detailRelease;
@@ -3088,23 +3097,23 @@ test('session replacement isolates a coherent obsolete selection in either compl
     firstRelease.release();
     await firstReturned.wait;
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(controller.state, restoredQueue);
+    assert.equal(controller.state, expectedDuringObsoleteCompletion);
 
     secondRelease.release();
     await secondReturned.wait;
     const supersededRevisionTwoSelection = await pendingRevisionTwoSelection;
-    assert.equal(supersededRevisionTwoSelection, restoredQueue);
-    assert.equal(controller.state, restoredQueue);
-    assert.equal(controller.state.selected, null);
-    assert.deepEqual(controller.state.timeline, []);
-    assert.equal(controller.state.stale, false);
-    assert.equal(controller.state.error, null);
-    assert.doesNotMatch(JSON.stringify(controller.state), /coherent-obsolete-success|trace-coherent/i);
-    assert.equal(controller.canRetrySelection(), false);
-    assert.equal(controller.canTransition(), false);
-    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(supersededRevisionTwoSelection, expectedDuringObsoleteCompletion);
+    assert.equal(controller.state, expectedDuringObsoleteCompletion);
 
-    const reselectedRevisionFour = await controller.select(revisionFour.id);
+    if (reselectTiming === 'after') {
+      assert.equal(controller.state.selected, null);
+      assert.deepEqual(controller.state.timeline, []);
+      assert.equal(controller.canTransition(), false);
+      assert.equal(controller.canAuthorizeClosure(), false);
+      reselectedRevisionFour = await controller.select(revisionFour.id);
+    }
+
+    assert.ok(reselectedRevisionFour);
     assert.equal(reselectedRevisionFour.selected?.version, revisionFour.version);
     assert.deepEqual(reselectedRevisionFour.timeline, revisionFourTimeline);
     assert.equal(reselectedRevisionFour.stale, false);
@@ -3121,8 +3130,10 @@ test('session replacement isolates a coherent obsolete selection in either compl
     assert.equal(mutationRequests, 0);
   };
 
-  await runOrder('detail', '87878787-8787-4787-8787-878787878787');
-  await runOrder('timeline', '88888888-8888-4888-8888-888888888888');
+  await runOrder('detail', 'after', '87878787-8787-4787-8787-878787878787');
+  await runOrder('timeline', 'after', '88888888-8888-4888-8888-888888888888');
+  await runOrder('detail', 'before', '89898989-8989-4989-8989-898989898989');
+  await runOrder('timeline', 'before', '90909090-9090-4090-9090-909090909090');
 });
 
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
