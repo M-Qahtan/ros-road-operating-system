@@ -3271,18 +3271,6 @@ test('session replacement preserves a newer selection across ordered obsolete re
           /postgres|generation-reader|secret|restoration-db/i,
         );
 
-        generationRestorationFailureRelease.release();
-        await generationRestorationFailureReturned.wait;
-        const supersededFailure = await pendingRestoration;
-        assert.equal(supersededFailure, recoveredQueue);
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        assert.equal(controller.state, recoveredQueue);
-        assert.equal(controller.state.stale, false);
-        assert.equal(controller.state.error, null);
-        assert.equal(controller.canRetrySelection(), false);
-        assert.equal(controller.canTransition(), false);
-        assert.equal(controller.canAuthorizeClosure(), false);
-
         const recoveredSelection = await controller.select(revisionFour.id);
         assert.notEqual(recoveredSelection, recoveredQueue);
         assert.equal(recoveredSelection.selected?.version, revisionFour.version);
@@ -3290,10 +3278,25 @@ test('session replacement preserves a newer selection across ordered obsolete re
         assert.equal(recoveredSelection.stale, false);
         assert.equal(recoveredSelection.error, null);
         assert.equal(controller.state, recoveredSelection);
+        assert.equal(controller.canRetrySelection(), false);
         assert.doesNotMatch(
           JSON.stringify(recoveredSelection),
           /postgres|generation-reader|secret|restoration-db|coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
         );
+        const recoveredTransitionAuthority = controller.canTransition();
+        const recoveredClosureAuthority = controller.canAuthorizeClosure();
+
+        generationRestorationFailureRelease.release();
+        await generationRestorationFailureReturned.wait;
+        const supersededFailure = await pendingRestoration;
+        assert.equal(supersededFailure, recoveredSelection);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(controller.state, recoveredSelection);
+        assert.equal(controller.state.stale, false);
+        assert.equal(controller.state.error, null);
+        assert.equal(controller.canRetrySelection(), false);
+        assert.equal(controller.canTransition(), recoveredTransitionAuthority);
+        assert.equal(controller.canAuthorizeClosure(), recoveredClosureAuthority);
         predecessorState = recoveredSelection;
         continue;
       }
