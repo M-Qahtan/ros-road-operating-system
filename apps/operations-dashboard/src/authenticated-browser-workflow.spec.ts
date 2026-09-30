@@ -3143,9 +3143,22 @@ test('session replacement preserves fresh reselection before or after coherent o
     assert.equal(controller.canRetrySelection(), false);
     assert.equal(controller.canTransition(), false);
     assert.equal(controller.canAuthorizeClosure(), false);
+
+    const secondGenerationSelection = await controller.select(revisionFour.id);
+    assert.notEqual(secondGenerationSelection, reselectedRevisionFour);
+    assert.equal(secondGenerationSelection.selected?.version, revisionFour.version);
+    assert.deepEqual(secondGenerationSelection.timeline, revisionFourTimeline);
+    assert.equal(secondGenerationSelection.stale, false);
+    assert.equal(secondGenerationSelection.error, null);
+    assert.equal(controller.state, secondGenerationSelection);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.doesNotMatch(
+      JSON.stringify(controller.state),
+      /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i
+    );
     assert.equal(listReads, 4);
-    assert.equal(detailReads, 3);
-    assert.equal(timelineReads, 3);
+    assert.equal(detailReads, 4);
+    assert.equal(timelineReads, 4);
     assert.equal(mutationRequests, 0);
   };
 
