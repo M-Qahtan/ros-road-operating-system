@@ -2969,7 +2969,7 @@ test('session replacement isolates mixed obsolete success and failure in every r
   await runOrder('timeline', 'timeline', '86868686-8686-4686-8686-868686868686');
 });
 
-test('session replacement preserves fresh reselection and isolates its pending reads from the next generation', async () => {
+test('session replacement preserves a newer selection across pending reads from the prior generation', async () => {
   const runOrder = async (
     first: 'detail' | 'timeline',
     reselectTiming: 'before' | 'after',
@@ -3192,6 +3192,16 @@ test('session replacement preserves fresh reselection and isolates its pending r
     assert.equal(thirdRestoredQueue.error, null);
     assert.notEqual(thirdRestoredQueue, secondGenerationSelection);
 
+    const thirdGenerationSelection = await controller.select(revisionFour.id);
+    assert.notEqual(thirdGenerationSelection, secondGenerationSelection);
+    assert.equal(thirdGenerationSelection.selected?.version, revisionFour.version);
+    assert.deepEqual(thirdGenerationSelection.timeline, revisionFourTimeline);
+    assert.equal(thirdGenerationSelection.stale, false);
+    assert.equal(thirdGenerationSelection.error, null);
+    assert.equal(controller.state, thirdGenerationSelection);
+    const transitionAuthorityBeforeObsoleteCompletion = controller.canTransition();
+    const closureAuthorityBeforeObsoleteCompletion = controller.canAuthorizeClosure();
+
     const secondGenerationFirstRelease = first === 'detail'
       ? secondGenerationDetailRelease
       : secondGenerationTimelineRelease;
@@ -3207,21 +3217,21 @@ test('session replacement preserves fresh reselection and isolates its pending r
     secondGenerationFirstRelease.release();
     await secondGenerationFirstReturned.wait;
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(controller.state, thirdRestoredQueue);
+    assert.equal(controller.state, thirdGenerationSelection);
 
     secondGenerationSecondRelease.release();
     await secondGenerationSecondReturned.wait;
     const supersededSecondGenerationSelection = await pendingSecondGenerationSelection;
-    assert.equal(supersededSecondGenerationSelection, thirdRestoredQueue);
-    assert.equal(controller.state, thirdRestoredQueue);
-    assert.equal(controller.state.selected, null);
-    assert.deepEqual(controller.state.timeline, []);
+    assert.equal(supersededSecondGenerationSelection, thirdGenerationSelection);
+    assert.equal(controller.state, thirdGenerationSelection);
+    assert.equal(controller.state.selected?.version, revisionFour.version);
+    assert.deepEqual(controller.state.timeline, revisionFourTimeline);
     assert.equal(controller.canRetrySelection(), false);
-    assert.equal(controller.canTransition(), false);
-    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(controller.canTransition(), transitionAuthorityBeforeObsoleteCompletion);
+    assert.equal(controller.canAuthorizeClosure(), closureAuthorityBeforeObsoleteCompletion);
     assert.equal(listReads, 5);
-    assert.equal(detailReads, 5);
-    assert.equal(timelineReads, 5);
+    assert.equal(detailReads, 6);
+    assert.equal(timelineReads, 6);
     assert.equal(mutationRequests, 0);
   };
 
