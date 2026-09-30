@@ -1788,6 +1788,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **SESSION REPLACEMENT ISOLATES EVERY MIXED STALE-SUCCESS/REJECTION OUTCOME, INDEPENDENT OF READER OR COMPLETION ORDER.** |
 | Next handoff | Return successful obsolete revision-2 Detail and Timeline payloads together after revision `4` selection and session replacement, in both completion orders, and prove the coherent stale pair still cannot repopulate restored ownership or enable retry, transition, closure, or mutation traffic. |
 
+### Session replacement isolates a coherent obsolete selection
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `cd030a5608ecb05f567e732592454387a06d3ac3` was one hundred and eighty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | Successful obsolete revision-2 Detail and Timeline payloads can remain pending together while revision `4` becomes selected with its exact two-entry append-only Timeline. After trusted-session replacement restores a clean revision-4 queue, completing the coherent old pair—Detail before Timeline or Timeline before Detail—returns the superseded selection to the identical restored state instead of publishing a complete revision-2 selection. |
+| Failure and authority boundary | Neither completion order can repopulate the discarded revision-2 selection or Timeline data. Selection retry, transition, and closure controls remain disabled after restoration, and mutation routes remain unreachable throughout both cases. |
+| Local evidence | The deterministic authenticated-browser case passed within **70/70** dashboard tests. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8). All four configured contract checks passed: the 11-case perception gate plus benchmark **4/4**, adapter certification **9/9**, and epistemic coverage **8/8**. Repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests also passed. Each completion order recorded three list reads, two detail reads, two Timeline reads, and zero mutations. The changed dashboard task ran freshly; eligible unaffected tasks reused Turbo cache. The PostgreSQL journey exited `127` before execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated session-isolation evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **EVEN A COMPLETE, COHERENT OBSOLETE SELECTION CANNOT CROSS TRUSTED-SESSION REPLACEMENT OR REPOPULATE RESTORED OWNERSHIP.** |
+| Next handoff | After both obsolete successful readers settle, select revision `4` again in the restored session and prove fresh authenticated reads load its exact append-only Timeline without coalescing onto, inheriting from, or being blocked by the discarded selection. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

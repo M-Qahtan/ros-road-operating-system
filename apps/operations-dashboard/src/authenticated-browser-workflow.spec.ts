@@ -2969,6 +2969,150 @@ test('session replacement isolates mixed obsolete success and failure in every r
   await runOrder('timeline', 'timeline', '86868686-8686-4686-8686-868686868686');
 });
 
+test('session replacement isolates a coherent obsolete selection in either completion order', async () => {
+  const runOrder = async (first: 'detail' | 'timeline', incidentId: string) => {
+    const revisionTwo: RoadEventResponse = {
+      id: incidentId,
+      status: 'RECOVERY', latitude: 24.78, longitude: 46.74,
+      occurredAt: '2026-09-30T01:00:00.000Z', version: 2, closureAuthorization: null,
+      severity: { level: 'S2', score: 47, confidence: 0.94, reasonCodes: ['lane_obstruction'], requiresHumanReview: true }
+    };
+    const revisionFour: RoadEventResponse = {
+      ...revisionTwo,
+      version: 4,
+      severity: { ...revisionTwo.severity, score: 51 }
+    };
+    const revisionTwoTimeline: AuditTimelineEntryContract[] = [{
+      action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
+      beforeState: { version: 1 }, afterState: { version: revisionTwo.version },
+      reason: `coherent-obsolete-success-${first}`,
+      traceId: `trace-coherent-${first}-revision-two`,
+      correlationId: revisionTwo.id, occurredAt: '2026-09-30T01:00:30.000Z'
+    }];
+    const revisionFourTimeline: AuditTimelineEntryContract[] = [
+      {
+        action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
+        beforeState: { version: 2 }, afterState: { version: 3 },
+        reason: 'intermediate authoritative revision',
+        traceId: `trace-coherent-${first}-revision-three`,
+        correlationId: revisionFour.id, occurredAt: '2026-09-30T01:01:00.000Z'
+      },
+      {
+        action: 'road_event.updated', actorType: 'SYSTEM', actorId: null,
+        beforeState: { version: 3 }, afterState: { version: revisionFour.version },
+        reason: 'latest authoritative revision',
+        traceId: `trace-coherent-${first}-revision-four`,
+        correlationId: revisionFour.id, occurredAt: '2026-09-30T01:02:00.000Z'
+      }
+    ];
+    const detailRelease = barrier();
+    const timelineRelease = barrier();
+    const detailStarted = barrier();
+    const timelineStarted = barrier();
+    const detailReturned = barrier();
+    const timelineReturned = barrier();
+    let revisionFourPublished = false;
+    let holdRevisionTwoSelection = false;
+    let listReads = 0;
+    let detailReads = 0;
+    let timelineReads = 0;
+    let mutationRequests = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      assertTrustedRequest(init);
+      const target = new URL(String(input), 'https://dashboard.example.test');
+      if (target.pathname.endsWith('/closure-authorization') || target.pathname.endsWith('/transition')) {
+        mutationRequests += 1;
+        throw new Error('critical mutation must remain unreachable');
+      }
+      if (target.pathname.endsWith('/timeline')) {
+        timelineReads += 1;
+        assert.equal(target.pathname, `/api/v1/road-events/${revisionTwo.id}/timeline`);
+        if (holdRevisionTwoSelection) {
+          timelineStarted.release();
+          await timelineRelease.wait;
+          timelineReturned.release();
+          return ok(revisionTwoTimeline);
+        }
+        return ok(revisionFourTimeline);
+      }
+      if (target.pathname === `/api/v1/road-events/${revisionTwo.id}`) {
+        detailReads += 1;
+        if (holdRevisionTwoSelection) {
+          detailStarted.release();
+          await detailRelease.wait;
+          detailReturned.release();
+          return ok(revisionTwo);
+        }
+        return ok(revisionFour);
+      }
+      listReads += 1;
+      return ok({
+        items: [revisionFourPublished ? revisionFour : revisionTwo],
+        total: 1, limit: 100, offset: 0
+      });
+    };
+    const controller = new OperationsDashboardController(
+      new HttpRoadEventGateway('', session, fetcher), { roles: ['SUPERVISOR'] },
+      () => new Date('2026-09-30T01:02:00.000Z')
+    );
+
+    const initialQueue = await controller.load();
+    assert.equal(initialQueue.events[0]?.version, revisionTwo.version);
+
+    holdRevisionTwoSelection = true;
+    const pendingRevisionTwoSelection = controller.select(revisionTwo.id);
+    await Promise.all([detailStarted.wait, timelineStarted.wait]);
+
+    revisionFourPublished = true;
+    holdRevisionTwoSelection = false;
+    const revisionFourQueue = await controller.load();
+    assert.equal(revisionFourQueue.events[0]?.version, revisionFour.version);
+
+    const selectedRevisionFour = await controller.select(revisionFour.id);
+    assert.equal(selectedRevisionFour.selected?.version, revisionFour.version);
+    assert.deepEqual(selectedRevisionFour.timeline, revisionFourTimeline);
+
+    controller.discardBrowserSession();
+    const restoredQueue = await controller.load();
+    assert.equal(restoredQueue.phase, 'ready');
+    assert.equal(restoredQueue.events[0]?.version, revisionFour.version);
+    assert.equal(restoredQueue.selected, null);
+    assert.deepEqual(restoredQueue.timeline, []);
+    assert.equal(restoredQueue.stale, false);
+    assert.equal(restoredQueue.error, null);
+
+    const firstRelease = first === 'detail' ? detailRelease : timelineRelease;
+    const firstReturned = first === 'detail' ? detailReturned : timelineReturned;
+    const secondRelease = first === 'detail' ? timelineRelease : detailRelease;
+    const secondReturned = first === 'detail' ? timelineReturned : detailReturned;
+    firstRelease.release();
+    await firstReturned.wait;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(controller.state, restoredQueue);
+
+    secondRelease.release();
+    await secondReturned.wait;
+    const supersededRevisionTwoSelection = await pendingRevisionTwoSelection;
+    assert.equal(supersededRevisionTwoSelection, restoredQueue);
+    assert.equal(controller.state, restoredQueue);
+    assert.equal(controller.state.selected, null);
+    assert.deepEqual(controller.state.timeline, []);
+    assert.equal(controller.state.stale, false);
+    assert.equal(controller.state.error, null);
+    assert.doesNotMatch(JSON.stringify(controller.state), /coherent-obsolete-success|trace-coherent/i);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.equal(controller.canTransition(), false);
+    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(listReads, 3);
+    assert.equal(detailReads, 2);
+    assert.equal(timelineReads, 2);
+    assert.equal(mutationRequests, 0);
+  };
+
+  await runOrder('detail', '87878787-8787-4787-8787-878787878787');
+  await runOrder('timeline', '88888888-8888-4888-8888-888888888888');
+});
+
 test('periodic queue refresh waits for a critical command and performs one authenticated reconciliation', async () => {
   let event: RoadEventResponse = {
     id: '49494949-4949-4949-8949-494949494949',
