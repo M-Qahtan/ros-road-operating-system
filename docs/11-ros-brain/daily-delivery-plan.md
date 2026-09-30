@@ -1800,6 +1800,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **EVEN A COMPLETE, COHERENT OBSOLETE SELECTION CANNOT CROSS TRUSTED-SESSION REPLACEMENT OR REPOPULATE RESTORED OWNERSHIP.** |
 | Next handoff | After both obsolete successful readers settle, select revision `4` again in the restored session and prove fresh authenticated reads load its exact append-only Timeline without coalescing onto, inheriting from, or being blocked by the discarded selection. |
 
+### Restored session reselects revision 4 after obsolete completion
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `12cef0a8c291a1426d62ea99786a13475125429b` was one hundred and eighty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | After both coherent obsolete revision-2 readers settle and are discarded across trusted-session replacement, a fresh restored-session selection performs independent authenticated Detail and Timeline reads for revision `4`, publishes revision `4`, and loads its exact two-entry append-only Timeline in either obsolete completion order. The fresh selection is neither coalesced onto nor blocked by the completed obsolete selection. |
+| Failure and authority boundary | The fresh state contains no discarded revision-2 reason or trace data, creates no retry authority, and issues no mutation request. This proof does not authorize transition or closure; it exercises selection reads only. |
+| Local evidence | The deterministic authenticated-browser case passed within **70/70** dashboard tests. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8). All four configured contract checks passed: the 11-case perception gate plus benchmark **4/4**, adapter certification **9/9**, and epistemic coverage **8/8**. Repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests also passed. Each completion order recorded three list reads, three detail reads, three Timeline reads, and zero mutations. The changed dashboard task ran freshly; eligible unaffected tasks reused Turbo cache. The PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local authenticated read-continuity evidence only, not mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE RESTORED SESSION CAN RESELECT REVISION 4 THROUGH FRESH AUTHENTICATED READS AFTER THE OBSOLETE PAIR SETTLES, WITHOUT INHERITING OR COALESCING OLD STATE.** |
+| Next handoff | Repeat restored-session revision-4 selection while the coherent obsolete pair remains pending, then settle the old pair afterward and prove the active fresh selection remains intact. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

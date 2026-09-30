@@ -2788,9 +2788,18 @@ test('session replacement isolates both obsolete readers in either completion or
     assert.equal(controller.canRetrySelection(), false);
     assert.equal(controller.canTransition(), false);
     assert.equal(controller.canAuthorizeClosure(), false);
+
+    const reselectedRevisionFour = await controller.select(revisionFour.id);
+    assert.equal(reselectedRevisionFour.selected?.version, revisionFour.version);
+    assert.deepEqual(reselectedRevisionFour.timeline, revisionFourTimeline);
+    assert.equal(reselectedRevisionFour.stale, false);
+    assert.equal(reselectedRevisionFour.error, null);
+    assert.equal(controller.state, reselectedRevisionFour);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.doesNotMatch(JSON.stringify(controller.state), /coherent-obsolete-success|trace-coherent/i);
     assert.equal(listReads, 3);
-    assert.equal(detailReads, 2);
-    assert.equal(timelineReads, 2);
+    assert.equal(detailReads, 3);
+    assert.equal(timelineReads, 3);
     assert.equal(mutationRequests, 0);
   };
 
