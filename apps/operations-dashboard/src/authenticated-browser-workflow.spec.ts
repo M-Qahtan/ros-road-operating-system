@@ -2969,7 +2969,7 @@ test('session replacement isolates mixed obsolete success and failure in every r
   await runOrder('timeline', 'timeline', '86868686-8686-4686-8686-868686868686');
 });
 
-test('session replacement preserves a newer selection and isolates its completed predecessor from the next generation', async () => {
+test('session replacement preserves a newer selection across ordered obsolete reads and bounded generations', async () => {
   const runOrder = async (
     first: 'detail' | 'timeline',
     reselectTiming: 'before' | 'after',
@@ -3230,62 +3230,57 @@ test('session replacement preserves a newer selection and isolates its completed
     assert.equal(controller.canTransition(), transitionAuthorityBeforeObsoleteCompletion);
     assert.equal(controller.canAuthorizeClosure(), closureAuthorityBeforeObsoleteCompletion);
 
-    controller.discardBrowserSession();
-    const fourthRestoredQueue = await controller.load();
-    assert.equal(fourthRestoredQueue.phase, 'ready');
-    assert.equal(fourthRestoredQueue.events[0]?.version, revisionFour.version);
-    assert.equal(fourthRestoredQueue.selected, null);
-    assert.deepEqual(fourthRestoredQueue.timeline, []);
-    assert.equal(fourthRestoredQueue.stale, false);
-    assert.equal(fourthRestoredQueue.error, null);
-    assert.notEqual(fourthRestoredQueue, supersededSecondGenerationSelection);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(controller.state, fourthRestoredQueue);
-    assert.equal(controller.canRetrySelection(), false);
-    assert.equal(controller.canTransition(), false);
-    assert.equal(controller.canAuthorizeClosure(), false);
+    let predecessorState = supersededSecondGenerationSelection;
+    for (const generation of [4, 5, 6] as const) {
+      controller.discardBrowserSession();
+      const restoredQueue = await controller.load();
+      assert.equal(restoredQueue.phase, 'ready');
+      assert.equal(restoredQueue.events[0]?.version, revisionFour.version);
+      assert.equal(restoredQueue.selected, null);
+      assert.deepEqual(restoredQueue.timeline, []);
+      assert.equal(restoredQueue.stale, false);
+      assert.equal(restoredQueue.error, null);
+      assert.notEqual(restoredQueue, predecessorState);
+      assert.doesNotMatch(
+        JSON.stringify(restoredQueue),
+        /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(controller.state, restoredQueue);
+      assert.equal(controller.canRetrySelection(), false);
+      assert.equal(controller.canTransition(), false);
+      assert.equal(controller.canAuthorizeClosure(), false);
 
-    const fourthGenerationSelection = await controller.select(revisionFour.id);
-    assert.notEqual(fourthGenerationSelection, thirdGenerationSelection);
-    assert.notEqual(fourthGenerationSelection, fourthRestoredQueue);
-    assert.equal(fourthGenerationSelection.selected?.version, revisionFour.version);
-    assert.deepEqual(fourthGenerationSelection.timeline, revisionFourTimeline);
-    assert.equal(fourthGenerationSelection.stale, false);
-    assert.equal(fourthGenerationSelection.error, null);
-    assert.equal(controller.state, fourthGenerationSelection);
-    assert.equal(controller.canRetrySelection(), false);
-    assert.doesNotMatch(
-      JSON.stringify(fourthGenerationSelection),
-      /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
-    );
-    const fourthTransitionAuthority = controller.canTransition();
-    const fourthClosureAuthority = controller.canAuthorizeClosure();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(controller.state, fourthGenerationSelection);
-    assert.equal(controller.canTransition(), fourthTransitionAuthority);
-    assert.equal(controller.canAuthorizeClosure(), fourthClosureAuthority);
+      if (generation === 6) {
+        predecessorState = restoredQueue;
+        continue;
+      }
 
-    controller.discardBrowserSession();
-    const fifthRestoredQueue = await controller.load();
-    assert.equal(fifthRestoredQueue.phase, 'ready');
-    assert.equal(fifthRestoredQueue.events[0]?.version, revisionFour.version);
-    assert.equal(fifthRestoredQueue.selected, null);
-    assert.deepEqual(fifthRestoredQueue.timeline, []);
-    assert.equal(fifthRestoredQueue.stale, false);
-    assert.equal(fifthRestoredQueue.error, null);
-    assert.notEqual(fifthRestoredQueue, fourthGenerationSelection);
-    assert.doesNotMatch(
-      JSON.stringify(fifthRestoredQueue),
-      /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(controller.state, fifthRestoredQueue);
-    assert.equal(controller.canRetrySelection(), false);
-    assert.equal(controller.canTransition(), false);
-    assert.equal(controller.canAuthorizeClosure(), false);
-    assert.equal(listReads, 7);
-    assert.equal(detailReads, 7);
-    assert.equal(timelineReads, 7);
+      const generationSelection = await controller.select(revisionFour.id);
+      assert.notEqual(generationSelection, predecessorState);
+      assert.notEqual(generationSelection, restoredQueue);
+      assert.equal(generationSelection.selected?.version, revisionFour.version);
+      assert.deepEqual(generationSelection.timeline, revisionFourTimeline);
+      assert.equal(generationSelection.stale, false);
+      assert.equal(generationSelection.error, null);
+      assert.equal(controller.state, generationSelection);
+      assert.equal(controller.canRetrySelection(), false);
+      assert.doesNotMatch(
+        JSON.stringify(generationSelection),
+        /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
+      );
+      const transitionAuthority = controller.canTransition();
+      const closureAuthority = controller.canAuthorizeClosure();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(controller.state, generationSelection);
+      assert.equal(controller.canTransition(), transitionAuthority);
+      assert.equal(controller.canAuthorizeClosure(), closureAuthority);
+      predecessorState = generationSelection;
+    }
+
+    assert.equal(listReads, 8);
+    assert.equal(detailReads, 8);
+    assert.equal(timelineReads, 8);
     assert.equal(mutationRequests, 0);
   };
 

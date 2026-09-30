@@ -1908,6 +1908,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE FIFTH RESTORED GENERATION REMAINS A DISTINCT CLEAN REVISION-4 QUEUE, INDEPENDENT OF SELECTION AND TIMELINE OWNERSHIP FROM EVERY PREDECESSOR GENERATION.** |
 | Next handoff | Replace the manually unrolled generation assertions with a bounded deterministic generation-isolation matrix that proves the same ownership invariants over repeated select-and-discard cycles without weakening the explicit failure-order coverage. |
 
+### Bounded generation-isolation matrix replaces manual unrolling
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `93cb30d5d4ca066de3c62b08a297ad571b2cce6d` was one hundred and ninety-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | A bounded deterministic matrix now exercises restored generations 4 through 6 instead of manually unrolling the fourth and fifth generations. Each select-and-discard cycle publishes a distinct state object, exact revision-4 Detail and two-entry Timeline when selected, then a clean unselected queue after replacement. |
+| Failure and authority boundary | The four explicit before/after and Detail/Timeline obsolete-completion combinations remain unchanged around the bounded matrix. Across every repeated generation, obsolete revision-2 diagnostics remain absent, queue generations expose no retry, transition, or closure authority, selected authority remains stable through an event-loop turn, and no mutation route is reached. |
+| Local evidence | The deterministic authenticated-browser matrix passed within **70/70** dashboard tests. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8). All four configured contract checks passed: the 11-case perception gate plus benchmark **4/4**, adapter certification **9/9**, and epistemic coverage **8/8**. Repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests also passed. Every explicit completion-order combination recorded eight list reads, eight Detail reads, eight Timeline reads, and zero mutations. The changed dashboard task ran freshly; eligible unaffected tasks reused Turbo cache. The PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This remains process-local authenticated generation-isolation evidence, not production behavior change, mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE BOUNDED MATRIX PROVES LINEAR, DISTINCT OWNERSHIP ACROSS RESTORED GENERATIONS 4–6 WITHOUT WEAKENING THE FOUR EXPLICIT OBSOLETE-READ COMPLETION ORDERS.** |
+| Next handoff | Inject one deterministic queue-restoration failure inside the bounded generation sequence and prove the following trusted generation recovers cleanly without inheriting selection, Timeline, retry, or mutation authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
