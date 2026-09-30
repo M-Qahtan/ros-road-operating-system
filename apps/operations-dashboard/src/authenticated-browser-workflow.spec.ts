@@ -2969,7 +2969,7 @@ test('session replacement isolates mixed obsolete success and failure in every r
   await runOrder('timeline', 'timeline', '86868686-8686-4686-8686-868686868686');
 });
 
-test('session replacement preserves fresh reselection before or after coherent obsolete completion', async () => {
+test('session replacement preserves fresh reselection and isolates its pending reads from the next generation', async () => {
   const runOrder = async (
     first: 'detail' | 'timeline',
     reselectTiming: 'before' | 'after',
@@ -3015,8 +3015,15 @@ test('session replacement preserves fresh reselection before or after coherent o
     const timelineStarted = barrier();
     const detailReturned = barrier();
     const timelineReturned = barrier();
+    const secondGenerationDetailRelease = barrier();
+    const secondGenerationTimelineRelease = barrier();
+    const secondGenerationDetailStarted = barrier();
+    const secondGenerationTimelineStarted = barrier();
+    const secondGenerationDetailReturned = barrier();
+    const secondGenerationTimelineReturned = barrier();
     let revisionFourPublished = false;
     let holdRevisionTwoSelection = false;
+    let holdSecondGenerationSelection = false;
     let listReads = 0;
     let detailReads = 0;
     let timelineReads = 0;
@@ -3037,6 +3044,11 @@ test('session replacement preserves fresh reselection before or after coherent o
           timelineReturned.release();
           return ok(revisionTwoTimeline);
         }
+        if (holdSecondGenerationSelection) {
+          secondGenerationTimelineStarted.release();
+          await secondGenerationTimelineRelease.wait;
+          secondGenerationTimelineReturned.release();
+        }
         return ok(revisionFourTimeline);
       }
       if (target.pathname === `/api/v1/road-events/${revisionTwo.id}`) {
@@ -3046,6 +3058,11 @@ test('session replacement preserves fresh reselection before or after coherent o
           await detailRelease.wait;
           detailReturned.release();
           return ok(revisionTwo);
+        }
+        if (holdSecondGenerationSelection) {
+          secondGenerationDetailStarted.release();
+          await secondGenerationDetailRelease.wait;
+          secondGenerationDetailReturned.release();
         }
         return ok(revisionFour);
       }
@@ -3156,9 +3173,55 @@ test('session replacement preserves fresh reselection before or after coherent o
       JSON.stringify(controller.state),
       /coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i
     );
-    assert.equal(listReads, 4);
-    assert.equal(detailReads, 4);
-    assert.equal(timelineReads, 4);
+
+    holdSecondGenerationSelection = true;
+    const pendingSecondGenerationSelection = controller.select(revisionFour.id);
+    await Promise.all([
+      secondGenerationDetailStarted.wait,
+      secondGenerationTimelineStarted.wait
+    ]);
+
+    controller.discardBrowserSession();
+    holdSecondGenerationSelection = false;
+    const thirdRestoredQueue = await controller.load();
+    assert.equal(thirdRestoredQueue.phase, 'ready');
+    assert.equal(thirdRestoredQueue.events[0]?.version, revisionFour.version);
+    assert.equal(thirdRestoredQueue.selected, null);
+    assert.deepEqual(thirdRestoredQueue.timeline, []);
+    assert.equal(thirdRestoredQueue.stale, false);
+    assert.equal(thirdRestoredQueue.error, null);
+    assert.notEqual(thirdRestoredQueue, secondGenerationSelection);
+
+    const secondGenerationFirstRelease = first === 'detail'
+      ? secondGenerationDetailRelease
+      : secondGenerationTimelineRelease;
+    const secondGenerationFirstReturned = first === 'detail'
+      ? secondGenerationDetailReturned
+      : secondGenerationTimelineReturned;
+    const secondGenerationSecondRelease = first === 'detail'
+      ? secondGenerationTimelineRelease
+      : secondGenerationDetailRelease;
+    const secondGenerationSecondReturned = first === 'detail'
+      ? secondGenerationTimelineReturned
+      : secondGenerationDetailReturned;
+    secondGenerationFirstRelease.release();
+    await secondGenerationFirstReturned.wait;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(controller.state, thirdRestoredQueue);
+
+    secondGenerationSecondRelease.release();
+    await secondGenerationSecondReturned.wait;
+    const supersededSecondGenerationSelection = await pendingSecondGenerationSelection;
+    assert.equal(supersededSecondGenerationSelection, thirdRestoredQueue);
+    assert.equal(controller.state, thirdRestoredQueue);
+    assert.equal(controller.state.selected, null);
+    assert.deepEqual(controller.state.timeline, []);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.equal(controller.canTransition(), false);
+    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(listReads, 5);
+    assert.equal(detailReads, 5);
+    assert.equal(timelineReads, 5);
     assert.equal(mutationRequests, 0);
   };
 
