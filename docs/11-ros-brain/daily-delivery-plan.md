@@ -1968,6 +1968,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE DELAYED GENERATION-5 FAILURE CANNOT CROSS TWO TRUSTED-SESSION REPLACEMENTS OR CONTAMINATE THE FINAL CLEAN GENERATION-7 QUEUE.** |
 | Next handoff | Add one process-local API-to-dashboard incident-recovery acceptance that binds the recovered revision-4 detail to its append-only Timeline across the real module boundary, while keeping durable PostgreSQL proof explicitly blocked. |
 
+### API-to-dashboard recovered-detail and Timeline binding
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `7941f8c73e3434817772d2663364e58ca4e1f0be` was one hundred and ninety-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | A process-local acceptance now crosses the real authenticated `HttpRoadEventGateway` and RoadEvent HTTP handler into the application service and dashboard controller. The queue exposes one scoped recovered incident; selecting it binds API Detail `RECOVERY` revision `4` to the two-entry append-only Timeline whose final entry carries the same event correlation and revision. |
+| Trust and authority boundary | Every one of the three reads carries the exact Bearer token plus Tenant and Purpose scope and is rebound by the server-side actor resolver to a provisioned supervisor. Detail and Timeline are read independently, reconciliation remains `null`, retry remains unavailable, and the acceptance records zero mutation requests. It grants no transition, closure, dispatch, collection, control, or activation authority. |
+| Local evidence | The focused build and boundary acceptance passed **1/1**. Build, no-emit TypeScript, **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8), and the additional root boundary acceptance **1/1** passed. The perception gate plus benchmark **4/4**, adapter certification **9/9**, epistemic coverage **8/8**, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests passed. Eligible package tasks reused Turbo cache. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local cross-module evidence, not deployment, durable database proof, production or field readiness, or immutable archive evidence. It creates no cloud resource and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE AUTHENTICATED API DETAIL AND APPEND-ONLY TIMELINE JOINTLY PRESENT THE SAME SCOPED RECOVERY REVISION TO THE DASHBOARD WITHOUT ISSUING A MUTATION.** |
+| Next handoff | Add the negative companion across the same boundary: return a Timeline whose final revision or correlation does not match Detail revision `4`, and prove the dashboard withholds the selection fail-closed. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
