@@ -1956,6 +1956,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE ACTIVE GENERATION-6 REVISION-4 SELECTION REMAINS AUTHORITATIVE WHEN THE OLDER GENERATION-5 FAILURE COMPLETES, INCLUDING ITS STATE IDENTITY AND DERIVED CAPABILITIES.** |
 | Next handoff | Replace the trusted session while generation 6's selection is active and the generation-5 failure remains pending, publish generation 7, then prove the older failure cannot contaminate that newer restored queue. |
 
+### Older generation failure cannot contaminate the final restored queue
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-09-30, GitHub candidate `f9539e1c5aabcda39d3b9f233ef5c8702c1e7a12` was one hundred and ninety-seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base, both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Proved behavior | The generation-5 sanitized restoration failure remains pending while generation 6 publishes and selects revision `4`. Replacing the trusted session again publishes a distinct clean generation-7 revision-4 queue before that older failure completes. When released, the obsolete load resolves to the exact generation-7 queue and cannot restore generation-6 selection or Timeline ownership. |
+| Failure and authority boundary | The final queue remains unselected with an empty Timeline, `stale=false`, no error, and no retry, transition, or closure authority after the delayed failure settles and a full event-loop turn completes. The old diagnostic remains sanitized, no predecessor trace appears, and no mutation route is reached. |
+| Local evidence | The changed deterministic concurrency case passed directly and within **70/70** dashboard tests. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8). The perception gate plus benchmark **4/4**, adapter certification **9/9**, epistemic coverage **8/8**, repository/runtime composition, retention, negative gates, archive conditional-write, and **8/8** external-evidence policy tests passed. Every explicit completion-order combination recorded nine list reads, eight Detail reads, eight Timeline reads, one delayed sanitized restoration failure, and zero mutations. Eligible unaffected tasks reused Turbo cache. The PostgreSQL journey remained environment-blocked with exit `127` because neither Docker nor Podman is installed. |
+| Safety limits | This remains process-local authenticated recovery evidence, not production behavior change, mutation authorization, deployment, durable database proof, or immutable archive evidence. It grants no collection, closure, control, dispatch, operational, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE DELAYED GENERATION-5 FAILURE CANNOT CROSS TWO TRUSTED-SESSION REPLACEMENTS OR CONTAMINATE THE FINAL CLEAN GENERATION-7 QUEUE.** |
+| Next handoff | Add one process-local API-to-dashboard incident-recovery acceptance that binds the recovered revision-4 detail to its append-only Timeline across the real module boundary, while keeping durable PostgreSQL proof explicitly blocked. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

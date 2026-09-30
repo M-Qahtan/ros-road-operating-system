@@ -3250,7 +3250,7 @@ test('session replacement preserves a newer selection across ordered obsolete re
     assert.equal(controller.canAuthorizeClosure(), closureAuthorityBeforeObsoleteCompletion);
 
     let predecessorState = supersededSecondGenerationSelection;
-    for (const generation of [4, 5, 7] as const) {
+    for (const generation of [4, 5] as const) {
       controller.discardBrowserSession();
       failNextQueueRestoration = generation === 5;
       const pendingRestoration = controller.load();
@@ -3283,21 +3283,36 @@ test('session replacement preserves a newer selection across ordered obsolete re
           JSON.stringify(recoveredSelection),
           /postgres|generation-reader|secret|restoration-db|coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
         );
-        const recoveredTransitionAuthority = controller.canTransition();
-        const recoveredClosureAuthority = controller.canAuthorizeClosure();
+        controller.discardBrowserSession();
+        const finalRestoredQueue = await controller.load();
+        assert.notEqual(finalRestoredQueue, recoveredSelection);
+        assert.equal(finalRestoredQueue.phase, 'ready');
+        assert.equal(finalRestoredQueue.events[0]?.version, revisionFour.version);
+        assert.equal(finalRestoredQueue.selected, null);
+        assert.deepEqual(finalRestoredQueue.timeline, []);
+        assert.equal(finalRestoredQueue.stale, false);
+        assert.equal(finalRestoredQueue.error, null);
+        assert.equal(controller.state, finalRestoredQueue);
+        assert.equal(controller.canRetrySelection(), false);
+        assert.equal(controller.canTransition(), false);
+        assert.equal(controller.canAuthorizeClosure(), false);
 
         generationRestorationFailureRelease.release();
         await generationRestorationFailureReturned.wait;
         const supersededFailure = await pendingRestoration;
-        assert.equal(supersededFailure, recoveredSelection);
+        assert.equal(supersededFailure, finalRestoredQueue);
         await new Promise<void>((resolve) => setImmediate(resolve));
-        assert.equal(controller.state, recoveredSelection);
+        assert.equal(controller.state, finalRestoredQueue);
         assert.equal(controller.state.stale, false);
         assert.equal(controller.state.error, null);
         assert.equal(controller.canRetrySelection(), false);
-        assert.equal(controller.canTransition(), recoveredTransitionAuthority);
-        assert.equal(controller.canAuthorizeClosure(), recoveredClosureAuthority);
-        predecessorState = recoveredSelection;
+        assert.equal(controller.canTransition(), false);
+        assert.equal(controller.canAuthorizeClosure(), false);
+        assert.doesNotMatch(
+          JSON.stringify(controller.state),
+          /postgres|generation-reader|secret|restoration-db|coherent-obsolete-success|trace-coherent-(detail|timeline)-revision-two/i,
+        );
+        predecessorState = finalRestoredQueue;
         continue;
       }
 
@@ -3318,11 +3333,6 @@ test('session replacement preserves a newer selection across ordered obsolete re
       assert.equal(controller.canRetrySelection(), false);
       assert.equal(controller.canTransition(), false);
       assert.equal(controller.canAuthorizeClosure(), false);
-
-      if (generation === 7) {
-        predecessorState = restoredQueue;
-        continue;
-      }
 
       const generationSelection = await controller.select(revisionFour.id);
       assert.notEqual(generationSelection, predecessorState);
