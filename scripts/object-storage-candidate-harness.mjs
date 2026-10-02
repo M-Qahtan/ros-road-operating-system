@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const CASE_IDS = Array.from({ length: 13 }, (_, i) => `OS-C${String(i + 1).padStart(2, "0")}`);
 const ALLOWED = new Set(["PASS", "REJECT", "NOT_PROVEN"]);
@@ -43,14 +45,14 @@ export function evaluate(record) {
 }
 
 function main() {
-  const path = process.argv[2];
-  if (!path) {
+  const evidencePath = process.argv[2];
+  if (!evidencePath) {
     process.stderr.write("usage: node scripts/object-storage-candidate-harness.mjs <evidence.json>\n");
     process.exit(2);
   }
   let record;
   try {
-    record = JSON.parse(fs.readFileSync(path, "utf8"));
+    record = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
   } catch (error) {
     process.stderr.write(JSON.stringify(invalid(`cannot read/parse evidence: ${error.message}`), null, 2) + "\n");
     process.exit(2);
@@ -60,4 +62,5 @@ function main() {
   process.exit(result.disposition === "PASS" ? 0 : 1);
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) main();
+const invokedAs = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
+if (invokedAs === import.meta.url) main();
