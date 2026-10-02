@@ -1992,6 +1992,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A RECOVERY TIMELINE CANNOT PUBLISH A DASHBOARD SELECTION WHEN ITS FINAL RECOVERY ENTRY IS BOUND TO A DIFFERENT INCIDENT OR REVISION.** |
 | Next handoff | Restore a corrected matching Timeline after this failure and prove one explicit retry recovers the revision-4 selection without replaying or creating a mutation. |
 
+### Corrected recovery Timeline explicit retry candidate
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `a47b03bbb3493d00981c8dc4f7f2a425788ce14a` was two hundred commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request or candidate workflow run existed. The approved cadence remains hourly. |
+| Authored behavior | The real API-to-dashboard acceptance now restores the exact matching recovery Timeline after the prior fail-closed mismatch, invokes `retrySelection()` explicitly, and requires revision `4` Detail plus its append-only Timeline to become ready again. |
+| Replay and authority boundary | The retry must issue exactly two fresh scoped reads—Detail and Timeline—without replaying the queue read, without mutation, and without carrying the failed error or stale state. Transition and closure capability may only be re-derived after the corrected Detail/Timeline pair passes the recovery consistency guard. |
+| Verification status | Static inspection confirms the assertions are bound to the existing process-local authenticated gateway seam. The selected execution environment was unavailable, so no focused test, build, typecheck, full suite, PostgreSQL journey, or verification gate was executed for this candidate. It remains **UNVERIFIED** and is not eligible for review or merge until those checks run. |
+| Safety limits | This candidate changes acceptance evidence only. It adds no collection, dispatch, closure, control, activation, deployment, cloud resource, or immutable archive evidence. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE EXPLICIT RECOVERY RETRY ACCEPTANCE IS AUTHORED BUT NOT YET EXECUTED; NO PASS IS CLAIMED.** |
+| Next handoff | Execute the focused dashboard build and API-to-dashboard acceptance, then the complete build, typecheck, test, and verify gates; retain the candidate only if every check passes. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

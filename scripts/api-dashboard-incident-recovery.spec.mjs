@@ -181,4 +181,37 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
     assert.equal(controller.canAuthorizeClosure(), false);
     assert.equal(mutationRequests, 0);
   });
+
+  await t.test('corrected recovery Timeline succeeds on explicit retry without replay or mutation', async () => {
+    servedTimeline = timeline;
+    const readsBeforeRetry = {
+      routes: routes.length,
+      tokens: tokenReads,
+      identities: identityResolutions,
+      timeline: timelineReads,
+      mutations: mutationRequests
+    };
+
+    const recovered = await controller.retrySelection();
+    assert.equal(recovered.phase, 'ready');
+    assert.equal(recovered.selected?.id, EVENT_ID);
+    assert.equal(recovered.selected?.version, 4);
+    assert.equal(recovered.selected?.status, 'RECOVERY');
+    assert.equal(recovered.selected?.reconciliation, null);
+    assert.deepEqual(recovered.timeline, timeline);
+    assert.equal(recovered.stale, false);
+    assert.equal(recovered.error, null);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.equal(controller.canTransition(), true);
+    assert.equal(controller.canAuthorizeClosure(), true);
+    assert.deepEqual(routes.slice(readsBeforeRetry.routes), [
+      `GET /api/v1/road-events/${EVENT_ID}`,
+      `GET /api/v1/road-events/${EVENT_ID}/timeline`
+    ]);
+    assert.equal(tokenReads - readsBeforeRetry.tokens, 2);
+    assert.equal(identityResolutions - readsBeforeRetry.identities, 2);
+    assert.equal(timelineReads - readsBeforeRetry.timeline, 1);
+    assert.equal(mutationRequests, readsBeforeRetry.mutations);
+    assert.equal(mutationRequests, 0);
+  });
 });
