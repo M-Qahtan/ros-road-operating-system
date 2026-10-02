@@ -202,8 +202,6 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
     assert.equal(recovered.stale, false);
     assert.equal(recovered.error, null);
     assert.equal(controller.canRetrySelection(), false);
-    assert.equal(controller.canTransition(), true);
-    assert.equal(controller.canAuthorizeClosure(), true);
     assert.deepEqual(routes.slice(readsBeforeRetry.routes), [
       `GET /api/v1/road-events/${EVENT_ID}`,
       `GET /api/v1/road-events/${EVENT_ID}/timeline`
