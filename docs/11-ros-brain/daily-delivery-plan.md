@@ -1980,6 +1980,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE AUTHENTICATED API DETAIL AND APPEND-ONLY TIMELINE JOINTLY PRESENT THE SAME SCOPED RECOVERY REVISION TO THE DASHBOARD WITHOUT ISSUING A MUTATION.** |
 | Next handoff | Add the negative companion across the same boundary: return a Timeline whose final revision or correlation does not match Detail revision `4`, and prove the dashboard withholds the selection fail-closed. |
 
+### Mismatched recovery Timeline fails closed at the dashboard boundary
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `9e3492a71eebb5f985b95cd916cf9da52e8c8dd2` was one hundred and ninety-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Its tree matched the clean local base before this slice, both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | When authenticated Detail reports `RECOVERY`, any Timeline that contains a recovery state must end in exactly one entry whose correlation identifies that incident and whose revision equals the selected Detail revision. A mismatched correlation now fails selection closed instead of publishing an apparently valid recovered incident. |
+| Failure and authority boundary | The rejected selection exposes no Detail or Timeline, is marked stale with an explicit retry path, and derives neither transition nor closure capability. The real API-to-dashboard acceptance records zero mutation requests and preserves exact Bearer, Tenant, and Purpose scope on every read. |
+| Local evidence | The negative acceptance first failed because the mismatched Timeline incorrectly produced `ready`; after the bounded dashboard guard it passed **2/2** with the positive case. Dashboard tests passed **70/70**. Build and no-emit TypeScript passed, followed by **784/784** workspace application/module tests (API 670, dashboard 70, mobile 36, domain 8) plus the root boundary acceptance **2/2**. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This is local fail-closed behavior plus process-local boundary evidence, not deployment, durable database proof, field readiness, or immutable archive evidence. It adds no collection, dispatch, closure, control, or activation authority, creates no cloud resource, and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A RECOVERY TIMELINE CANNOT PUBLISH A DASHBOARD SELECTION WHEN ITS FINAL RECOVERY ENTRY IS BOUND TO A DIFFERENT INCIDENT OR REVISION.** |
+| Next handoff | Restore a corrected matching Timeline after this failure and prove one explicit retry recovers the revision-4 selection without replaying or creating a mutation. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

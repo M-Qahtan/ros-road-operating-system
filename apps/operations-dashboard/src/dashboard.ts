@@ -153,6 +153,7 @@ export class OperationsDashboardController {
     try {
       const [selected, timeline] = await Promise.all([this.gateway.getById(id), this.gateway.timeline(id)]);
       if (intent !== this.readIntent) return this.current;
+      assertRecoveryTimelineConsistency(selected, timeline);
       assertTerminalTimelineConsistency(selected, timeline);
       if (requiresHumanReconciliationReview(selected)
         && this.ambiguousCriticalOperation?.incidentId === selected.id) {
@@ -367,6 +368,21 @@ export class OperationsDashboardController {
 
 export function requiresHumanReconciliationReview(event: RoadEventResponse): boolean {
   return event.reconciliation !== null && event.reconciliation !== undefined;
+}
+
+function assertRecoveryTimelineConsistency(
+  selected: RoadEventResponse,
+  timeline: readonly AuditTimelineEntryContract[]
+): void {
+  if (selected.status !== 'RECOVERY') return;
+  const recoveryEntries = timeline.filter((entry) => entry.afterState?.status === 'RECOVERY');
+  if (recoveryEntries.length === 0) return;
+  const matchingEntries = recoveryEntries.filter((entry) =>
+    entry.correlationId === selected.id && entry.afterState?.version === selected.version
+  );
+  if (matchingEntries.length !== 1 || timeline.at(-1) !== matchingEntries[0]) {
+    throw new Error('تعذر التحقق من ارتباط سجل الاستعادة بالإصدار الحالي للحادث');
+  }
 }
 
 function assertTerminalTimelineConsistency(

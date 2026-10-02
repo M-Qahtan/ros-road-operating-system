@@ -20,7 +20,7 @@ const PURPOSE = 'HUMAN_SAFETY_RESPONSE';
 const TOKEN = 'trusted-api-dashboard-token';
 const NOW = new Date('2026-09-30T09:15:00.000Z');
 
-test('authenticated API recovery detail stays bound to its append-only Timeline in the dashboard', async () => {
+test('authenticated API recovery detail stays bound to its append-only Timeline in the dashboard', async (t) => {
   const repository = new MemoryRoadEventRepository();
   await repository.create(new RoadEvent({
     id: EVENT_ID,
@@ -73,13 +73,14 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
       occurredAt: '2026-09-30T09:10:00.000Z'
     })
   ]);
+  let servedTimeline = timeline;
   let timelineReads = 0;
   const auditTimeline = {
     async listForRoadEvent(roadEventId, scope) {
       timelineReads += 1;
       assert.equal(roadEventId, EVENT_ID);
       assert.deepEqual(scope, { tenantId: TENANT, purpose: PURPOSE });
-      return timeline;
+      return servedTimeline;
     }
   };
   const application = new RoadEventApplicationService(
@@ -162,4 +163,22 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
   assert.equal(identityResolutions, 3);
   assert.equal(timelineReads, 2);
   assert.equal(mutationRequests, 0);
+
+  await t.test('mismatched recovery Timeline correlation fails closed', async () => {
+    servedTimeline = Object.freeze([
+      timeline[0],
+      Object.freeze({ ...timeline[1], correlationId: '66666666-6666-4666-8666-666666666666' })
+    ]);
+
+    const blocked = await controller.select(EVENT_ID);
+    assert.equal(blocked.phase, 'failure');
+    assert.equal(blocked.selected, null);
+    assert.deepEqual(blocked.timeline, []);
+    assert.equal(blocked.stale, true);
+    assert.match(blocked.error ?? '', /سجل الاستعادة.*للحادث/);
+    assert.equal(controller.canRetrySelection(), true);
+    assert.equal(controller.canTransition(), false);
+    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(mutationRequests, 0);
+  });
 });
