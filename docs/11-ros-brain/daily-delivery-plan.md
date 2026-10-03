@@ -2040,6 +2040,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A DELAYED WRONG-REVISION RESPONSE RESOLVED TO THE DISCARDED PRIOR ACTOR CANNOT ALTER THE EXACT REVISION-4 SELECTION OR CAPABILITIES OWNED BY THE REPLACEMENT ACTOR.** |
 | Next handoff | Add the cross-scope companion: replace Tenant and Purpose ownership and prove a delayed response from the prior scope cannot populate or stale the replacement scope's queue or selection. |
 
+### Tenant and Purpose replacement preserves recovery state ownership
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `911bcd11fdff1bd21ea85f92340bb1790dfd25ff` was two hundred and six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | Two server-resolved browser principals now own distinct Tenant and Purpose scopes with separate recovery events. The prior scope begins a wrong-revision selection and its Timeline response remains held while the browser session is discarded. The replacement scope then loads only its own queue and selects its exact revision `4`; releasing the prior response cannot populate its queue, replace or stale its selection, expose an error, or change its derived capabilities. |
+| Scope and authority boundary | Each Bearer token resolves server-side to its own actor, Tenant, and Purpose, and every read is recorded against that exact principal; the browser supplies no `x-actor-id`. The prior and replacement queues contain only their scoped event, the discarded controller retains no selection or Timeline, and the complete journey records zero mutations. |
+| Local evidence | The focused uncached build passed **5/5** and the API-to-dashboard acceptance passed **6/6**. Uncached build, no-emit TypeScript, and workspace application/module tests passed **15/15** tasks, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the additional root acceptance passed **6/6**. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A DELAYED WRONG-REVISION RESPONSE OWNED BY A DISCARDED TENANT AND PURPOSE CANNOT POPULATE OR STALE THE REPLACEMENT SCOPE'S QUEUE OR EXACT REVISION-4 SELECTION.** |
+| Next handoff | From the replacement scope, request the prior scope's exact event ID and prove the not-found denial cannot clear, replace, or stale the replacement scope's active selection. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

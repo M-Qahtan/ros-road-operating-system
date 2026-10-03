@@ -24,6 +24,15 @@ const PRIOR_SESSION_TOKEN = 'prior-api-dashboard-token';
 const REPLACEMENT_SESSION_TOKEN = 'replacement-api-dashboard-token';
 const NOW = new Date('2026-09-30T09:15:00.000Z');
 
+const PRIOR_SCOPE_EVENT_ID = '99999999-9999-4999-8999-999999999999';
+const REPLACEMENT_SCOPE_EVENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const PRIOR_SCOPE_TENANT = 'riyadh-prior-scope';
+const PRIOR_SCOPE_PURPOSE = 'PRIOR_SAFETY_RESPONSE';
+const REPLACEMENT_SCOPE_TENANT = 'riyadh-replacement-scope';
+const REPLACEMENT_SCOPE_PURPOSE = 'REPLACEMENT_SAFETY_RESPONSE';
+const PRIOR_SCOPE_TOKEN = 'prior-scope-api-dashboard-token';
+const REPLACEMENT_SCOPE_TOKEN = 'replacement-scope-api-dashboard-token';
+
 test('authenticated API recovery detail stays bound to its append-only Timeline in the dashboard', async (t) => {
   const repository = new MemoryRoadEventRepository();
   await repository.create(new RoadEvent({
@@ -396,4 +405,222 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
     assert.equal(mutationRequests, readsBeforeReplacement.mutations);
     assert.equal(mutationRequests, 0);
   });
+});
+
+test('replacement Tenant and Purpose stay isolated from a delayed response owned by the prior scope', async () => {
+  const repository = new MemoryRoadEventRepository();
+  const createRecoveryEvent = async (id, tenantId, purpose, latitude) => {
+    await repository.create(new RoadEvent({
+      id,
+      occurredAt: new Date('2026-09-30T09:00:00.000Z'),
+      latitude,
+      longitude: 46.6753,
+      status: RoadEventStatus.Recovery,
+      version: 4,
+      severity: {
+        level: SeverityLevel.Moderate,
+        score: 48,
+        confidence: 0.93,
+        reasonCodes: ['recovery_verified'],
+        requiresHumanReview: true
+      }
+    }), {
+      tenantId,
+      purpose,
+      actorType: 'SYSTEM',
+      action: 'fixture.recovered',
+      traceId: `fixture-recovery-v4-${id}`,
+      eventType: 'FixtureRecovered',
+      correlationId: id,
+      occurredAt: new Date('2026-09-30T09:10:00.000Z')
+    });
+  };
+  await createRecoveryEvent(PRIOR_SCOPE_EVENT_ID, PRIOR_SCOPE_TENANT, PRIOR_SCOPE_PURPOSE, 24.7136);
+  await createRecoveryEvent(REPLACEMENT_SCOPE_EVENT_ID, REPLACEMENT_SCOPE_TENANT, REPLACEMENT_SCOPE_PURPOSE, 24.7137);
+
+  const recoveryTimeline = (eventId, actorId, version = 4) => Object.freeze([
+    Object.freeze({
+      action: 'road_event.road_clearance_confirmed',
+      actorType: 'OPERATOR',
+      actorId,
+      beforeState: Object.freeze({ status: 'RESPONSE_COORDINATION', version: 2 }),
+      afterState: Object.freeze({ status: 'ROAD_CLEARANCE', version: 3 }),
+      reason: 'Road clearance confirmed by a human operator',
+      traceId: `trace-clearance-v3-${eventId}`,
+      correlationId: eventId,
+      causationId: null,
+      occurredAt: '2026-09-30T09:05:00.000Z'
+    }),
+    Object.freeze({
+      action: 'road_event.recovery_confirmed',
+      actorType: 'SUPERVISOR',
+      actorId,
+      beforeState: Object.freeze({ status: 'ROAD_CLEARANCE', version: 3 }),
+      afterState: Object.freeze({ status: 'RECOVERY', version }),
+      reason: 'Recovery confirmed after human review',
+      traceId: `trace-recovery-v${version}-${eventId}`,
+      correlationId: eventId,
+      causationId: `trace-clearance-v3-${eventId}`,
+      occurredAt: '2026-09-30T09:10:00.000Z'
+    })
+  ]);
+  const priorTimeline = recoveryTimeline(PRIOR_SCOPE_EVENT_ID, PRIOR_SESSION_ACTOR_ID, 5);
+  const replacementTimeline = recoveryTimeline(REPLACEMENT_SCOPE_EVENT_ID, REPLACEMENT_SESSION_ACTOR_ID);
+  let timelineReads = 0;
+  const auditTimeline = {
+    async listForRoadEvent(roadEventId, scope) {
+      timelineReads += 1;
+      if (roadEventId === PRIOR_SCOPE_EVENT_ID) {
+        assert.deepEqual(scope, { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE });
+        return priorTimeline;
+      }
+      assert.equal(roadEventId, REPLACEMENT_SCOPE_EVENT_ID);
+      assert.deepEqual(scope, { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE });
+      return replacementTimeline;
+    }
+  };
+  const application = new RoadEventApplicationService(
+    repository,
+    new RoleMatrixAuthorizationAdapter(),
+    new MemoryIdempotencyAdapter(),
+    new MemorySignalAttachmentAdapter(repository),
+    auditTimeline
+  );
+
+  const principals = new Map([
+    [`Bearer ${PRIOR_SCOPE_TOKEN}`, {
+      actorId: PRIOR_SESSION_ACTOR_ID,
+      tenantId: PRIOR_SCOPE_TENANT,
+      purpose: PRIOR_SCOPE_PURPOSE
+    }],
+    [`Bearer ${REPLACEMENT_SCOPE_TOKEN}`, {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    }]
+  ]);
+  const resolvedPrincipals = [];
+  const actorResolver = {
+    async resolve(headers) {
+      const principal = principals.get(headers.authorization);
+      assert.notEqual(principal, undefined);
+      assert.equal(headers['x-tenant-id'], principal.tenantId);
+      assert.equal(headers['x-purpose'], principal.purpose);
+      assert.equal(headers['x-actor-id'], undefined);
+      resolvedPrincipals.push(principal);
+      return { ...principal, roles: ['SUPERVISOR'] };
+    }
+  };
+  const handler = createRoadEventHttpHandler(application, actorResolver);
+  const routes = [];
+  let mutationRequests = 0;
+  const fetcher = async (input, init = {}) => {
+    const target = new URL(String(input), 'http://localhost');
+    const method = init.method ?? 'GET';
+    if (method !== 'GET') mutationRequests += 1;
+    routes.push(`${method} ${target.pathname}${target.search}`);
+    const response = await handler({
+      method,
+      path: target.pathname,
+      query: Object.fromEntries(target.searchParams.entries()),
+      headers: Object.fromEntries(new Headers(init.headers).entries()),
+      body: init.body === undefined ? null : JSON.parse(String(init.body)),
+      traceId: `trace-cross-scope-http-${routes.length}`
+    });
+    return new Response(JSON.stringify(response.body), {
+      status: response.status,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  let releasePriorTimeline;
+  let markPriorTimelineStarted;
+  const priorTimelineRelease = new Promise((resolve) => { releasePriorTimeline = resolve; });
+  const priorTimelineStarted = new Promise((resolve) => { markPriorTimelineStarted = resolve; });
+  const priorFetcher = async (input, init = {}) => {
+    const target = new URL(String(input), 'http://localhost');
+    const response = await fetcher(input, init);
+    if (target.pathname === `/api/v1/road-events/${PRIOR_SCOPE_EVENT_ID}/timeline`) {
+      markPriorTimelineStarted();
+      await priorTimelineRelease;
+    }
+    return response;
+  };
+  const priorSession = {
+    tenantId: PRIOR_SCOPE_TENANT,
+    purpose: PRIOR_SCOPE_PURPOSE,
+    getAccessToken: async () => PRIOR_SCOPE_TOKEN
+  };
+  const priorController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', priorSession, priorFetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const priorQueue = await priorController.load();
+  assert.deepEqual(priorQueue.events.map(({ id }) => id), [PRIOR_SCOPE_EVENT_ID]);
+  const delayedPriorSelection = priorController.select(PRIOR_SCOPE_EVENT_ID);
+  await priorTimelineStarted;
+  const discardedPriorState = priorController.discardBrowserSession();
+
+  const replacementSession = {
+    tenantId: REPLACEMENT_SCOPE_TENANT,
+    purpose: REPLACEMENT_SCOPE_PURPOSE,
+    getAccessToken: async () => REPLACEMENT_SCOPE_TOKEN
+  };
+  const replacementController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', replacementSession, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const replacementQueue = await replacementController.load();
+  assert.equal(replacementQueue.phase, 'ready');
+  assert.deepEqual(replacementQueue.events.map(({ id, version }) => ({ id, version })), [
+    { id: REPLACEMENT_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  const replacementSelection = await replacementController.select(REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(replacementSelection.phase, 'ready');
+  assert.equal(replacementSelection.selected?.id, REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(replacementSelection.selected?.version, 4);
+  assert.deepEqual(replacementSelection.timeline, replacementTimeline);
+  assert.equal(replacementSelection.stale, false);
+  assert.equal(replacementSelection.error, null);
+  const replacementCapabilities = Object.freeze({
+    retry: replacementController.canRetrySelection(),
+    transition: replacementController.canTransition(),
+    closure: replacementController.canAuthorizeClosure()
+  });
+
+  releasePriorTimeline();
+  assert.equal(await delayedPriorSelection, discardedPriorState);
+  assert.equal(priorController.state, discardedPriorState);
+  assert.equal(priorController.state.selected, null);
+  assert.deepEqual(priorController.state.timeline, []);
+  assert.equal(priorController.state.stale, false);
+  assert.equal(priorController.state.error, null);
+
+  assert.equal(replacementController.state, replacementSelection);
+  assert.deepEqual(replacementController.state.events.map(({ id, version }) => ({ id, version })), [
+    { id: REPLACEMENT_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(replacementController.state.selected?.id, REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(replacementController.state.selected?.version, 4);
+  assert.deepEqual(replacementController.state.timeline, replacementTimeline);
+  assert.equal(replacementController.state.stale, false);
+  assert.equal(replacementController.state.error, null);
+  assert.deepEqual({
+    retry: replacementController.canRetrySelection(),
+    transition: replacementController.canTransition(),
+    closure: replacementController.canAuthorizeClosure()
+  }, replacementCapabilities);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 2);
+  assert.equal(timelineReads, 4);
+  assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
+    { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
+    { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
+    { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE }
+  ]);
+  assert.equal(mutationRequests, 0);
 });
