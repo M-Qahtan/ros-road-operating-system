@@ -2185,6 +2185,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE ROTATED SCOPE ALONE PUBLISHES ITS QUEUE WHILE A PREVIOUS-SCOPE DENIAL IS PENDING, AND THE LATE DENIAL CANNOT OVERWRITE THAT RESULT.** |
 | Next handoff | Delay a rotated-scope reload, select its exact revision-4 event in the same controller, then prove the older reload completion cannot clear or replace that newer selection. |
 
+### Newer exact selection supersedes an older rotated queue reload
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `accbb33471b21c094cadd0164e645ec33419e5c5` was two hundred and eighteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | A rotated-scope queue reload can now remain suspended after its server-resolved read while the same controller publishes a newer exact revision-4 Detail and matching Timeline selection. Releasing the older queue completion returns the newer selection object itself and cannot clear, replace, stale, or otherwise republish over that selected state. |
+| Scope and authority boundary | The older reload performs one queue read and the newer selection performs one Detail plus one Timeline read, all under the same trusted rotated actor, Tenant, and Purpose; the browser supplies no actor identity. The queue generation is superseded by the later read intent, the Timeline remains append-only, and no mutation route is reached. Only the selected state's pre-existing bounded capabilities are derived; no collection, dispatch, or control authority is introduced. |
+| Local evidence | The focused build passed **4/4** and the API-to-dashboard acceptance passed **6/6**. Uncached build **5/5**, no-emit TypeScript **7/7**, and workspace tests **7/7** passed in dependency order, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A NEWER EXACT REVISION-4 SELECTION SUPERSEDES AN OLDER QUEUE GENERATION, WHOSE LATE COMPLETION CANNOT ERASE OR REPLACE IT.** |
+| Next handoff | Return a delayed `503` from the superseded rotated reload after the newer selection publishes, then prove the older failure cannot inject stale or error state. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
