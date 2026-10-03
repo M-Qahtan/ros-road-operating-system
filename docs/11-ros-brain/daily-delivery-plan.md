@@ -2221,6 +2221,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONLY THE CURRENT ROTATED QUEUE GENERATION PUBLISHES ITS SANITIZED FAIL-CLOSED STATE; THE SUPERSEDED FAILURE REMAINS IGNORED.** |
 | Next handoff | Issue a fresh successful rotated reload after the current sanitized `503` and prove recovery restores only the scoped queue without retrying or mutating the prior selection. |
 
+### Fresh rotated queue reload recovers from the current sanitized failure
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `2fca467e530d75e6aade15d10292a4c84a3f07c9` was two hundred and twenty-one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the latest rotated queue generation publishes its sanitized fail-closed `503` state, a fresh successful reload performs a new scoped Queue read and restores the controller to `ready`. Recovery returns only the rotated revision-4 queue, clears the stale marker and error, and does not restore or retry the prior Detail selection or Timeline. |
+| Scope and authority boundary | Recovery performs exactly one server-resolved queue read under the rotated actor, Tenant, and Purpose. It performs no Detail, Timeline, retry, or mutation request; the browser supplies no actor identity. Selection retry, transition, and closure capabilities remain disabled until a separately verified exact selection occurs, and no collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | The focused build passed **4/4** and the API-to-dashboard acceptance passed **6/6**. Uncached build **5/5**, no-emit TypeScript **7/7**, and workspace tests **7/7** passed in dependency order, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A FRESH ROTATED QUEUE RELOAD RECOVERS FROM THE CURRENT SANITIZED FAILURE WITHOUT REPLAYING DETAIL, TIMELINE, RETRY, OR MUTATION WORK.** |
+| Next handoff | Select the exact revision-4 event after queue recovery and prove only a fresh Detail/Timeline pair can restore bounded capabilities without inheriting the failed generation. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

@@ -1309,6 +1309,40 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(mutationRequests, readsBeforeLatestFailedRotatedReload.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 10);
   assert.equal(timelineReads, 16);
+
+  const readsBeforeRecoveredRotatedReload = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const recoveredRotatedReload = await laterReplacementController.load();
+  assert.notEqual(recoveredRotatedReload, latestFailedRotatedReload);
+  assert.equal(recoveredRotatedReload.phase, 'ready');
+  assert.deepEqual(recoveredRotatedReload.events.map(({ id, version }) => ({ id, version })), [
+    { id: ROTATED_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(recoveredRotatedReload.selected, null);
+  assert.deepEqual(recoveredRotatedReload.timeline, []);
+  assert.equal(recoveredRotatedReload.stale, false);
+  assert.equal(recoveredRotatedReload.error, null);
+  assert.deepEqual({
+    retry: laterReplacementController.canRetrySelection(),
+    transition: laterReplacementController.canTransition(),
+    closure: laterReplacementController.canAuthorizeClosure()
+  }, { retry: false, transition: false, closure: false });
+  assert.deepEqual(routes.slice(readsBeforeRecoveredRotatedReload.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0'
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeRecoveredRotatedReload.identities), [{
+    actorId: ROTATED_SESSION_ACTOR_ID,
+    tenantId: ROTATED_SCOPE_TENANT,
+    purpose: ROTATED_SCOPE_PURPOSE
+  }]);
+  assert.equal(timelineReads, readsBeforeRecoveredRotatedReload.timeline);
+  assert.equal(mutationRequests, readsBeforeRecoveredRotatedReload.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 11);
+  assert.equal(timelineReads, 16);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1334,6 +1368,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
