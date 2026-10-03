@@ -612,12 +612,44 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     transition: replacementController.canTransition(),
     closure: replacementController.canAuthorizeClosure()
   }, replacementCapabilities);
+
+  const readsBeforeCrossScopeDenial = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const deniedCrossScopeSelection = await replacementController.select(PRIOR_SCOPE_EVENT_ID);
+  assert.equal(deniedCrossScopeSelection, replacementSelection);
+  assert.equal(replacementController.state, replacementSelection);
+  assert.deepEqual(replacementController.state.events.map(({ id, version }) => ({ id, version })), [
+    { id: REPLACEMENT_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(replacementController.state.selected?.id, REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(replacementController.state.selected?.version, 4);
+  assert.deepEqual(replacementController.state.timeline, replacementTimeline);
+  assert.equal(replacementController.state.stale, false);
+  assert.equal(replacementController.state.error, null);
+  assert.deepEqual({
+    retry: replacementController.canRetrySelection(),
+    transition: replacementController.canTransition(),
+    closure: replacementController.canAuthorizeClosure()
+  }, replacementCapabilities);
+  assert.deepEqual(routes.slice(readsBeforeCrossScopeDenial.routes), [
+    `GET /api/v1/road-events/${PRIOR_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${PRIOR_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeCrossScopeDenial.identities, 2);
+  assert.equal(timelineReads, readsBeforeCrossScopeDenial.timeline);
+  assert.equal(mutationRequests, readsBeforeCrossScopeDenial.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 2);
   assert.equal(timelineReads, 4);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE }

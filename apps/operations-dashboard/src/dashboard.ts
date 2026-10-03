@@ -171,6 +171,10 @@ export class OperationsDashboardController {
       this.failedSelectionId = null;
     } catch (error) {
       if (intent !== this.readIntent) return this.current;
+      if (error instanceof ApiRequestError && error.code === 'NOT_FOUND'
+        && this.current.selected !== null && this.current.selected.id !== id) {
+        return this.current;
+      }
       if (error instanceof ApiRequestError && error.code === 'UNTRUSTED_RESPONSE'
         && this.ambiguousCriticalOperation?.incidentId === id) {
         this.ambiguousCriticalOperation = null;

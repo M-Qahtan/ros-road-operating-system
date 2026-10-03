@@ -2052,6 +2052,19 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A DELAYED WRONG-REVISION RESPONSE OWNED BY A DISCARDED TENANT AND PURPOSE CANNOT POPULATE OR STALE THE REPLACEMENT SCOPE'S QUEUE OR EXACT REVISION-4 SELECTION.** |
 | Next handoff | From the replacement scope, request the prior scope's exact event ID and prove the not-found denial cannot clear, replace, or stale the replacement scope's active selection. |
 
+### Cross-scope not-found denial preserves the active recovery selection
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `60cec36baad3168d8f42ac444bb3ec02d24991ca` was two hundred and seven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | The replacement scope now requests the prior scope's exact event ID through the authenticated API. Both Detail and Timeline reads are denied as not found under the replacement Tenant and Purpose. A not-found result for an ID different from the active selection no longer erases, replaces, or marks stale the already verified revision `4` selection, its Timeline, queue, or derived capabilities. |
+| Defect and bounded fix | The new acceptance first reproduced the defect: the cross-scope 404 changed the dashboard to `failure`, cleared the valid selection and Timeline, and marked the state stale. The controller now treats only a `NOT_FOUND` for a different ID while a verified selection is active as a state-neutral denial. Failures for the active ID and all other error classes retain their existing fail-closed behavior. |
+| Scope and authority boundary | The denied reads remain bound server-side to the replacement Bearer principal, Tenant, and Purpose; the prior event remains undisclosed. The browser supplies no `x-actor-id`, the audit Timeline source is never entered for the hidden event, and the journey records zero mutations. |
+| Local evidence | The focused build passed **5/5** and the API-to-dashboard acceptance passed **6/6** after failing on the original behavior. Uncached build, no-emit TypeScript, and workspace application/module tests passed **15/15** tasks, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the additional root acceptance passed **6/6**. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes dashboard read-state handling only. It adds no data access, mutation, transition, closure, dispatch, control, activation, deployment, cloud resource, or immutable archive evidence. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A CROSS-SCOPE NOT-FOUND DENIAL CANNOT DESTROY OR STALE THE REPLACEMENT SCOPE'S VERIFIED ACTIVE RECOVERY SELECTION.** |
+| Next handoff | Prove that a not-found response for the active selected event itself still clears the selection, marks the state stale, and disables every derived critical capability. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
