@@ -2101,6 +2101,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **TWO CONCURRENT TRUSTED RETRIES COALESCE INTO ONE DETAIL/TIMELINE READ PAIR AND ONE FINAL REVISION-4 STATE WITHOUT QUEUE REPLAY OR MUTATION.** |
 | Next handoff | Discard the browser session while the coalesced retry Timeline is pending and prove the obsolete shared completion cannot repopulate selection, Timeline, retry identity, or critical capabilities. |
 
+### Discarded browser session rejects the shared retry completion
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `c27ea167b5596b5cce7570342e0131afee4c68b5` was two hundred and eleven commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After another active-event denial, two trusted retries share one in-flight Promise while the replacement-scope Timeline is held. Discarding the browser session before release now has direct acceptance evidence that both obsolete completions resolve to the same discarded clean state and cannot repopulate the selection, Timeline, retry identity, or derived critical capabilities. |
+| Concurrency and authority boundary | The discarded shared retry still issues only one Detail request and one Timeline request, performs exactly two replacement-scope identity resolutions and two application Timeline reads, does not replay the queue, and reaches no mutation route. The discarded state has no events, selection, Timeline, stale marker, error, retry, transition, or closure capability. |
+| Local evidence | The focused uncached build passed **5/5** and the API-to-dashboard acceptance passed **6/6**. Uncached build, no-emit TypeScript, and workspace application/module tests passed **15/15** tasks, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The acceptance recorded one Detail/Timeline request pair, two replacement-scope identity resolutions, two application Timeline reads, one discarded state identity shared by both completions, and zero mutations. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **DISCARDING THE BROWSER SESSION WHILE A SHARED RETRY IS PENDING PREVENTS BOTH OBSOLETE COMPLETIONS FROM RESTORING ANY INCIDENT STATE OR CRITICAL CAPABILITY.** |
+| Next handoff | Create a fresh replacement browser session after the discarded completion and prove it loads and selects revision 4 independently without inheriting the obsolete retry identity. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
