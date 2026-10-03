@@ -1992,17 +1992,17 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A RECOVERY TIMELINE CANNOT PUBLISH A DASHBOARD SELECTION WHEN ITS FINAL RECOVERY ENTRY IS BOUND TO A DIFFERENT INCIDENT OR REVISION.** |
 | Next handoff | Restore a corrected matching Timeline after this failure and prove one explicit retry recovers the revision-4 selection without replaying or creating a mutation. |
 
-### Corrected recovery Timeline explicit retry candidate
+### Corrected recovery Timeline succeeds on explicit retry
 
 | Field | Current record |
 |---|---|
-| Resume point | On 2026-10-03, GitHub candidate `a47b03bbb3493d00981c8dc4f7f2a425788ce14a` was two hundred commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request or candidate workflow run existed. The approved cadence remains hourly. |
-| Authored behavior | The real API-to-dashboard acceptance now restores the exact matching recovery Timeline after the prior fail-closed mismatch, invokes `retrySelection()` explicitly, and requires revision `4` Detail plus its append-only Timeline to become ready again. |
+| Resume point | On 2026-10-03, GitHub candidate `cf1a52b728c3b8232ae52ba1ee6c82889974f91f` was two hundred and two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | The real API-to-dashboard acceptance restores the exact matching recovery Timeline after the prior fail-closed mismatch, invokes `retrySelection()` explicitly, and requires revision `4` Detail plus its append-only Timeline to become ready again. |
 | Replay and authority boundary | The retry must issue exactly two fresh scoped reads—Detail and Timeline—without replaying the queue read, without mutation, and without carrying the failed error or stale state. The acceptance does not exercise or grant transition, closure, dispatch, or any other mutation authority. |
-| Verification status | Static inspection confirms the assertions are bound to the existing process-local authenticated gateway seam. The selected execution environment was unavailable, so no focused test, build, typecheck, full suite, PostgreSQL journey, or verification gate was executed for this candidate. It remains **UNVERIFIED** and is not eligible for review or merge until those checks run. |
+| Local evidence | The first executable run reached the retry behavior and exposed a test-oracle defect: the application consults its Timeline source twice per authenticated selection, matching the pre-existing positive assertion, rather than the assumed once. After correcting that counter, the focused root build and API-to-dashboard acceptance passed **3/3**. Build passed **5/5** tasks, no-emit TypeScript passed **7/7**, workspace application/module tests passed **784/784** (API 670, dashboard 70, mobile 36, domain 8), and the additional root acceptance passed **3/3**. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
 | Safety limits | This candidate changes acceptance evidence only. It adds no collection, dispatch, closure, control, activation, deployment, cloud resource, or immutable archive evidence. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
-| Result | **THE EXPLICIT RECOVERY RETRY ACCEPTANCE IS AUTHORED BUT NOT YET EXECUTED; NO PASS IS CLAIMED.** |
-| Next handoff | Execute the focused dashboard build and API-to-dashboard acceptance, then the complete build, typecheck, test, and verify gates; retain the candidate only if every check passes. |
+| Result | **AFTER A FAIL-CLOSED CORRELATION MISMATCH, ONE EXPLICIT RETRY CAN PUBLISH THE CORRECTED REVISION-4 DETAIL AND TIMELINE USING FRESH READS WITHOUT QUEUE REPLAY OR MUTATION.** |
+| Next handoff | Add the version-mismatch companion across the same boundary: return the correct correlation with the wrong final recovery revision, prove fail-closed withholding, then recover only after an explicit retry receives the exact revision-4 Timeline. |
 
 ## Hourly report and definition of done
 

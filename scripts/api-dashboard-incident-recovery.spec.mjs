@@ -208,7 +208,7 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
     ]);
     assert.equal(tokenReads - readsBeforeRetry.tokens, 2);
     assert.equal(identityResolutions - readsBeforeRetry.identities, 2);
-    assert.equal(timelineReads - readsBeforeRetry.timeline, 1);
+    assert.equal(timelineReads - readsBeforeRetry.timeline, 2);
     assert.equal(mutationRequests, readsBeforeRetry.mutations);
     assert.equal(mutationRequests, 0);
   });
