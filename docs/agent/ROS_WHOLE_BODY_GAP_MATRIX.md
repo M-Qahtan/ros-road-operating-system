@@ -14,7 +14,7 @@ This matrix is an integration control artifact, not a readiness claim. A compone
 | Skin / zero-trust ingress | PARTIAL | OIDC/MFA/JWT/ABAC baseline exists | Runtime server-side tenant/purpose enforcement + negative tests |
 | Senses | PARTIAL | ROS Eye, reports, sensor-agnostic work | At least one canonical reference adapter exercised end-to-end |
 | Sensory neurons / adapters | PARTIAL | #166/#165 sensor-agnostic track | Adapter certification V1 + health/calibration/lineage/failure isolation evidence |
-| Nervous system | PARTIAL | Runtime/Redis/outbox/event work exists | Durable API/worker/PostgreSQL/Redis/outbox path; restart/replay evidence |
+| Nervous system | BUILT | Durable PostgreSQL/Redis/Outbox runtime and resilience harness are already present on current main; historical exact-head evidence from #82/#91/#92 is ancestral to main | Re-run the bounded resilience proof on the final Whole-Body candidate SHA and bind artifact hashes |
 | Synapses / events | PARTIAL | Existing event contracts | Versioned canonical envelope with purpose/jurisdiction/freshness/trace/provenance |
 | Spinal safety reflex | PARTIAL | Safety gates/fail-closed behavior exist | Deterministic bounded reflex tests independent of deep cognition |
 | CPAL / EIL | PARTIAL | CPAL/EIL adversarial research exists | Integrated runtime path + independence/replay/contradiction tests |
@@ -41,7 +41,7 @@ This matrix is an integration control artifact, not a readiness claim. A compone
 ## Critical path
 
 1. Freeze P0 canonical contracts and organ dependency graph.
-2. Prove durable nervous-system path with PostgreSQL + Redis + Outbox.
+2. Re-prove the already-integrated durable nervous-system path on the final Whole-Body candidate SHA; do not rebuild it.
 3. Integrate evidence assurance: Adapter → CPAL/EIL → CRS.
 4. Integrate Heart as mandatory veto between cognition/planning and every action output.
 5. Integrate RCINS/RCIS whole-body containment.
@@ -51,9 +51,11 @@ This matrix is an integration control artifact, not a readiness claim. A compone
 
 ## Current highest-value engineering gate
 
-**Durable whole-body nervous-system reference path.**
+**Extend the proven runtime substrate through Evidence Assurance → CPAL/EIL → CRS → Heart → Operations/Audit, then prove that full cross-organ path on one candidate SHA.**
 
-Reason: most higher organs already have partial or research implementations, but no Release Candidate can exist until a single durable path joins ingress, evidence, state, Heart, operations and audit without manual database intervention. Brain research remains SHADOW_ONLY until this substrate is proven.
+Reconciliation finding: PR #92 head `ce098ef16af4cc901fe9744bcaf14a456111e6fb` is not a divergent stack that still needs replay onto main. Git compare shows it is an ancestor of current `main@3255a94a7f78607014a410e083174483fa2c2c2f` (`ahead_by=0`, `behind_by=277`, merge base equals #92 head). PR #82 was merged, and the runtime-resilience implementation files are present on current main. Therefore the previous `#82 → #91 → #92 → current main` reconciliation framing was stale. Historical green evidence remains bounded to its tested SHA and must not be treated as final-candidate proof; the final Whole-Body SHA still requires fresh reproducible runtime evidence.
+
+The critical engineering work is now cross-organ integration above that substrate. Brain research remains SHADOW_ONLY until this path and independent gates are proven.
 
 ## Safety boundary
 
