@@ -27,10 +27,13 @@ const NOW = new Date('2026-09-30T09:15:00.000Z');
 
 const PRIOR_SCOPE_EVENT_ID = '99999999-9999-4999-8999-999999999999';
 const REPLACEMENT_SCOPE_EVENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const ROTATED_SCOPE_EVENT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const PRIOR_SCOPE_TENANT = 'riyadh-prior-scope';
 const PRIOR_SCOPE_PURPOSE = 'PRIOR_SAFETY_RESPONSE';
 const REPLACEMENT_SCOPE_TENANT = 'riyadh-replacement-scope';
 const REPLACEMENT_SCOPE_PURPOSE = 'REPLACEMENT_SAFETY_RESPONSE';
+const ROTATED_SCOPE_TENANT = 'riyadh-rotated-scope';
+const ROTATED_SCOPE_PURPOSE = 'ROTATED_SAFETY_RESPONSE';
 const PRIOR_SCOPE_TOKEN = 'prior-scope-api-dashboard-token';
 const REPLACEMENT_SCOPE_TOKEN = 'replacement-scope-api-dashboard-token';
 const ROTATED_SESSION_TOKEN = 'rotated-session-api-dashboard-token';
@@ -442,6 +445,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   };
   await createRecoveryEvent(PRIOR_SCOPE_EVENT_ID, PRIOR_SCOPE_TENANT, PRIOR_SCOPE_PURPOSE, 24.7136);
   await createRecoveryEvent(REPLACEMENT_SCOPE_EVENT_ID, REPLACEMENT_SCOPE_TENANT, REPLACEMENT_SCOPE_PURPOSE, 24.7137);
+  await createRecoveryEvent(ROTATED_SCOPE_EVENT_ID, ROTATED_SCOPE_TENANT, ROTATED_SCOPE_PURPOSE, 24.7138);
 
   const recoveryTimeline = (eventId, actorId, version = 4) => Object.freeze([
     Object.freeze({
@@ -471,6 +475,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   ]);
   const priorTimeline = recoveryTimeline(PRIOR_SCOPE_EVENT_ID, PRIOR_SESSION_ACTOR_ID, 5);
   const replacementTimeline = recoveryTimeline(REPLACEMENT_SCOPE_EVENT_ID, REPLACEMENT_SESSION_ACTOR_ID);
+  const rotatedTimeline = recoveryTimeline(ROTATED_SCOPE_EVENT_ID, ROTATED_SESSION_ACTOR_ID);
   let timelineReads = 0;
   const auditTimeline = {
     async listForRoadEvent(roadEventId, scope) {
@@ -479,9 +484,13 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
         assert.deepEqual(scope, { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE });
         return priorTimeline;
       }
-      assert.equal(roadEventId, REPLACEMENT_SCOPE_EVENT_ID);
-      assert.deepEqual(scope, { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE });
-      return replacementTimeline;
+      if (roadEventId === REPLACEMENT_SCOPE_EVENT_ID) {
+        assert.deepEqual(scope, { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE });
+        return replacementTimeline;
+      }
+      assert.equal(roadEventId, ROTATED_SCOPE_EVENT_ID);
+      assert.deepEqual(scope, { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE });
+      return rotatedTimeline;
     }
   };
   const application = new RoadEventApplicationService(
@@ -505,8 +514,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     }],
     [`Bearer ${ROTATED_SESSION_TOKEN}`, {
       actorId: ROTATED_SESSION_ACTOR_ID,
-      tenantId: REPLACEMENT_SCOPE_TENANT,
-      purpose: REPLACEMENT_SCOPE_PURPOSE
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
     }],
     [`Bearer ${ACTIVE_EVENT_HIDDEN_TOKEN}`, {
       actorId: REPLACEMENT_SESSION_ACTOR_ID,
@@ -943,8 +952,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   holdDiscardedQueue = false;
 
   const rotatedReplacementSession = {
-    tenantId: REPLACEMENT_SCOPE_TENANT,
-    purpose: REPLACEMENT_SCOPE_PURPOSE,
+    tenantId: ROTATED_SCOPE_TENANT,
+    purpose: ROTATED_SCOPE_PURPOSE,
     getAccessToken: async () => ROTATED_SESSION_TOKEN
   };
   const laterReplacementController = new OperationsDashboardController(
@@ -955,13 +964,13 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const laterReplacementQueue = await laterReplacementController.load();
   assert.equal(laterReplacementQueue.phase, 'ready');
   assert.deepEqual(laterReplacementQueue.events.map(({ id, version }) => ({ id, version })), [
-    { id: REPLACEMENT_SCOPE_EVENT_ID, version: 4 }
+    { id: ROTATED_SCOPE_EVENT_ID, version: 4 }
   ]);
-  const laterReplacementSelection = await laterReplacementController.select(REPLACEMENT_SCOPE_EVENT_ID);
+  const laterReplacementSelection = await laterReplacementController.select(ROTATED_SCOPE_EVENT_ID);
   assert.equal(laterReplacementSelection.phase, 'ready');
-  assert.equal(laterReplacementSelection.selected?.id, REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(laterReplacementSelection.selected?.id, ROTATED_SCOPE_EVENT_ID);
   assert.equal(laterReplacementSelection.selected?.version, 4);
-  assert.deepEqual(laterReplacementSelection.timeline, replacementTimeline);
+  assert.deepEqual(laterReplacementSelection.timeline, rotatedTimeline);
   assert.equal(laterReplacementSelection.stale, false);
   assert.equal(laterReplacementSelection.error, null);
   assert.deepEqual({
@@ -983,8 +992,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.deepEqual(routes.slice(readsBeforeDelayedQueue.routes), [
     'GET /api/v1/road-events?limit=100&offset=0',
     'GET /api/v1/road-events?limit=100&offset=0',
-    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}`,
-    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
   ]);
   assert.deepEqual(resolvedPrincipals.slice(readsBeforeDelayedQueue.identities), [
     {
@@ -994,18 +1003,18 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     },
     {
       actorId: ROTATED_SESSION_ACTOR_ID,
-      tenantId: REPLACEMENT_SCOPE_TENANT,
-      purpose: REPLACEMENT_SCOPE_PURPOSE
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
     },
     {
       actorId: ROTATED_SESSION_ACTOR_ID,
-      tenantId: REPLACEMENT_SCOPE_TENANT,
-      purpose: REPLACEMENT_SCOPE_PURPOSE
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
     },
     {
       actorId: ROTATED_SESSION_ACTOR_ID,
-      tenantId: REPLACEMENT_SCOPE_TENANT,
-      purpose: REPLACEMENT_SCOPE_PURPOSE
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
     }
   ]);
   assert.equal(timelineReads - readsBeforeDelayedQueue.timeline, 2);
@@ -1033,9 +1042,9 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
-    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
-    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
-    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE }
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE }
   ]);
   assert.equal(mutationRequests, 0);
 });
