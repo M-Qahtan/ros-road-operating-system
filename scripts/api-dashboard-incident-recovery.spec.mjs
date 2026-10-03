@@ -575,6 +575,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   let markFailedRotatedReloadQueueStarted;
   const failedRotatedReloadQueueRelease = new Promise((resolve) => { releaseFailedRotatedReloadQueue = resolve; });
   const failedRotatedReloadQueueStarted = new Promise((resolve) => { markFailedRotatedReloadQueueStarted = resolve; });
+  let failLatestRotatedReloadQueue = false;
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -629,6 +630,18 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       markFailedRotatedReloadQueueStarted();
       await failedRotatedReloadQueueRelease;
       return new Response(JSON.stringify({ code: 'SERVICE_UNAVAILABLE', message: 'Superseded queue unavailable' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (failLatestRotatedReloadQueue
+      && target.pathname === '/api/v1/road-events'
+      && target.search === '?limit=100&offset=0'
+      && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      return new Response(JSON.stringify({
+        code: 'LATEST_QUEUE_SECRET',
+        message: 'postgres://reader:secret@latest-rotated-queue'
+      }), {
         status: 503,
         headers: { 'content-type': 'application/json' }
       });
@@ -1258,6 +1271,44 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(mutationRequests, readsBeforeFailedRotatedReload.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 9);
   assert.equal(timelineReads, 16);
+
+  const readsBeforeLatestFailedRotatedReload = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    events: laterReplacementController.state.events
+  };
+  failLatestRotatedReloadQueue = true;
+  const latestFailedRotatedReload = await laterReplacementController.load();
+  failLatestRotatedReloadQueue = false;
+  assert.equal(latestFailedRotatedReload.phase, 'failure');
+  assert.equal(latestFailedRotatedReload.events, readsBeforeLatestFailedRotatedReload.events);
+  assert.deepEqual(latestFailedRotatedReload.events.map(({ id, version }) => ({ id, version })), [
+    { id: ROTATED_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(latestFailedRotatedReload.selected, null);
+  assert.deepEqual(latestFailedRotatedReload.timeline, []);
+  assert.equal(latestFailedRotatedReload.stale, true);
+  assert.match(latestFailedRotatedReload.error ?? '', /خدمة ROS غير متاحة مؤقتًا/);
+  assert.doesNotMatch(latestFailedRotatedReload.error ?? '', /postgres|secret|latest-rotated-queue|LATEST_QUEUE_SECRET/i);
+  assert.deepEqual({
+    retry: laterReplacementController.canRetrySelection(),
+    transition: laterReplacementController.canTransition(),
+    closure: laterReplacementController.canAuthorizeClosure()
+  }, { retry: false, transition: false, closure: false });
+  assert.deepEqual(routes.slice(readsBeforeLatestFailedRotatedReload.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0'
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeLatestFailedRotatedReload.identities), [{
+    actorId: ROTATED_SESSION_ACTOR_ID,
+    tenantId: ROTATED_SCOPE_TENANT,
+    purpose: ROTATED_SCOPE_PURPOSE
+  }]);
+  assert.equal(timelineReads, readsBeforeLatestFailedRotatedReload.timeline);
+  assert.equal(mutationRequests, readsBeforeLatestFailedRotatedReload.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 10);
+  assert.equal(timelineReads, 16);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1283,6 +1334,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },

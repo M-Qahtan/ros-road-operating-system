@@ -2209,6 +2209,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A SUPERSEDED ROTATED QUEUE FAILURE CANNOT INJECT ERROR OR STALE STATE INTO THE NEWER EXACT REVISION-4 SELECTION.** |
 | Next handoff | After the superseded failure is ignored, make a new latest rotated reload return `503` and prove that only this current generation fails closed with a sanitized queue error. |
 
+### Current rotated queue generation fails closed with a sanitized error
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `5766c79d6462757d4a5ae28d8d67e7612f8acc50` was two hundred and twenty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the superseded rotated queue failure is ignored and the newer exact revision-4 selection remains active, a subsequent latest-generation queue reload now receives its own `503 SERVICE_UNAVAILABLE`. Because this failure belongs to the current read intent, the controller fails closed: it clears Detail and Timeline, retains only the already-scoped queue, marks the state stale, disables retry, transition, and closure capabilities, and exposes only the browser's sanitized service-unavailable message. |
+| Scope and authority boundary | The current failure performs exactly one queue read under the server-resolved rotated actor, Tenant, and Purpose. It performs no Detail, Timeline, or mutation request; the browser supplies no actor identity. A simulated private code and database URL are absent from state. The failure grants no collection, dispatch, closure, control, retry, or activation authority. |
+| Local evidence | The focused build passed **4/4** and the corrected API-to-dashboard acceptance passed **6/6** after an initial fixture-name error in the new assertion was classified and fixed without production changes. Uncached build **5/5**, no-emit TypeScript **7/7**, and workspace tests **7/7** passed in dependency order, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONLY THE CURRENT ROTATED QUEUE GENERATION PUBLISHES ITS SANITIZED FAIL-CLOSED STATE; THE SUPERSEDED FAILURE REMAINS IGNORED.** |
+| Next handoff | Issue a fresh successful rotated reload after the current sanitized `503` and prove recovery restores only the scoped queue without retrying or mutating the prior selection. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
