@@ -596,7 +596,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     }
     if (holdDeniedDiscardedQueue
       && target.pathname === '/api/v1/road-events'
-      && target.search === '?limit=100&offset=0') {
+      && target.search === '?limit=100&offset=0'
+      && new Headers(init.headers).get('authorization') === `Bearer ${REPLACEMENT_SCOPE_TOKEN}`) {
       markDeniedDiscardedQueueStarted();
       await deniedDiscardedQueueRelease;
       return new Response(JSON.stringify({ code: 'FORBIDDEN', message: 'Previous scope denied' }), {
@@ -1062,29 +1063,55 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(deniedQueueController.canTransition(), false);
   assert.equal(deniedQueueController.canAuthorizeClosure(), false);
   assert.equal(laterReplacementController.state, laterReplacementSelection);
+  const rotatedReloadState = await laterReplacementController.load();
+  assert.notEqual(rotatedReloadState, laterReplacementSelection);
+  assert.equal(rotatedReloadState.phase, 'ready');
+  assert.deepEqual(rotatedReloadState.events.map(({ id, version }) => ({ id, version })), [
+    { id: ROTATED_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(rotatedReloadState.selected, null);
+  assert.deepEqual(rotatedReloadState.timeline, []);
+  assert.equal(rotatedReloadState.stale, false);
+  assert.equal(rotatedReloadState.error, null);
+  assert.equal(laterReplacementController.state, rotatedReloadState);
+  assert.equal(laterReplacementController.canRetrySelection(), false);
+  assert.equal(laterReplacementController.canTransition(), false);
+  assert.equal(laterReplacementController.canAuthorizeClosure(), false);
   holdDeniedDiscardedQueue = false;
   releaseDeniedDiscardedQueue();
   assert.equal(await delayedDeniedQueue, discardedDeniedQueueState);
   assert.equal(deniedQueueController.state, discardedDeniedQueueState);
-  assert.equal(laterReplacementController.state, laterReplacementSelection);
+  assert.equal(laterReplacementController.state, rotatedReloadState);
   assert.equal(laterReplacementController.state.stale, false);
   assert.equal(laterReplacementController.state.error, null);
   assert.deepEqual({
     retry: laterReplacementController.canRetrySelection(),
     transition: laterReplacementController.canTransition(),
     closure: laterReplacementController.canAuthorizeClosure()
-  }, replacementCapabilities);
+  }, {
+    retry: false,
+    transition: false,
+    closure: false
+  });
   assert.deepEqual(routes.slice(readsBeforeDeniedQueue.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0',
     'GET /api/v1/road-events?limit=100&offset=0'
   ]);
-  assert.deepEqual(resolvedPrincipals.slice(readsBeforeDeniedQueue.identities), [{
-    actorId: REPLACEMENT_SESSION_ACTOR_ID,
-    tenantId: REPLACEMENT_SCOPE_TENANT,
-    purpose: REPLACEMENT_SCOPE_PURPOSE
-  }]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeDeniedQueue.identities), [
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    },
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    }
+  ]);
   assert.equal(timelineReads, readsBeforeDeniedQueue.timeline);
   assert.equal(mutationRequests, readsBeforeDeniedQueue.mutations);
-  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 6);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 7);
   assert.equal(timelineReads, 12);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1110,7 +1137,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
-    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE }
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE }
   ]);
   assert.equal(mutationRequests, 0);
 });

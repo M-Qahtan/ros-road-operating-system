@@ -2173,6 +2173,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A LATE DENIAL FROM THE PREVIOUS ACTOR AND SCOPE CANNOT INJECT FAILURE STATE INTO THE ROTATED SESSION'S EXACT REVISION-4 SELECTION.** |
 | Next handoff | Start an explicit rotated-scope queue reload while the previous-scope denial is pending and prove only the rotated generation may publish queue state. |
 
+### Rotated queue reload publishes while the previous-scope denial remains pending
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `aa3482b38fc33c9bc6a26ecf1180555d4d7b3f9a` was two hundred and seventeen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | While a discarded previous actor-and-scope queue remains suspended before its delayed `403 FORBIDDEN`, the independent rotated actor, Tenant, and Purpose can explicitly reload and publish only their own revision-4 queue. Releasing the older denial afterward resolves only to its discarded controller and cannot replace the rotated queue, inject failure or stale state, or restore the cleared selection and capabilities. |
+| Scope and authority boundary | The pending denial and rotated reload perform exactly one server-resolved queue read each under their distinct trusted identities. The rotated result contains only its scoped event and deliberately clears Detail and Timeline because this is a queue reload. Neither path reaches Detail, Timeline, or a mutation route; the browser supplies no actor identity and the reloaded controller has no retry, transition, closure, collection, dispatch, or control authority. |
+| Local evidence | The focused build passed **4/4** and the API-to-dashboard acceptance passed **6/6**. Uncached build **5/5**, no-emit TypeScript **7/7**, and workspace tests **7/7** passed in dependency order, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE ROTATED SCOPE ALONE PUBLISHES ITS QUEUE WHILE A PREVIOUS-SCOPE DENIAL IS PENDING, AND THE LATE DENIAL CANNOT OVERWRITE THAT RESULT.** |
+| Next handoff | Delay a rotated-scope reload, select its exact revision-4 event in the same controller, then prove the older reload completion cannot clear or replace that newer selection. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
