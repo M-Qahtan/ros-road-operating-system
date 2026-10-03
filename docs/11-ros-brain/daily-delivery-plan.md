@@ -2257,6 +2257,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A POST-RECOVERY TIMELINE `503` WITHHOLDS THE SELECTION AND ALL CRITICAL CAPABILITIES WHILE EXPOSING ONLY ONE SANITIZED, EXPLICIT SELECTION-RETRY PATH.** |
 | Next handoff | Make one explicit `retrySelection()` after the Timeline service recovers and prove it performs exactly one fresh Detail/Timeline pair, restores only the exact revision-4 bounded capabilities, and still records zero mutations. |
 
+### Explicit selection retry recovers the exact post-outage Timeline
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-04, GitHub candidate `2b243b914526464d101f5d38cea75d8cc5fe63ea` was two hundred and twenty-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the post-recovery Timeline `503` leaves only an explicit selection retry, one `retrySelection()` now performs a fresh exact revision-4 Detail read and a fresh matching append-only Timeline read. The retry restores the selected state, clears stale and error state, and removes the retry identity after success. |
+| Scope and authority boundary | The explicit retry performs exactly one Detail and one Timeline HTTP read under the server-resolved rotated actor, Tenant, and Purpose, producing two application Timeline reads. It performs no Queue replay and reaches no mutation route. Transition and closure capabilities return only to the same bounded values derived from the exact revision-4 pair; no collection, dispatch, control, or activation authority is introduced. |
+| Local evidence | The focused uncached build passed **5/5** and the root API-to-dashboard acceptance passed **6/6**, including one fresh retry request pair, no Queue replay, two scoped identity resolutions, two application Timeline reads, and zero mutations. Uncached no-emit TypeScript passed **7/7** and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE EXPLICIT RETRY AFTER TIMELINE RECOVERY RESTORES ONLY THE EXACT REVISION-4 DETAIL/TIMELINE PAIR AND ITS BOUNDED CAPABILITIES WITHOUT QUEUE REPLAY OR MUTATION.** |
+| Next handoff | Start two concurrent `retrySelection()` calls after the same post-recovery Timeline outage and prove they coalesce into one fresh Detail/Timeline pair and one final state without duplicate reads or mutations. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
