@@ -2077,6 +2077,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A NOT-FOUND DENIAL FOR THE ACTIVE EVENT STILL CLEARS THE SELECTION FAIL-CLOSED, MARKS IT STALE, AND WITHHOLDS EVERY DERIVED CRITICAL CAPABILITY.** |
 | Next handoff | Restore the trusted replacement-scope token and prove one explicit retry reloads the exact revision-4 Detail and Timeline without queue replay or mutation. |
 
+### Trusted-scope retry restores the exact active recovery revision
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `65bc6970d182f96f4718d6a7618af2121bf262b8` was two hundred and nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the active event was denied under a hidden server-resolved Tenant and Purpose, restoring the trusted replacement-scope Bearer and invoking `retrySelection()` reloads the exact recovery Detail revision `4` and its append-only Timeline. The dashboard returns to ready, clears the stale/error state, removes retry availability, and restores only the same previously derived capabilities. |
+| Replay and authority boundary | The retry performs exactly two new scoped reads—Detail and Timeline—without replaying the queue. Both reads resolve server-side to the replacement actor, Tenant, and Purpose; the browser still supplies no actor identity. No mutation route is reached, and the retry cannot import hidden-scope data or authority. |
+| Local evidence | The focused uncached build passed **5/5** and the API-to-dashboard acceptance passed **6/6**. Uncached build, no-emit TypeScript, and workspace application/module tests passed **15/15** tasks, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the additional root acceptance passed **6/6**. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The acceptance recorded no additional queue request, exactly two replacement-scope identity resolutions, two application Timeline reads, and zero mutations across the recovery. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This adds process-local acceptance evidence only. It changes no production code, persisted ownership, authorization policy, deployment, cloud resource, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE EXPLICIT RETRY UNDER THE RESTORED TRUSTED SCOPE RECOVERS THE EXACT REVISION-4 DETAIL AND TIMELINE WITHOUT QUEUE REPLAY OR MUTATION.** |
+| Next handoff | Invoke two concurrent retries after the same active-event denial and prove they coalesce into one Detail/Timeline read pair without duplicate state publication or mutation. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
