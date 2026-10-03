@@ -2125,6 +2125,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FRESH BROWSER SESSION LOADS AND SELECTS REVISION 4 INDEPENDENTLY AFTER THE OBSOLETE SHARED RETRY COMPLETES, WITHOUT INHERITING ITS STATE OR REQUEST IDENTITY.** |
 | Next handoff | Hold the initial queue response from a newly discarded session, start another replacement session, and prove the delayed obsolete queue cannot replace or stale the later session's revision-4 selection. |
 
+### Delayed discarded queue cannot alter the later selected session
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `7aaae88cf437429986fd72059e3419161da69190` was two hundred and thirteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | A replacement-scope session now has direct acceptance evidence for discarding the browser while its initial queue response is held, starting a later independent session, and selecting the exact revision-4 event before releasing the obsolete queue. The delayed completion resolves only to the discarded state and cannot replace or stale the later selection. |
+| Session and authority boundary | The two sessions use separate controllers. Across the race, the obsolete session issues one queue read, while the later session issues one queue read plus one Detail/Timeline pair. All four identities remain server-resolved to the replacement Tenant and Purpose, the selection performs two application Timeline reads, and no mutation route is reached. The discarded controller retains no retry, transition, or closure capability; the later controller derives only its pre-existing bounded capabilities after exact-version selection. |
+| Local evidence | The focused uncached build passed **5/5** and the API-to-dashboard acceptance passed **6/6**. Uncached build, no-emit TypeScript, and workspace application/module tests passed **15/15** tasks, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The race recorded two queue requests, one Detail/Timeline request pair, four replacement-scope identity resolutions, two application Timeline reads, an exact discarded-state completion for the obsolete controller, an unchanged later selected-state identity, and zero mutations. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A DELAYED QUEUE COMPLETION FROM A DISCARDED SESSION CANNOT REPLACE, STALE, OR CHANGE THE CAPABILITIES OF A LATER SESSION'S EXACT REVISION-4 SELECTION.** |
+| Next handoff | Rotate the later session to a new trusted actor and prove the delayed queue resolved under the previous actor cannot populate or alter the new actor's revision-4 selection. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

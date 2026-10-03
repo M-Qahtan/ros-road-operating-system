@@ -539,6 +539,11 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   let markDiscardedRetryTimelineStarted;
   const discardedRetryTimelineRelease = new Promise((resolve) => { releaseDiscardedRetryTimeline = resolve; });
   const discardedRetryTimelineStarted = new Promise((resolve) => { markDiscardedRetryTimelineStarted = resolve; });
+  let holdDiscardedQueue = false;
+  let releaseDiscardedQueue;
+  let markDiscardedQueueStarted;
+  const discardedQueueRelease = new Promise((resolve) => { releaseDiscardedQueue = resolve; });
+  const discardedQueueStarted = new Promise((resolve) => { markDiscardedQueueStarted = resolve; });
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -561,6 +566,12 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       && target.pathname === `/api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`) {
       markDiscardedRetryTimelineStarted();
       await discardedRetryTimelineRelease;
+    }
+    if (holdDiscardedQueue
+      && target.pathname === '/api/v1/road-events'
+      && target.search === '?limit=100&offset=0') {
+      markDiscardedQueueStarted();
+      await discardedQueueRelease;
     }
     return new Response(JSON.stringify(response.body), {
       status: response.status,
@@ -897,8 +908,98 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   ]);
   assert.equal(timelineReads - readsBeforeFreshSession.timeline, 2);
   assert.equal(mutationRequests, readsBeforeFreshSession.mutations);
-  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 3);
-  assert.equal(timelineReads, 10);
+
+  const readsBeforeDelayedQueue = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  holdDiscardedQueue = true;
+  const obsoleteQueueController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', freshReplacementSession, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const delayedObsoleteQueue = obsoleteQueueController.load();
+  await discardedQueueStarted;
+  const discardedObsoleteQueueState = obsoleteQueueController.discardBrowserSession();
+  assert.equal(discardedObsoleteQueueState.phase, 'loading');
+  assert.deepEqual(discardedObsoleteQueueState.events, []);
+  assert.equal(discardedObsoleteQueueState.selected, null);
+  assert.deepEqual(discardedObsoleteQueueState.timeline, []);
+  assert.equal(discardedObsoleteQueueState.stale, false);
+  assert.equal(discardedObsoleteQueueState.error, null);
+  assert.equal(obsoleteQueueController.canRetrySelection(), false);
+  assert.equal(obsoleteQueueController.canTransition(), false);
+  assert.equal(obsoleteQueueController.canAuthorizeClosure(), false);
+  holdDiscardedQueue = false;
+
+  const laterReplacementController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', freshReplacementSession, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const laterReplacementQueue = await laterReplacementController.load();
+  assert.equal(laterReplacementQueue.phase, 'ready');
+  assert.deepEqual(laterReplacementQueue.events.map(({ id, version }) => ({ id, version })), [
+    { id: REPLACEMENT_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  const laterReplacementSelection = await laterReplacementController.select(REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(laterReplacementSelection.phase, 'ready');
+  assert.equal(laterReplacementSelection.selected?.id, REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(laterReplacementSelection.selected?.version, 4);
+  assert.deepEqual(laterReplacementSelection.timeline, replacementTimeline);
+  assert.equal(laterReplacementSelection.stale, false);
+  assert.equal(laterReplacementSelection.error, null);
+  assert.deepEqual({
+    retry: laterReplacementController.canRetrySelection(),
+    transition: laterReplacementController.canTransition(),
+    closure: laterReplacementController.canAuthorizeClosure()
+  }, replacementCapabilities);
+  releaseDiscardedQueue();
+  assert.equal(await delayedObsoleteQueue, discardedObsoleteQueueState);
+  assert.equal(obsoleteQueueController.state, discardedObsoleteQueueState);
+  assert.equal(laterReplacementController.state, laterReplacementSelection);
+  assert.equal(laterReplacementController.state.stale, false);
+  assert.equal(laterReplacementController.state.error, null);
+  assert.deepEqual({
+    retry: laterReplacementController.canRetrySelection(),
+    transition: laterReplacementController.canTransition(),
+    closure: laterReplacementController.canAuthorizeClosure()
+  }, replacementCapabilities);
+  assert.deepEqual(routes.slice(readsBeforeDelayedQueue.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0',
+    'GET /api/v1/road-events?limit=100&offset=0',
+    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeDelayedQueue.identities), [
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    },
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    },
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    },
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    }
+  ]);
+  assert.equal(timelineReads - readsBeforeDelayedQueue.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeDelayedQueue.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 5);
+  assert.equal(timelineReads, 12);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -914,6 +1015,10 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: HIDDEN_SCOPE_TENANT, purpose: HIDDEN_SCOPE_PURPOSE },
     { tenantId: HIDDEN_SCOPE_TENANT, purpose: HIDDEN_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
