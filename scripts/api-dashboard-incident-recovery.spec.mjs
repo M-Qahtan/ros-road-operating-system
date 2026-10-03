@@ -828,8 +828,77 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(replacementController.canRetrySelection(), false);
   assert.equal(replacementController.canTransition(), false);
   assert.equal(replacementController.canAuthorizeClosure(), false);
-  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 2);
-  assert.equal(timelineReads, 8);
+  holdDiscardedRetryTimeline = false;
+
+  const readsBeforeFreshSession = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const freshReplacementSession = {
+    tenantId: REPLACEMENT_SCOPE_TENANT,
+    purpose: REPLACEMENT_SCOPE_PURPOSE,
+    getAccessToken: async () => REPLACEMENT_SCOPE_TOKEN
+  };
+  const freshReplacementController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', freshReplacementSession, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const freshReplacementQueue = await freshReplacementController.load();
+  assert.notEqual(freshReplacementQueue, discardedReplacementState);
+  assert.equal(freshReplacementQueue.phase, 'ready');
+  assert.deepEqual(freshReplacementQueue.events.map(({ id, version }) => ({ id, version })), [
+    { id: REPLACEMENT_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(freshReplacementQueue.selected, null);
+  assert.deepEqual(freshReplacementQueue.timeline, []);
+  assert.equal(freshReplacementController.canRetrySelection(), false);
+  assert.equal(freshReplacementController.canTransition(), false);
+  assert.equal(freshReplacementController.canAuthorizeClosure(), false);
+  const freshReplacementSelection = await freshReplacementController.select(REPLACEMENT_SCOPE_EVENT_ID);
+  assert.notEqual(freshReplacementSelection, discardedReplacementState);
+  assert.equal(freshReplacementSelection.phase, 'ready');
+  assert.equal(freshReplacementSelection.selected?.id, REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(freshReplacementSelection.selected?.version, 4);
+  assert.deepEqual(freshReplacementSelection.timeline, replacementTimeline);
+  assert.equal(freshReplacementSelection.stale, false);
+  assert.equal(freshReplacementSelection.error, null);
+  assert.equal(freshReplacementController.canRetrySelection(), false);
+  assert.deepEqual({
+    transition: freshReplacementController.canTransition(),
+    closure: freshReplacementController.canAuthorizeClosure()
+  }, {
+    transition: replacementCapabilities.transition,
+    closure: replacementCapabilities.closure
+  });
+  assert.deepEqual(routes.slice(readsBeforeFreshSession.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0',
+    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeFreshSession.identities), [
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    },
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    },
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    }
+  ]);
+  assert.equal(timelineReads - readsBeforeFreshSession.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeFreshSession.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 3);
+  assert.equal(timelineReads, 10);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -845,6 +914,9 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: HIDDEN_SCOPE_TENANT, purpose: HIDDEN_SCOPE_PURPOSE },
     { tenantId: HIDDEN_SCOPE_TENANT, purpose: HIDDEN_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE }
   ]);
