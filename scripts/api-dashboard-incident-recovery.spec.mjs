@@ -570,6 +570,11 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   let markRotatedReloadQueueStarted;
   const rotatedReloadQueueRelease = new Promise((resolve) => { releaseRotatedReloadQueue = resolve; });
   const rotatedReloadQueueStarted = new Promise((resolve) => { markRotatedReloadQueueStarted = resolve; });
+  let holdFailedRotatedReloadQueue = false;
+  let releaseFailedRotatedReloadQueue;
+  let markFailedRotatedReloadQueueStarted;
+  const failedRotatedReloadQueueRelease = new Promise((resolve) => { releaseFailedRotatedReloadQueue = resolve; });
+  const failedRotatedReloadQueueStarted = new Promise((resolve) => { markFailedRotatedReloadQueueStarted = resolve; });
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -616,6 +621,17 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
       markRotatedReloadQueueStarted();
       await rotatedReloadQueueRelease;
+    }
+    if (holdFailedRotatedReloadQueue
+      && target.pathname === '/api/v1/road-events'
+      && target.search === '?limit=100&offset=0'
+      && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      markFailedRotatedReloadQueueStarted();
+      await failedRotatedReloadQueueRelease;
+      return new Response(JSON.stringify({ code: 'SERVICE_UNAVAILABLE', message: 'Superseded queue unavailable' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      });
     }
     return new Response(JSON.stringify(response.body), {
       status: response.status,
@@ -1183,6 +1199,65 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(mutationRequests, readsBeforeSupersededRotatedReload.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 8);
   assert.equal(timelineReads, 14);
+
+  const readsBeforeFailedRotatedReload = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  holdFailedRotatedReloadQueue = true;
+  const delayedFailedRotatedReload = laterReplacementController.load();
+  await failedRotatedReloadQueueStarted;
+  assert.equal(laterReplacementController.state.phase, 'loading');
+  assert.equal(laterReplacementController.state.selected, null);
+  assert.deepEqual(laterReplacementController.state.timeline, []);
+  assert.equal(laterReplacementController.state.stale, false);
+  assert.equal(laterReplacementController.state.error, null);
+  const selectionDuringFailedRotatedReload = await laterReplacementController.select(ROTATED_SCOPE_EVENT_ID);
+  assert.equal(selectionDuringFailedRotatedReload.phase, 'ready');
+  assert.equal(selectionDuringFailedRotatedReload.selected?.id, ROTATED_SCOPE_EVENT_ID);
+  assert.equal(selectionDuringFailedRotatedReload.selected?.version, 4);
+  assert.deepEqual(selectionDuringFailedRotatedReload.timeline, rotatedTimeline);
+  assert.equal(selectionDuringFailedRotatedReload.stale, false);
+  assert.equal(selectionDuringFailedRotatedReload.error, null);
+  holdFailedRotatedReloadQueue = false;
+  releaseFailedRotatedReloadQueue();
+  assert.equal(await delayedFailedRotatedReload, selectionDuringFailedRotatedReload);
+  assert.equal(laterReplacementController.state, selectionDuringFailedRotatedReload);
+  assert.equal(laterReplacementController.state.stale, false);
+  assert.equal(laterReplacementController.state.error, null);
+  assert.deepEqual({
+    retry: laterReplacementController.canRetrySelection(),
+    transition: laterReplacementController.canTransition(),
+    closure: laterReplacementController.canAuthorizeClosure()
+  }, replacementCapabilities);
+  assert.deepEqual(routes.slice(readsBeforeFailedRotatedReload.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0',
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeFailedRotatedReload.identities), [
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    },
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    },
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    }
+  ]);
+  assert.equal(timelineReads - readsBeforeFailedRotatedReload.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeFailedRotatedReload.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 9);
+  assert.equal(timelineReads, 16);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1208,6 +1283,9 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },

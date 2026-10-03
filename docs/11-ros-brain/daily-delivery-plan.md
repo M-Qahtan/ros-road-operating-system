@@ -2197,6 +2197,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A NEWER EXACT REVISION-4 SELECTION SUPERSEDES AN OLDER QUEUE GENERATION, WHOSE LATE COMPLETION CANNOT ERASE OR REPLACE IT.** |
 | Next handoff | Return a delayed `503` from the superseded rotated reload after the newer selection publishes, then prove the older failure cannot inject stale or error state. |
 
+### Superseded rotated queue failure cannot stale the newer exact selection
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `d9dd637039b7ebb296a515ed69bd9a4f936c0663` was two hundred and nineteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | A rotated-scope queue reload now remains suspended until after the same controller publishes a newer exact revision-4 Detail and matching Timeline selection, then completes with a delayed `503 SERVICE_UNAVAILABLE`. Because its read intent is superseded, the failed reload resolves to the newer selection object and cannot inject an error, mark it stale, clear its Timeline, or disable its bounded capabilities. |
+| Scope and authority boundary | The obsolete failing reload performs one queue read and the newer selection performs one Detail plus one Timeline read, all under the same server-resolved rotated actor, Tenant, and Purpose; the browser supplies no actor identity. The Timeline remains append-only and no mutation route is reached. The ignored failure grants no retry, collection, dispatch, closure, or control authority beyond capabilities already derived from the exact selected state. |
+| Local evidence | The focused build passed **4/4** and the API-to-dashboard acceptance passed **6/6**. Uncached build **5/5**, no-emit TypeScript **7/7**, and workspace tests **7/7** passed in dependency order, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A SUPERSEDED ROTATED QUEUE FAILURE CANNOT INJECT ERROR OR STALE STATE INTO THE NEWER EXACT REVISION-4 SELECTION.** |
+| Next handoff | After the superseded failure is ignored, make a new latest rotated reload return `503` and prove that only this current generation fails closed with a sanitized queue error. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
