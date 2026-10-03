@@ -32,6 +32,9 @@ const REPLACEMENT_SCOPE_TENANT = 'riyadh-replacement-scope';
 const REPLACEMENT_SCOPE_PURPOSE = 'REPLACEMENT_SAFETY_RESPONSE';
 const PRIOR_SCOPE_TOKEN = 'prior-scope-api-dashboard-token';
 const REPLACEMENT_SCOPE_TOKEN = 'replacement-scope-api-dashboard-token';
+const ACTIVE_EVENT_HIDDEN_TOKEN = 'active-event-hidden-api-dashboard-token';
+const HIDDEN_SCOPE_TENANT = 'riyadh-hidden-scope';
+const HIDDEN_SCOPE_PURPOSE = 'HIDDEN_SAFETY_RESPONSE';
 
 test('authenticated API recovery detail stays bound to its append-only Timeline in the dashboard', async (t) => {
   const repository = new MemoryRoadEventRepository();
@@ -497,6 +500,13 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       actorId: REPLACEMENT_SESSION_ACTOR_ID,
       tenantId: REPLACEMENT_SCOPE_TENANT,
       purpose: REPLACEMENT_SCOPE_PURPOSE
+    }],
+    [`Bearer ${ACTIVE_EVENT_HIDDEN_TOKEN}`, {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: HIDDEN_SCOPE_TENANT,
+      purpose: HIDDEN_SCOPE_PURPOSE,
+      requestTenantId: REPLACEMENT_SCOPE_TENANT,
+      requestPurpose: REPLACEMENT_SCOPE_PURPOSE
     }]
   ]);
   const resolvedPrincipals = [];
@@ -504,11 +514,16 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     async resolve(headers) {
       const principal = principals.get(headers.authorization);
       assert.notEqual(principal, undefined);
-      assert.equal(headers['x-tenant-id'], principal.tenantId);
-      assert.equal(headers['x-purpose'], principal.purpose);
+      assert.equal(headers['x-tenant-id'], principal.requestTenantId ?? principal.tenantId);
+      assert.equal(headers['x-purpose'], principal.requestPurpose ?? principal.purpose);
       assert.equal(headers['x-actor-id'], undefined);
-      resolvedPrincipals.push(principal);
-      return { ...principal, roles: ['SUPERVISOR'] };
+      const resolved = {
+        actorId: principal.actorId,
+        tenantId: principal.tenantId,
+        purpose: principal.purpose
+      };
+      resolvedPrincipals.push(resolved);
+      return { ...resolved, roles: ['SUPERVISOR'] };
     }
   };
   const handler = createRoadEventHttpHandler(application, actorResolver);
@@ -562,10 +577,11 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   await priorTimelineStarted;
   const discardedPriorState = priorController.discardBrowserSession();
 
+  let replacementAccessToken = REPLACEMENT_SCOPE_TOKEN;
   const replacementSession = {
     tenantId: REPLACEMENT_SCOPE_TENANT,
     purpose: REPLACEMENT_SCOPE_PURPOSE,
-    getAccessToken: async () => REPLACEMENT_SCOPE_TOKEN
+    getAccessToken: async () => replacementAccessToken
   };
   const replacementController = new OperationsDashboardController(
     new HttpRoadEventGateway('http://localhost', replacementSession, fetcher),
@@ -642,6 +658,45 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(resolvedPrincipals.length - readsBeforeCrossScopeDenial.identities, 2);
   assert.equal(timelineReads, readsBeforeCrossScopeDenial.timeline);
   assert.equal(mutationRequests, readsBeforeCrossScopeDenial.mutations);
+
+  replacementAccessToken = ACTIVE_EVENT_HIDDEN_TOKEN;
+  const readsBeforeActiveDenial = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const deniedActiveSelection = await replacementController.select(REPLACEMENT_SCOPE_EVENT_ID);
+  assert.equal(deniedActiveSelection.phase, 'failure');
+  assert.deepEqual(deniedActiveSelection.events.map(({ id, version }) => ({ id, version })), [
+    { id: REPLACEMENT_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(deniedActiveSelection.selected, null);
+  assert.deepEqual(deniedActiveSelection.timeline, []);
+  assert.equal(deniedActiveSelection.stale, true);
+  assert.match(deniedActiveSelection.error ?? '', /لم يعد السجل المطلوب متاحًا/);
+  assert.equal(replacementController.canRetrySelection(), true);
+  assert.equal(replacementController.canTransition(), false);
+  assert.equal(replacementController.canAuthorizeClosure(), false);
+  assert.deepEqual(routes.slice(readsBeforeActiveDenial.routes), [
+    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeActiveDenial.identities, 2);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeActiveDenial.identities), [
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: HIDDEN_SCOPE_TENANT,
+      purpose: HIDDEN_SCOPE_PURPOSE
+    },
+    {
+      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      tenantId: HIDDEN_SCOPE_TENANT,
+      purpose: HIDDEN_SCOPE_PURPOSE
+    }
+  ]);
+  assert.equal(timelineReads, readsBeforeActiveDenial.timeline);
+  assert.equal(mutationRequests, readsBeforeActiveDenial.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 2);
   assert.equal(timelineReads, 4);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
@@ -652,7 +707,9 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
-    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE }
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: HIDDEN_SCOPE_TENANT, purpose: HIDDEN_SCOPE_PURPOSE },
+    { tenantId: HIDDEN_SCOPE_TENANT, purpose: HIDDEN_SCOPE_PURPOSE }
   ]);
   assert.equal(mutationRequests, 0);
 });

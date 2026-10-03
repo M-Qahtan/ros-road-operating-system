@@ -2065,6 +2065,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CROSS-SCOPE NOT-FOUND DENIAL CANNOT DESTROY OR STALE THE REPLACEMENT SCOPE'S VERIFIED ACTIVE RECOVERY SELECTION.** |
 | Next handoff | Prove that a not-found response for the active selected event itself still clears the selection, marks the state stale, and disables every derived critical capability. |
 
+### Active-event not-found remains fail-closed
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `b0bd526e8deac01a4c0f3b571c19a4bca2dacbd0` was two hundred and eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the replacement scope has selected its exact recovery revision `4`, a new Bearer token is resolved by the server to a different hidden Tenant and Purpose while the browser still sends its existing session-scope headers. Requesting the same active event ID is denied as not found and the dashboard clears the selected Detail and Timeline, marks the state stale, exposes the bounded retry path, and disables transition and closure capability. |
+| Scope and authority boundary | Browser-supplied Tenant and Purpose do not override the authoritative principal resolved from the Bearer token. Both denied reads bind to the hidden server scope, the hidden event never enters the audit Timeline source, and the complete journey records zero mutations. This proves that the narrow state-neutral exception for a different denied ID does not weaken fail-closed handling for the active ID. |
+| Local evidence | The focused uncached build passed **5/5** and the API-to-dashboard acceptance passed **6/6**. Uncached build, no-emit TypeScript, and workspace application/module tests passed **15/15** tasks, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the additional root acceptance passed **6/6**. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This adds process-local acceptance evidence only. It changes no production code, persisted ownership, authorization policy, deployment, cloud resource, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A NOT-FOUND DENIAL FOR THE ACTIVE EVENT STILL CLEARS THE SELECTION FAIL-CLOSED, MARKS IT STALE, AND WITHHOLDS EVERY DERIVED CRITICAL CAPABILITY.** |
+| Next handoff | Restore the trusted replacement-scope token and prove one explicit retry reloads the exact revision-4 Detail and Timeline without queue replay or mutation. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
