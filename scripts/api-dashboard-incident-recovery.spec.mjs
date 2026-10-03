@@ -529,6 +529,11 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const handler = createRoadEventHttpHandler(application, actorResolver);
   const routes = [];
   let mutationRequests = 0;
+  let holdTrustedRetryTimeline = false;
+  let releaseTrustedRetryTimeline;
+  let markTrustedRetryTimelineStarted;
+  const trustedRetryTimelineRelease = new Promise((resolve) => { releaseTrustedRetryTimeline = resolve; });
+  const trustedRetryTimelineStarted = new Promise((resolve) => { markTrustedRetryTimelineStarted = resolve; });
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -542,6 +547,11 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       body: init.body === undefined ? null : JSON.parse(String(init.body)),
       traceId: `trace-cross-scope-http-${routes.length}`
     });
+    if (holdTrustedRetryTimeline
+      && target.pathname === `/api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`) {
+      markTrustedRetryTimelineStarted();
+      await trustedRetryTimelineRelease;
+    }
     return new Response(JSON.stringify(response.body), {
       status: response.status,
       headers: { 'content-type': 'application/json' }
@@ -705,7 +715,25 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     timeline: timelineReads,
     mutations: mutationRequests
   };
-  const restoredActiveSelection = await replacementController.retrySelection();
+  holdTrustedRetryTimeline = true;
+  const firstTrustedRetry = replacementController.retrySelection();
+  const secondTrustedRetry = replacementController.retrySelection();
+  assert.equal(secondTrustedRetry, firstTrustedRetry);
+  await trustedRetryTimelineStarted;
+  assert.deepEqual(routes.slice(readsBeforeTrustedRetry.routes), [
+    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeTrustedRetry.identities, 2);
+  assert.equal(timelineReads - readsBeforeTrustedRetry.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeTrustedRetry.mutations);
+  releaseTrustedRetryTimeline();
+  const [restoredActiveSelection, coalescedActiveSelection] = await Promise.all([
+    firstTrustedRetry,
+    secondTrustedRetry
+  ]);
+  assert.equal(coalescedActiveSelection, restoredActiveSelection);
+  assert.equal(replacementController.state, restoredActiveSelection);
   assert.equal(restoredActiveSelection.phase, 'ready');
   assert.deepEqual(restoredActiveSelection.events.map(({ id, version }) => ({ id, version })), [
     { id: REPLACEMENT_SCOPE_EVENT_ID, version: 4 }

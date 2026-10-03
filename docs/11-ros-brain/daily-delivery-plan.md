@@ -2089,6 +2089,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE EXPLICIT RETRY UNDER THE RESTORED TRUSTED SCOPE RECOVERS THE EXACT REVISION-4 DETAIL AND TIMELINE WITHOUT QUEUE REPLAY OR MUTATION.** |
 | Next handoff | Invoke two concurrent retries after the same active-event denial and prove they coalesce into one Detail/Timeline read pair without duplicate state publication or mutation. |
 
+### Concurrent trusted retries coalesce into one recovery read
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `32cfae0c752ef00719620f932ed974e7d7aa7578` was two hundred and ten commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the active event is denied under the hidden server scope and the trusted replacement-scope token is restored, two immediate `retrySelection()` calls now have direct acceptance evidence that they return the same in-flight Promise. A held Timeline response proves the calls coalesce before completion and publish the same final revision-4 selection object once released. |
+| Concurrency and authority boundary | The coalesced retry issues one Detail request and one Timeline request, performs exactly two replacement-scope identity resolutions and two application Timeline reads, does not replay the queue, and reaches no mutation route. The final state clears failure and stale state while restoring only the same previously derived capabilities. |
+| Local evidence | The focused uncached build passed **5/5**. The first acceptance execution failed because the new deterministic hold controls were placed in the wrong test scope; this was classified as a test-harness defect and corrected without production changes. The corrected API-to-dashboard acceptance then passed **6/6**, including shared Promise identity, one request pair, one final state object, and zero mutations. Uncached build, no-emit TypeScript, and workspace application/module tests passed **15/15** tasks, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **TWO CONCURRENT TRUSTED RETRIES COALESCE INTO ONE DETAIL/TIMELINE READ PAIR AND ONE FINAL REVISION-4 STATE WITHOUT QUEUE REPLAY OR MUTATION.** |
+| Next handoff | Discard the browser session while the coalesced retry Timeline is pending and prove the obsolete shared completion cannot repopulate selection, Timeline, retry identity, or critical capabilities. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
