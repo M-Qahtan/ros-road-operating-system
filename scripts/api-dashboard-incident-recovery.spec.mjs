@@ -576,6 +576,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const failedRotatedReloadQueueRelease = new Promise((resolve) => { releaseFailedRotatedReloadQueue = resolve; });
   const failedRotatedReloadQueueStarted = new Promise((resolve) => { markFailedRotatedReloadQueueStarted = resolve; });
   let failLatestRotatedReloadQueue = false;
+  let failPostRecoveryRotatedTimeline = false;
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -641,6 +642,17 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       return new Response(JSON.stringify({
         code: 'LATEST_QUEUE_SECRET',
         message: 'postgres://reader:secret@latest-rotated-queue'
+      }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (failPostRecoveryRotatedTimeline
+      && target.pathname === `/api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+      && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      return new Response(JSON.stringify({
+        code: 'POST_RECOVERY_TIMELINE_SECRET',
+        message: 'postgres://reader:secret@post-recovery-timeline'
       }), {
         status: 503,
         headers: { 'content-type': 'application/json' }
@@ -1383,6 +1395,51 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(mutationRequests, readsBeforeRecoveredRotatedSelection.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 11);
   assert.equal(timelineReads, 18);
+
+  const readsBeforeFailedPostRecoveryTimeline = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  failPostRecoveryRotatedTimeline = true;
+  const failedPostRecoveryTimeline = await laterReplacementController.select(ROTATED_SCOPE_EVENT_ID);
+  failPostRecoveryRotatedTimeline = false;
+  assert.notEqual(failedPostRecoveryTimeline, recoveredRotatedSelection);
+  assert.equal(failedPostRecoveryTimeline.phase, 'failure');
+  assert.equal(failedPostRecoveryTimeline.selected, null);
+  assert.deepEqual(failedPostRecoveryTimeline.timeline, []);
+  assert.equal(failedPostRecoveryTimeline.stale, true);
+  assert.match(failedPostRecoveryTimeline.error ?? '', /خدمة ROS غير متاحة مؤقتًا/);
+  assert.doesNotMatch(
+    failedPostRecoveryTimeline.error ?? '',
+    /postgres|secret|post-recovery-timeline|POST_RECOVERY_TIMELINE_SECRET/i
+  );
+  assert.deepEqual({
+    retry: laterReplacementController.canRetrySelection(),
+    transition: laterReplacementController.canTransition(),
+    closure: laterReplacementController.canAuthorizeClosure()
+  }, { retry: true, transition: false, closure: false });
+  assert.deepEqual(routes.slice(readsBeforeFailedPostRecoveryTimeline.routes), [
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeFailedPostRecoveryTimeline.identities), [
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    },
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    }
+  ]);
+  assert.equal(timelineReads - readsBeforeFailedPostRecoveryTimeline.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeFailedPostRecoveryTimeline.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 11);
+  assert.equal(timelineReads, 20);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1408,6 +1465,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },

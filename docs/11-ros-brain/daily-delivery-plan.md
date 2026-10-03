@@ -2245,6 +2245,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONLY A FRESH EXACT DETAIL/TIMELINE PAIR RESTORES THE REVISION-4 SELECTION AND ITS BOUNDED CAPABILITIES AFTER QUEUE RECOVERY.** |
 | Next handoff | Make the first post-recovery Timeline read fail with a sanitized `503` after Detail succeeds, then prove only explicit selection retry is available while transition, closure, and mutation authority remain disabled. |
 
+### Post-recovery Timeline failure exposes only an explicit selection retry
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-04, GitHub candidate `c5cc0e61c36bcfa97c7ebc02ca052157b1f98a8b` was two hundred and twenty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After Queue recovery and a verified exact revision-4 selection, the next post-recovery selection now receives a successful Detail response followed by a deterministic Timeline `503 SERVICE_UNAVAILABLE`. The controller fails closed: it withholds Detail and Timeline, marks the state stale, exposes only the browser's sanitized service-unavailable message, and retains the failed event identity solely for an explicit selection retry. |
+| Scope and authority boundary | The failing selection performs exactly one Detail and one Timeline HTTP read under the server-resolved rotated actor, Tenant, and Purpose, producing two application Timeline reads. It does not replay Queue or reach a mutation route. Retry becomes available only for the failed selection; transition and closure capabilities remain disabled, and the simulated private code and database URL are absent from state. |
+| Local evidence | The focused root acceptance passed **6/6** after the isolated worktree was built. Uncached build passed **5/5**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Repository/runtime composition, archive conditional-write, retention, negative, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A POST-RECOVERY TIMELINE `503` WITHHOLDS THE SELECTION AND ALL CRITICAL CAPABILITIES WHILE EXPOSING ONLY ONE SANITIZED, EXPLICIT SELECTION-RETRY PATH.** |
+| Next handoff | Make one explicit `retrySelection()` after the Timeline service recovers and prove it performs exactly one fresh Detail/Timeline pair, restores only the exact revision-4 bounded capabilities, and still records zero mutations. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
