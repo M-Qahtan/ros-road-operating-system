@@ -2269,6 +2269,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE EXPLICIT RETRY AFTER TIMELINE RECOVERY RESTORES ONLY THE EXACT REVISION-4 DETAIL/TIMELINE PAIR AND ITS BOUNDED CAPABILITIES WITHOUT QUEUE REPLAY OR MUTATION.** |
 | Next handoff | Start two concurrent `retrySelection()` calls after the same post-recovery Timeline outage and prove they coalesce into one fresh Detail/Timeline pair and one final state without duplicate reads or mutations. |
 
+### Concurrent post-outage selection retries coalesce into one read pair
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-04, GitHub candidate `f511942a9afe09fe65dc358246b7af040c681e47` was two hundred and twenty-five commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the post-recovery Timeline `503` exposes an explicit retry, two immediate `retrySelection()` calls now return the same in-flight Promise. A held Timeline response proves the calls coalesce before completion and publish one shared final exact revision-4 Detail/Timeline state after release. |
+| Concurrency and authority boundary | The coalesced retry performs exactly one Detail and one Timeline HTTP read under the server-resolved rotated actor, Tenant, and Purpose, producing two application Timeline reads. It performs no Queue replay and reaches no mutation route. The final state clears retry, stale, and error state while restoring only the same bounded transition and closure capability values derived from the exact revision-4 pair. |
+| Local evidence | The focused uncached build passed **5/5** and the root API-to-dashboard acceptance passed **6/6**, including shared Promise identity before Timeline release, one request pair, one final state object, two scoped identity resolutions, two application Timeline reads, and zero mutations. Uncached no-emit TypeScript passed **7/7** and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **TWO CONCURRENT POST-OUTAGE RETRIES COALESCE INTO ONE DETAIL/TIMELINE READ PAIR AND ONE FINAL REVISION-4 STATE WITHOUT QUEUE REPLAY OR MUTATION.** |
+| Next handoff | Discard the rotated browser session while the shared post-outage retry Timeline is pending and prove both obsolete completions resolve only to the discarded clean state without restoring selection, retry identity, or critical capabilities. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

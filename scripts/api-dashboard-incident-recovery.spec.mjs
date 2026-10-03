@@ -577,6 +577,15 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const failedRotatedReloadQueueStarted = new Promise((resolve) => { markFailedRotatedReloadQueueStarted = resolve; });
   let failLatestRotatedReloadQueue = false;
   let failPostRecoveryRotatedTimeline = false;
+  let holdPostRecoveryRotatedTimelineRetry = false;
+  let releasePostRecoveryRotatedTimelineRetry;
+  let markPostRecoveryRotatedTimelineRetryStarted;
+  const postRecoveryRotatedTimelineRetryRelease = new Promise((resolve) => {
+    releasePostRecoveryRotatedTimelineRetry = resolve;
+  });
+  const postRecoveryRotatedTimelineRetryStarted = new Promise((resolve) => {
+    markPostRecoveryRotatedTimelineRetryStarted = resolve;
+  });
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -657,6 +666,12 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
         status: 503,
         headers: { 'content-type': 'application/json' }
       });
+    }
+    if (holdPostRecoveryRotatedTimelineRetry
+      && target.pathname === `/api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+      && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      markPostRecoveryRotatedTimelineRetryStarted();
+      await postRecoveryRotatedTimelineRetryRelease;
     }
     return new Response(JSON.stringify(response.body), {
       status: response.status,
@@ -1447,7 +1462,24 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     timeline: timelineReads,
     mutations: mutationRequests
   };
-  const retriedPostRecoveryTimeline = await laterReplacementController.retrySelection();
+  holdPostRecoveryRotatedTimelineRetry = true;
+  const firstPostRecoveryTimelineRetry = laterReplacementController.retrySelection();
+  const secondPostRecoveryTimelineRetry = laterReplacementController.retrySelection();
+  assert.equal(firstPostRecoveryTimelineRetry, secondPostRecoveryTimelineRetry);
+  await postRecoveryRotatedTimelineRetryStarted;
+  assert.deepEqual(routes.slice(readsBeforePostRecoveryTimelineRetry.routes), [
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(timelineReads - readsBeforePostRecoveryTimelineRetry.timeline, 2);
+  assert.equal(mutationRequests, readsBeforePostRecoveryTimelineRetry.mutations);
+  releasePostRecoveryRotatedTimelineRetry();
+  const [retriedPostRecoveryTimeline, coalescedPostRecoveryTimeline] = await Promise.all([
+    firstPostRecoveryTimelineRetry,
+    secondPostRecoveryTimelineRetry
+  ]);
+  holdPostRecoveryRotatedTimelineRetry = false;
+  assert.equal(retriedPostRecoveryTimeline, coalescedPostRecoveryTimeline);
   assert.notEqual(retriedPostRecoveryTimeline, failedPostRecoveryTimeline);
   assert.equal(retriedPostRecoveryTimeline.phase, 'ready');
   assert.equal(retriedPostRecoveryTimeline.selected?.id, ROTATED_SCOPE_EVENT_ID);
