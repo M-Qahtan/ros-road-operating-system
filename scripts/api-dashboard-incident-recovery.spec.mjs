@@ -18,6 +18,8 @@ const ACTOR_ID = '55555555-5555-4555-8555-555555555555';
 const TENANT = 'riyadh-pilot';
 const PURPOSE = 'HUMAN_SAFETY_RESPONSE';
 const TOKEN = 'trusted-api-dashboard-token';
+const PRIOR_SESSION_TOKEN = 'prior-api-dashboard-token';
+const REPLACEMENT_SESSION_TOKEN = 'replacement-api-dashboard-token';
 const NOW = new Date('2026-09-30T09:15:00.000Z');
 
 test('authenticated API recovery detail stays bound to its append-only Timeline in the dashboard', async (t) => {
@@ -92,10 +94,11 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
   );
 
   let identityResolutions = 0;
+  const acceptedAuthorizations = new Set([`Bearer ${TOKEN}`]);
   const actorResolver = {
     async resolve(headers) {
       identityResolutions += 1;
-      assert.equal(headers.authorization, `Bearer ${TOKEN}`);
+      assert.equal(acceptedAuthorizations.has(headers.authorization), true);
       assert.equal(headers['x-tenant-id'], TENANT);
       assert.equal(headers['x-purpose'], PURPOSE);
       return { actorId: ACTOR_ID, roles: ['SUPERVISOR'], tenantId: TENANT, purpose: PURPOSE };
@@ -259,6 +262,120 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
     assert.equal(identityResolutions - readsBeforeRetry.identities, 2);
     assert.equal(timelineReads - readsBeforeRetry.timeline, 2);
     assert.equal(mutationRequests, readsBeforeRetry.mutations);
+    assert.equal(mutationRequests, 0);
+  });
+
+  await t.test('replacement browser session ignores a delayed wrong-revision response from the prior session', async () => {
+    acceptedAuthorizations.add(`Bearer ${PRIOR_SESSION_TOKEN}`);
+    acceptedAuthorizations.add(`Bearer ${REPLACEMENT_SESSION_TOKEN}`);
+    const readsBeforeReplacement = {
+      routes: routes.length,
+      identities: identityResolutions,
+      timeline: timelineReads,
+      mutations: mutationRequests
+    };
+    let priorTokenReads = 0;
+    let replacementTokenReads = 0;
+
+    let releasePriorTimeline;
+    let markPriorTimelineStarted;
+    const priorTimelineRelease = new Promise((resolve) => { releasePriorTimeline = resolve; });
+    const priorTimelineStarted = new Promise((resolve) => { markPriorTimelineStarted = resolve; });
+    const priorFetcher = async (input, init = {}) => {
+      const target = new URL(String(input), 'http://localhost');
+      const response = await fetcher(input, init);
+      if (target.pathname === `/api/v1/road-events/${EVENT_ID}/timeline`) {
+        markPriorTimelineStarted();
+        await priorTimelineRelease;
+      }
+      return response;
+    };
+    const priorSession = {
+      tenantId: TENANT,
+      purpose: PURPOSE,
+      getAccessToken: async () => {
+        priorTokenReads += 1;
+        return PRIOR_SESSION_TOKEN;
+      }
+    };
+    const priorController = new OperationsDashboardController(
+      new HttpRoadEventGateway('http://localhost', priorSession, priorFetcher),
+      { roles: ['SUPERVISOR'] },
+      () => NOW
+    );
+
+    servedTimeline = timeline;
+    await priorController.load();
+    servedTimeline = Object.freeze([
+      timeline[0],
+      Object.freeze({
+        ...timeline[1],
+        afterState: Object.freeze({ status: 'RECOVERY', version: 5 })
+      })
+    ]);
+    const delayedPriorSelection = priorController.select(EVENT_ID);
+    await priorTimelineStarted;
+    const discardedPriorState = priorController.discardBrowserSession();
+
+    servedTimeline = timeline;
+    const replacementSession = {
+      tenantId: TENANT,
+      purpose: PURPOSE,
+      getAccessToken: async () => {
+        replacementTokenReads += 1;
+        return REPLACEMENT_SESSION_TOKEN;
+      }
+    };
+    const replacementController = new OperationsDashboardController(
+      new HttpRoadEventGateway('http://localhost', replacementSession, fetcher),
+      { roles: ['SUPERVISOR'] },
+      () => NOW
+    );
+    await replacementController.load();
+    const replacementSelection = await replacementController.select(EVENT_ID);
+    assert.equal(replacementSelection.phase, 'ready');
+    assert.equal(replacementSelection.selected?.version, 4);
+    assert.deepEqual(replacementSelection.timeline, timeline);
+    assert.equal(replacementSelection.stale, false);
+    assert.equal(replacementSelection.error, null);
+    const replacementCapabilities = Object.freeze({
+      transition: replacementController.canTransition(),
+      closure: replacementController.canAuthorizeClosure(),
+      retry: replacementController.canRetrySelection()
+    });
+
+    releasePriorTimeline();
+    const priorCompletion = await delayedPriorSelection;
+    assert.equal(priorCompletion, discardedPriorState);
+    assert.equal(priorController.state, discardedPriorState);
+    assert.equal(priorController.state.phase, 'loading');
+    assert.equal(priorController.state.selected, null);
+    assert.deepEqual(priorController.state.timeline, []);
+    assert.equal(priorController.state.stale, false);
+    assert.equal(priorController.state.error, null);
+    assert.equal(priorController.canRetrySelection(), false);
+    assert.equal(priorController.canTransition(), false);
+    assert.equal(priorController.canAuthorizeClosure(), false);
+
+    assert.equal(replacementController.state, replacementSelection);
+    assert.equal(replacementController.state.selected?.version, 4);
+    assert.deepEqual(replacementController.state.timeline, timeline);
+    assert.equal(replacementController.state.stale, false);
+    assert.equal(replacementController.state.error, null);
+    assert.deepEqual({
+      transition: replacementController.canTransition(),
+      closure: replacementController.canAuthorizeClosure(),
+      retry: replacementController.canRetrySelection()
+    }, replacementCapabilities);
+    const replacementRoutes = routes.slice(readsBeforeReplacement.routes);
+    assert.equal(replacementRoutes.filter((route) => route.includes('?limit=100&offset=0')).length, 2);
+    assert.equal(replacementRoutes.filter((route) => route === `GET /api/v1/road-events/${EVENT_ID}`).length, 2);
+    assert.equal(replacementRoutes.filter((route) => route === `GET /api/v1/road-events/${EVENT_ID}/timeline`).length, 2);
+    assert.equal(priorTokenReads, 3);
+    assert.equal(replacementTokenReads, 3);
+    assert.equal(identityResolutions - readsBeforeReplacement.identities, 6);
+    assert.equal(timelineReads - readsBeforeReplacement.timeline, 4);
+    assert.equal(mutationRequests, readsBeforeReplacement.mutations);
     assert.equal(mutationRequests, 0);
   });
 });

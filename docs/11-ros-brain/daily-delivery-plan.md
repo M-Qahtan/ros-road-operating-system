@@ -2016,6 +2016,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A CORRECTLY CORRELATED RECOVERY TIMELINE WITH THE WRONG REVISION CANNOT PUBLISH A SELECTION; ONLY THE EXACT REVISION-4 RETRY RECOVERS WITHOUT REPLAY OR MUTATION.** |
 | Next handoff | Bind the same recovery Detail and Timeline checks to a browser-session replacement: prove a delayed wrong-revision response from the prior session cannot stale or replace the newly restored exact-revision selection. |
 
+### Replacement browser session rejects a delayed wrong-revision response
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `f36b3b05687560ee44b204442fdb7e77f4f6ee10` was two hundred and four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | A prior browser session now starts an authenticated recovery selection whose API Timeline is correctly correlated but reports revision `5`; the response is held until that session is discarded. A separately authenticated replacement session then restores and selects exact revision `4`. Releasing the obsolete response cannot replace that selection, mark it stale, expose an error, or alter its derived capabilities. |
+| Session and authority boundary | The two sessions use distinct Bearer tokens while retaining the exact Tenant and Purpose. Each performs one queue read plus Detail and Timeline reads. Discarding the prior session clears its selection, Timeline, retry identity, and critical capabilities; the complete six-request journey records zero mutation requests. No queue, Detail, Timeline, retry, transition, or closure state crosses ownership. |
+| Local evidence | The focused uncached build passed **5/5** and the API-to-dashboard acceptance passed **5/5**. Uncached no-emit TypeScript passed **7/7** and uncached workspace application/module tests passed **784/784** (API 670, dashboard 70, mobile 36, domain 8); the additional root acceptance passed **5/5**. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This adds process-local acceptance evidence only. It changes no production code, persistent data, authority, deployment, cloud resource, or immutable archive evidence and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A DELAYED WRONG-REVISION RESPONSE OWNED BY A DISCARDED BROWSER SESSION CANNOT STALE OR REPLACE THE EXACT REVISION-4 SELECTION OWNED BY ITS REPLACEMENT.** |
+| Next handoff | Replace the trusted actor as well as the token and prove a delayed response owned by the prior actor cannot alter the replacement actor's exact-revision selection or derived capabilities. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
