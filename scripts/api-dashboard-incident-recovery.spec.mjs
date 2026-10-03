@@ -560,6 +560,11 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   let markDiscardedQueueStarted;
   const discardedQueueRelease = new Promise((resolve) => { releaseDiscardedQueue = resolve; });
   const discardedQueueStarted = new Promise((resolve) => { markDiscardedQueueStarted = resolve; });
+  let holdDeniedDiscardedQueue = false;
+  let releaseDeniedDiscardedQueue;
+  let markDeniedDiscardedQueueStarted;
+  const deniedDiscardedQueueRelease = new Promise((resolve) => { releaseDeniedDiscardedQueue = resolve; });
+  const deniedDiscardedQueueStarted = new Promise((resolve) => { markDeniedDiscardedQueueStarted = resolve; });
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -588,6 +593,16 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       && target.search === '?limit=100&offset=0') {
       markDiscardedQueueStarted();
       await discardedQueueRelease;
+    }
+    if (holdDeniedDiscardedQueue
+      && target.pathname === '/api/v1/road-events'
+      && target.search === '?limit=100&offset=0') {
+      markDeniedDiscardedQueueStarted();
+      await deniedDiscardedQueueRelease;
+      return new Response(JSON.stringify({ code: 'FORBIDDEN', message: 'Previous scope denied' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' }
+      });
     }
     return new Response(JSON.stringify(response.body), {
       status: response.status,
@@ -1021,6 +1036,56 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(mutationRequests, readsBeforeDelayedQueue.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 5);
   assert.equal(timelineReads, 12);
+
+  const readsBeforeDeniedQueue = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  holdDeniedDiscardedQueue = true;
+  const deniedQueueController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', freshReplacementSession, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const delayedDeniedQueue = deniedQueueController.load();
+  await deniedDiscardedQueueStarted;
+  const discardedDeniedQueueState = deniedQueueController.discardBrowserSession();
+  assert.equal(discardedDeniedQueueState.phase, 'loading');
+  assert.deepEqual(discardedDeniedQueueState.events, []);
+  assert.equal(discardedDeniedQueueState.selected, null);
+  assert.deepEqual(discardedDeniedQueueState.timeline, []);
+  assert.equal(discardedDeniedQueueState.stale, false);
+  assert.equal(discardedDeniedQueueState.error, null);
+  assert.equal(deniedQueueController.canRetrySelection(), false);
+  assert.equal(deniedQueueController.canTransition(), false);
+  assert.equal(deniedQueueController.canAuthorizeClosure(), false);
+  assert.equal(laterReplacementController.state, laterReplacementSelection);
+  holdDeniedDiscardedQueue = false;
+  releaseDeniedDiscardedQueue();
+  assert.equal(await delayedDeniedQueue, discardedDeniedQueueState);
+  assert.equal(deniedQueueController.state, discardedDeniedQueueState);
+  assert.equal(laterReplacementController.state, laterReplacementSelection);
+  assert.equal(laterReplacementController.state.stale, false);
+  assert.equal(laterReplacementController.state.error, null);
+  assert.deepEqual({
+    retry: laterReplacementController.canRetrySelection(),
+    transition: laterReplacementController.canTransition(),
+    closure: laterReplacementController.canAuthorizeClosure()
+  }, replacementCapabilities);
+  assert.deepEqual(routes.slice(readsBeforeDeniedQueue.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0'
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeDeniedQueue.identities), [{
+    actorId: REPLACEMENT_SESSION_ACTOR_ID,
+    tenantId: REPLACEMENT_SCOPE_TENANT,
+    purpose: REPLACEMENT_SCOPE_PURPOSE
+  }]);
+  assert.equal(timelineReads, readsBeforeDeniedQueue.timeline);
+  assert.equal(mutationRequests, readsBeforeDeniedQueue.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 6);
+  assert.equal(timelineReads, 12);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1044,7 +1109,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
-    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE }
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE }
   ]);
   assert.equal(mutationRequests, 0);
 });
