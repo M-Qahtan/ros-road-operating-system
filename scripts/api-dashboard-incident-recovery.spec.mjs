@@ -15,6 +15,8 @@ import { RoadEvent, RoadEventStatus, SeverityLevel } from '../packages/domain/di
 
 const EVENT_ID = '44444444-4444-4444-8444-444444444444';
 const ACTOR_ID = '55555555-5555-4555-8555-555555555555';
+const PRIOR_SESSION_ACTOR_ID = '77777777-7777-4777-8777-777777777777';
+const REPLACEMENT_SESSION_ACTOR_ID = '88888888-8888-4888-8888-888888888888';
 const TENANT = 'riyadh-pilot';
 const PURPOSE = 'HUMAN_SAFETY_RESPONSE';
 const TOKEN = 'trusted-api-dashboard-token';
@@ -94,14 +96,18 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
   );
 
   let identityResolutions = 0;
-  const acceptedAuthorizations = new Set([`Bearer ${TOKEN}`]);
+  const resolvedActors = [];
+  const actorsByAuthorization = new Map([[`Bearer ${TOKEN}`, ACTOR_ID]]);
   const actorResolver = {
     async resolve(headers) {
       identityResolutions += 1;
-      assert.equal(acceptedAuthorizations.has(headers.authorization), true);
+      const actorId = actorsByAuthorization.get(headers.authorization);
+      assert.notEqual(actorId, undefined);
       assert.equal(headers['x-tenant-id'], TENANT);
       assert.equal(headers['x-purpose'], PURPOSE);
-      return { actorId: ACTOR_ID, roles: ['SUPERVISOR'], tenantId: TENANT, purpose: PURPOSE };
+      assert.equal(headers['x-actor-id'], undefined);
+      resolvedActors.push(actorId);
+      return { actorId, roles: ['SUPERVISOR'], tenantId: TENANT, purpose: PURPOSE };
     }
   };
   const handler = createRoadEventHttpHandler(application, actorResolver);
@@ -265,14 +271,15 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
     assert.equal(mutationRequests, 0);
   });
 
-  await t.test('replacement browser session ignores a delayed wrong-revision response from the prior session', async () => {
-    acceptedAuthorizations.add(`Bearer ${PRIOR_SESSION_TOKEN}`);
-    acceptedAuthorizations.add(`Bearer ${REPLACEMENT_SESSION_TOKEN}`);
+  await t.test('replacement browser session with a new trusted actor ignores the prior actor response', async () => {
+    actorsByAuthorization.set(`Bearer ${PRIOR_SESSION_TOKEN}`, PRIOR_SESSION_ACTOR_ID);
+    actorsByAuthorization.set(`Bearer ${REPLACEMENT_SESSION_TOKEN}`, REPLACEMENT_SESSION_ACTOR_ID);
     const readsBeforeReplacement = {
       routes: routes.length,
       identities: identityResolutions,
       timeline: timelineReads,
-      mutations: mutationRequests
+      mutations: mutationRequests,
+      actors: resolvedActors.length
     };
     let priorTokenReads = 0;
     let replacementTokenReads = 0;
@@ -375,6 +382,17 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
     assert.equal(replacementTokenReads, 3);
     assert.equal(identityResolutions - readsBeforeReplacement.identities, 6);
     assert.equal(timelineReads - readsBeforeReplacement.timeline, 4);
+    assert.deepEqual(
+      resolvedActors.slice(readsBeforeReplacement.actors),
+      [
+        PRIOR_SESSION_ACTOR_ID,
+        PRIOR_SESSION_ACTOR_ID,
+        PRIOR_SESSION_ACTOR_ID,
+        REPLACEMENT_SESSION_ACTOR_ID,
+        REPLACEMENT_SESSION_ACTOR_ID,
+        REPLACEMENT_SESSION_ACTOR_ID
+      ]
+    );
     assert.equal(mutationRequests, readsBeforeReplacement.mutations);
     assert.equal(mutationRequests, 0);
   });
