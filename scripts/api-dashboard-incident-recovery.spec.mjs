@@ -212,4 +212,53 @@ test('authenticated API recovery detail stays bound to its append-only Timeline 
     assert.equal(mutationRequests, readsBeforeRetry.mutations);
     assert.equal(mutationRequests, 0);
   });
+
+  await t.test('mismatched recovery Timeline revision fails closed until an exact-version retry', async () => {
+    servedTimeline = Object.freeze([
+      timeline[0],
+      Object.freeze({
+        ...timeline[1],
+        afterState: Object.freeze({ status: 'RECOVERY', version: 5 })
+      })
+    ]);
+
+    const blocked = await controller.select(EVENT_ID);
+    assert.equal(blocked.phase, 'failure');
+    assert.equal(blocked.selected, null);
+    assert.deepEqual(blocked.timeline, []);
+    assert.equal(blocked.stale, true);
+    assert.match(blocked.error ?? '', /سجل الاستعادة.*للحادث/);
+    assert.equal(controller.canRetrySelection(), true);
+    assert.equal(controller.canTransition(), false);
+    assert.equal(controller.canAuthorizeClosure(), false);
+    assert.equal(mutationRequests, 0);
+
+    servedTimeline = timeline;
+    const readsBeforeRetry = {
+      routes: routes.length,
+      tokens: tokenReads,
+      identities: identityResolutions,
+      timeline: timelineReads,
+      mutations: mutationRequests
+    };
+
+    const recovered = await controller.retrySelection();
+    assert.equal(recovered.phase, 'ready');
+    assert.equal(recovered.selected?.id, EVENT_ID);
+    assert.equal(recovered.selected?.version, 4);
+    assert.equal(recovered.selected?.status, 'RECOVERY');
+    assert.deepEqual(recovered.timeline, timeline);
+    assert.equal(recovered.stale, false);
+    assert.equal(recovered.error, null);
+    assert.equal(controller.canRetrySelection(), false);
+    assert.deepEqual(routes.slice(readsBeforeRetry.routes), [
+      `GET /api/v1/road-events/${EVENT_ID}`,
+      `GET /api/v1/road-events/${EVENT_ID}/timeline`
+    ]);
+    assert.equal(tokenReads - readsBeforeRetry.tokens, 2);
+    assert.equal(identityResolutions - readsBeforeRetry.identities, 2);
+    assert.equal(timelineReads - readsBeforeRetry.timeline, 2);
+    assert.equal(mutationRequests, readsBeforeRetry.mutations);
+    assert.equal(mutationRequests, 0);
+  });
 });

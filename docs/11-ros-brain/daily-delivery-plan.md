@@ -2004,6 +2004,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AFTER A FAIL-CLOSED CORRELATION MISMATCH, ONE EXPLICIT RETRY CAN PUBLISH THE CORRECTED REVISION-4 DETAIL AND TIMELINE USING FRESH READS WITHOUT QUEUE REPLAY OR MUTATION.** |
 | Next handoff | Add the version-mismatch companion across the same boundary: return the correct correlation with the wrong final recovery revision, prove fail-closed withholding, then recover only after an explicit retry receives the exact revision-4 Timeline. |
 
+### Mismatched recovery revision fails closed until exact-version retry
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `f77a03f709e0325fd1aaf8876bab30b325fe5026` was two hundred and three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | With the correct incident correlation but final recovery revision `5` against Detail revision `4`, the authenticated API-to-dashboard selection now remains fail-closed. Only an explicit retry after the Timeline returns the exact revision `4` publishes the recovered selection. |
+| Replay and authority boundary | The rejected response exposes neither Detail nor Timeline, stays stale, and derives no transition or closure capability. The exact-version retry performs only fresh Detail and Timeline HTTP reads, does not replay the queue, and records zero mutation requests. It grants no dispatch, closure, control, collection, or activation authority. |
+| Local evidence | The focused uncached build passed **5/5** and the API-to-dashboard acceptance passed **4/4**. Uncached no-emit TypeScript passed **7/7** and uncached workspace application/module tests passed **784/784** (API 670, dashboard 70, mobile 36, domain 8); the additional root acceptance passed **4/4**. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This is process-local boundary evidence, not deployment, durable database proof, field readiness, or immutable archive evidence. It changes no production code or authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A CORRECTLY CORRELATED RECOVERY TIMELINE WITH THE WRONG REVISION CANNOT PUBLISH A SELECTION; ONLY THE EXACT REVISION-4 RETRY RECOVERS WITHOUT REPLAY OR MUTATION.** |
+| Next handoff | Bind the same recovery Detail and Timeline checks to a browser-session replacement: prove a delayed wrong-revision response from the prior session cannot stale or replace the newly restored exact-revision selection. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
