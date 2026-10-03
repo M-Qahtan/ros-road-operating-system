@@ -17,6 +17,7 @@ const EVENT_ID = '44444444-4444-4444-8444-444444444444';
 const ACTOR_ID = '55555555-5555-4555-8555-555555555555';
 const PRIOR_SESSION_ACTOR_ID = '77777777-7777-4777-8777-777777777777';
 const REPLACEMENT_SESSION_ACTOR_ID = '88888888-8888-4888-8888-888888888888';
+const ROTATED_SESSION_ACTOR_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const TENANT = 'riyadh-pilot';
 const PURPOSE = 'HUMAN_SAFETY_RESPONSE';
 const TOKEN = 'trusted-api-dashboard-token';
@@ -32,6 +33,7 @@ const REPLACEMENT_SCOPE_TENANT = 'riyadh-replacement-scope';
 const REPLACEMENT_SCOPE_PURPOSE = 'REPLACEMENT_SAFETY_RESPONSE';
 const PRIOR_SCOPE_TOKEN = 'prior-scope-api-dashboard-token';
 const REPLACEMENT_SCOPE_TOKEN = 'replacement-scope-api-dashboard-token';
+const ROTATED_SESSION_TOKEN = 'rotated-session-api-dashboard-token';
 const ACTIVE_EVENT_HIDDEN_TOKEN = 'active-event-hidden-api-dashboard-token';
 const HIDDEN_SCOPE_TENANT = 'riyadh-hidden-scope';
 const HIDDEN_SCOPE_PURPOSE = 'HIDDEN_SAFETY_RESPONSE';
@@ -501,6 +503,11 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       tenantId: REPLACEMENT_SCOPE_TENANT,
       purpose: REPLACEMENT_SCOPE_PURPOSE
     }],
+    [`Bearer ${ROTATED_SESSION_TOKEN}`, {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: REPLACEMENT_SCOPE_TENANT,
+      purpose: REPLACEMENT_SCOPE_PURPOSE
+    }],
     [`Bearer ${ACTIVE_EVENT_HIDDEN_TOKEN}`, {
       actorId: REPLACEMENT_SESSION_ACTOR_ID,
       tenantId: HIDDEN_SCOPE_TENANT,
@@ -935,8 +942,13 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(obsoleteQueueController.canAuthorizeClosure(), false);
   holdDiscardedQueue = false;
 
+  const rotatedReplacementSession = {
+    tenantId: REPLACEMENT_SCOPE_TENANT,
+    purpose: REPLACEMENT_SCOPE_PURPOSE,
+    getAccessToken: async () => ROTATED_SESSION_TOKEN
+  };
   const laterReplacementController = new OperationsDashboardController(
-    new HttpRoadEventGateway('http://localhost', freshReplacementSession, fetcher),
+    new HttpRoadEventGateway('http://localhost', rotatedReplacementSession, fetcher),
     { roles: ['SUPERVISOR'] },
     () => NOW
   );
@@ -981,17 +993,17 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       purpose: REPLACEMENT_SCOPE_PURPOSE
     },
     {
-      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      actorId: ROTATED_SESSION_ACTOR_ID,
       tenantId: REPLACEMENT_SCOPE_TENANT,
       purpose: REPLACEMENT_SCOPE_PURPOSE
     },
     {
-      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      actorId: ROTATED_SESSION_ACTOR_ID,
       tenantId: REPLACEMENT_SCOPE_TENANT,
       purpose: REPLACEMENT_SCOPE_PURPOSE
     },
     {
-      actorId: REPLACEMENT_SESSION_ACTOR_ID,
+      actorId: ROTATED_SESSION_ACTOR_ID,
       tenantId: REPLACEMENT_SCOPE_TENANT,
       purpose: REPLACEMENT_SCOPE_PURPOSE
     }

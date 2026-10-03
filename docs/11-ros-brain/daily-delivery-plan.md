@@ -2137,6 +2137,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A DELAYED QUEUE COMPLETION FROM A DISCARDED SESSION CANNOT REPLACE, STALE, OR CHANGE THE CAPABILITIES OF A LATER SESSION'S EXACT REVISION-4 SELECTION.** |
 | Next handoff | Rotate the later session to a new trusted actor and prove the delayed queue resolved under the previous actor cannot populate or alter the new actor's revision-4 selection. |
 
+### Rotated trusted actor stays isolated from the prior actor's delayed queue
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `0d12b2183b724c6375495a5f84ee0a800aa346d1` was two hundred and fourteen commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | The obsolete replacement-scope session now keeps its held queue request bound to the previous trusted actor, while the later independent session uses a different trusted Bearer identity to load the queue and select the exact revision-4 event. Releasing the previous actor's delayed queue resolves only to its discarded controller and cannot populate, replace, stale, or change the capabilities of the rotated actor's selected state. |
+| Identity and authority boundary | The obsolete queue performs one server-resolved read as the previous actor. The later queue, Detail, and Timeline perform three server-resolved reads as the rotated actor while retaining the same Tenant and Purpose. Both controllers remain isolated, the browser supplies no actor identity, the selected Timeline stays append-only, and no mutation route is reached. The discarded controller has no retry, transition, or closure capability; the rotated controller derives only its pre-existing bounded capabilities after exact-version selection. |
+| Local evidence | The focused build passed **4/4** and the API-to-dashboard acceptance passed **6/6**. An initial all-at-once Turbo command exposed a clean-worktree orchestration race in which mobile tests started before `dist` existed; running the repository phases in dependency order then passed uncached build **5/5**, no-emit TypeScript **7/7**, and workspace tests **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). The root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It grants no collection, dispatch, closure, control, or activation authority and does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A PREVIOUS TRUSTED ACTOR'S DELAYED QUEUE CANNOT POPULATE OR ALTER A ROTATED TRUSTED ACTOR'S EXACT REVISION-4 SELECTION.** |
+| Next handoff | Rotate the later session to a new Tenant and Purpose as well as a new actor, then prove the delayed previous-scope queue cannot populate or alter that new scope's selection. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
