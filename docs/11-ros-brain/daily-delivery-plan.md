@@ -2233,6 +2233,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FRESH ROTATED QUEUE RELOAD RECOVERS FROM THE CURRENT SANITIZED FAILURE WITHOUT REPLAYING DETAIL, TIMELINE, RETRY, OR MUTATION WORK.** |
 | Next handoff | Select the exact revision-4 event after queue recovery and prove only a fresh Detail/Timeline pair can restore bounded capabilities without inheriting the failed generation. |
 
+### Exact revision selection after queue recovery uses fresh reads only
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-03, GitHub candidate `24d9635afbdeb1066b55c9d01936f9857f19e385` was two hundred and twenty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After a successful Queue-only recovery from the sanitized `503`, selecting the rotated event performs a fresh exact revision-4 Detail read and a fresh matching append-only Timeline read. Only that coherent pair restores the selected state and its existing bounded transition and closure capabilities; no failed-generation state, error, stale marker, selection, or retry identity is inherited. |
+| Scope and authority boundary | Selection performs exactly one Detail and one Timeline read under the server-resolved rotated actor, Tenant, and Purpose while the recovered Queue generation remains unchanged. It performs no additional Queue read and no mutation. The browser supplies no actor identity, the Timeline remains version-bound and append-only, and capability derivation does not grant collection, dispatch, control, or autonomous activation authority. |
+| Local evidence | The focused build passed **4/4** and the API-to-dashboard acceptance passed **6/6**. Uncached build **5/5**, no-emit TypeScript **7/7**, and workspace tests **7/7** passed in dependency order, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Contract, repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONLY A FRESH EXACT DETAIL/TIMELINE PAIR RESTORES THE REVISION-4 SELECTION AND ITS BOUNDED CAPABILITIES AFTER QUEUE RECOVERY.** |
+| Next handoff | Make the first post-recovery Timeline read fail with a sanitized `503` after Detail succeeds, then prove only explicit selection retry is available while transition, closure, and mutation authority remain disabled. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
