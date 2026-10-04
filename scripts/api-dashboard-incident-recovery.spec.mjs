@@ -1833,6 +1833,29 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   ]);
   assert.equal(timelineReads - readsBeforeFinalRestoredSelection.timeline, 2);
   assert.equal(mutationRequests, readsBeforeFinalRestoredSelection.mutations);
+
+  const readsBeforeFinalDiscard = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const finalDiscardedRotatedState = finalRestoredRotatedController.discardBrowserSession();
+  assert.equal(finalDiscardedRotatedState.phase, 'loading');
+  assert.deepEqual(finalDiscardedRotatedState.events, []);
+  assert.equal(finalDiscardedRotatedState.selected, null);
+  assert.deepEqual(finalDiscardedRotatedState.timeline, []);
+  assert.equal(finalDiscardedRotatedState.stale, false);
+  assert.equal(finalDiscardedRotatedState.error, null);
+  assert.equal(finalRestoredRotatedController.canRetrySelection(), false);
+  assert.equal(finalRestoredRotatedController.canTransition(), false);
+  assert.equal(finalRestoredRotatedController.canAuthorizeClosure(), false);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+  assert.equal(routes.length, readsBeforeFinalDiscard.routes);
+  assert.equal(resolvedPrincipals.length, readsBeforeFinalDiscard.identities);
+  assert.equal(timelineReads, readsBeforeFinalDiscard.timeline);
+  assert.equal(mutationRequests, readsBeforeFinalDiscard.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 13);
   assert.equal(timelineReads, 32);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
