@@ -2329,6 +2329,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **DISCARDING THE RESTORED SESSION WHILE ITS REVISION-4 TIMELINE IS PENDING FORCES THE LATE SELECTION TO THE CLEAN DISCARDED STATE AND LEAVES BOTH CONTROLLERS INERT.** |
 | Next handoff | Restore the twice-discarded rotated scope in one new controller and prove it starts from one fresh Queue load with no inherited selection, retry identity, stale/error state, or critical capability. |
 
+### Third rotated controller starts from Queue only
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-04, GitHub candidate `67b0b3d311dec8748fb33c82f1bafe22b404c62b` was two hundred and thirty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After both earlier rotated controllers have been discarded, a third controller for the same trusted actor, Tenant, and Purpose performs exactly one fresh Queue load. It starts ready on the rotated event at revision 4 with no selected Detail, no Timeline entries, no stale or error state, and no inherited retry identity, transition capability, or closure capability. |
+| Session and authority boundary | The third controller performs one server-resolved Queue read and one trusted principal resolution only. It performs no Detail or Timeline read and reaches no mutation route. Both older controllers remain pinned to their exact discarded state objects, so no browser-session state or authority crosses into the replacement controller. No collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | The focused API-to-dashboard acceptance passed **6/6**. Uncached build passed **5/5**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The acceptance recorded exactly one additional Queue request and one rotated-scope principal resolution, no additional Detail/Timeline or application Timeline reads, unchanged discarded state identities for both older controllers, and zero mutations. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **AFTER TWO SESSION DISCARDS, A THIRD ROTATED CONTROLLER STARTS FROM EXACTLY ONE FRESH QUEUE LOAD WITH NO INHERITED SELECTION, TIMELINE, FAILURE STATE, RETRY IDENTITY, OR CRITICAL CAPABILITY.** |
+| Next handoff | Select revision 4 in the third controller and prove exactly one fresh Detail/Timeline pair enables only the existing bounded capabilities while both prior controllers remain inert. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

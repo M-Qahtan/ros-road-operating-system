@@ -1758,7 +1758,43 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(laterReplacementController.canRetrySelection(), false);
   assert.equal(laterReplacementController.canTransition(), false);
   assert.equal(laterReplacementController.canAuthorizeClosure(), false);
-  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 12);
+
+  const readsBeforeFinalRestoredQueue = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const finalRestoredRotatedController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', restoredRotatedSession, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const finalRestoredRotatedQueue = await finalRestoredRotatedController.load();
+  assert.equal(finalRestoredRotatedQueue.phase, 'ready');
+  assert.deepEqual(finalRestoredRotatedQueue.events.map(({ id, version }) => ({ id, version })), [
+    { id: ROTATED_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(finalRestoredRotatedQueue.selected, null);
+  assert.deepEqual(finalRestoredRotatedQueue.timeline, []);
+  assert.equal(finalRestoredRotatedQueue.stale, false);
+  assert.equal(finalRestoredRotatedQueue.error, null);
+  assert.equal(finalRestoredRotatedController.canRetrySelection(), false);
+  assert.equal(finalRestoredRotatedController.canTransition(), false);
+  assert.equal(finalRestoredRotatedController.canAuthorizeClosure(), false);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+  assert.deepEqual(routes.slice(readsBeforeFinalRestoredQueue.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0'
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeFinalRestoredQueue.identities), [{
+    actorId: ROTATED_SESSION_ACTOR_ID,
+    tenantId: ROTATED_SCOPE_TENANT,
+    purpose: ROTATED_SCOPE_PURPOSE
+  }]);
+  assert.equal(timelineReads, readsBeforeFinalRestoredQueue.timeline);
+  assert.equal(mutationRequests, readsBeforeFinalRestoredQueue.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 13);
   assert.equal(timelineReads, 30);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1785,6 +1821,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
