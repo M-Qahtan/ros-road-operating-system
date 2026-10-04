@@ -1,5 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { evaluate } from "./object-storage-candidate-harness.mjs";
 
@@ -103,3 +108,50 @@ test("candidate digest must be immutable sha256", () => {
   assert.equal(result.disposition, "INVALID_RUN");
   assert.match(result.reasons[0], /candidate.digest must be immutable sha256/);
 });
+
+
+const CLI_PATH = fileURLToPath(new URL("./object-storage-candidate-harness.mjs", import.meta.url));
+
+function runCli(record, invocationPath = CLI_PATH) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ros-object-storage-harness-"));
+  const evidencePath = path.join(dir, "evidence.json");
+  fs.writeFileSync(evidencePath, JSON.stringify(record), "utf8");
+  try {
+    return spawnSync(process.execPath, [invocationPath, evidencePath], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("CLI executes through a relative script path and PASS exits zero", () => {
+  const relativeCliPath = path.relative(process.cwd(), CLI_PATH);
+  const result = runCli(validRecord(), relativeCliPath);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).disposition, "PASS");
+});
+
+test("CLI executes through an absolute script path and PASS exits zero", () => {
+  const result = runCli(validRecord());
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).disposition, "PASS");
+});
+
+for (const [expectedDisposition, mutate] of [
+  ["REJECT", (record) => { record.cases[1].outcome = "REJECT"; }],
+  ["NOT_PROVEN", (record) => { record.cases[4].outcome = "NOT_PROVEN"; }],
+  ["INVALID_RUN", (record) => { record.operationalBoundariesUntouched = false; }],
+]) {
+  test(`CLI fails closed for ${expectedDisposition}`, () => {
+    const record = validRecord();
+    mutate(record);
+    const result = runCli(record);
+
+    assert.notEqual(result.status, 0);
+    assert.equal(JSON.parse(result.stdout).disposition, expectedDisposition);
+  });
+}
