@@ -2281,6 +2281,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **TWO CONCURRENT POST-OUTAGE RETRIES COALESCE INTO ONE DETAIL/TIMELINE READ PAIR AND ONE FINAL REVISION-4 STATE WITHOUT QUEUE REPLAY OR MUTATION.** |
 | Next handoff | Discard the rotated browser session while the shared post-outage retry Timeline is pending and prove both obsolete completions resolve only to the discarded clean state without restoring selection, retry identity, or critical capabilities. |
 
+### Session discard invalidates both shared post-outage retry completions
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-04, GitHub candidate `2746756885e8475f5e89f78e402fb7cb048d5fd6` was two hundred and twenty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After a fresh post-recovery Timeline `503`, two immediate `retrySelection()` calls share one pending Detail/Timeline pair. Discarding the rotated browser session before the held Timeline completes invalidates both callers: each resolves to the exact same discarded clean state rather than publishing the obsolete revision-4 selection. |
+| Concurrency and authority boundary | Before discard, the shared retry performs exactly one Detail and one Timeline HTTP read under the server-resolved rotated actor, Tenant, and Purpose. After release, neither completion restores selection, Timeline, retry identity, stale/error state, transition capability, or closure capability. Queue is not replayed and no mutation route is reached. |
+| Local evidence | The focused uncached build passed **5/5** and the root API-to-dashboard acceptance passed **6/6**, including shared Promise identity, one held request pair, exact discarded-state identity for both late completions, disabled retry/transition/closure capabilities, unchanged Queue-read count, and zero mutations. Uncached no-emit TypeScript passed **7/7** after replacing an unsupported worktree dependency symlink with an isolated hard-linked dependency directory. Uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8); the root acceptance passed **6/6** again. Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey remained environment-blocked because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **DISCARDING THE ROTATED SESSION WHILE A SHARED POST-OUTAGE RETRY IS PENDING FORCES BOTH LATE COMPLETIONS TO THE SAME CLEAN DISCARDED STATE WITHOUT RESTORING AUTHORITY.** |
+| Next handoff | Restore the same rotated scope in a fresh controller after the discarded shared retry completes and prove only the new session can load Queue and publish an exact revision-4 Detail/Timeline pair. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
