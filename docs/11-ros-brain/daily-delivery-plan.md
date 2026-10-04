@@ -2317,6 +2317,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A FRESH ROTATED SESSION CAN PUBLISH ITS OWN EXACT REVISION-4 STATE BEFORE THE DISCARDED RETRY COMPLETES; RELEASING THAT OBSOLETE RESPONSE CHANGES NEITHER CONTROLLER.** |
 | Next handoff | Discard the newly restored controller while its own revision-4 Timeline selection is pending and prove its late completion cannot restore state or affect the already inert old controller. |
 
+### Discarded restored session cannot publish its pending selection
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-04, GitHub candidate `662bb2eaca2bd7a7c2cfe84099a50fe340b0826d` was two hundred and twenty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the fresh rotated controller has independently published its exact revision-4 state, a later selection on that same controller is held at Timeline completion. Discarding the restored browser session before release clears Queue, Detail, Timeline, stale/error state, and every critical capability. The late selection resolves only to that exact clean discarded state and cannot republish revision 4. |
+| Session and authority boundary | The pending selection performs exactly one fresh Detail/Timeline pair under the server-resolved rotated actor, Tenant, and Purpose before discard. Its late completion does not affect the first controller, which remains pinned to its own earlier discarded state, and it does not restore retry, transition, closure, collection, dispatch, control, or activation authority on the newly discarded controller. No Queue replay or mutation route is reached. |
+| Local evidence | Uncached build passed **5/5**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). The root API-to-dashboard acceptance passed **6/6**, including one held Detail/Timeline pair, two matching server-resolved identities, exact late-completion identity with the discarded state, both controllers remaining inert, and zero mutations. Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **DISCARDING THE RESTORED SESSION WHILE ITS REVISION-4 TIMELINE IS PENDING FORCES THE LATE SELECTION TO THE CLEAN DISCARDED STATE AND LEAVES BOTH CONTROLLERS INERT.** |
+| Next handoff | Restore the twice-discarded rotated scope in one new controller and prove it starts from one fresh Queue load with no inherited selection, retry identity, stale/error state, or critical capability. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

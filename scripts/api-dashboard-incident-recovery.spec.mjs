@@ -596,6 +596,15 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const discardedPostRecoveryRotatedTimelineRetryStarted = new Promise((resolve) => {
     markDiscardedPostRecoveryRotatedTimelineRetryStarted = resolve;
   });
+  let holdDiscardedRestoredRotatedTimeline = false;
+  let releaseDiscardedRestoredRotatedTimeline;
+  let markDiscardedRestoredRotatedTimelineStarted;
+  const discardedRestoredRotatedTimelineRelease = new Promise((resolve) => {
+    releaseDiscardedRestoredRotatedTimeline = resolve;
+  });
+  const discardedRestoredRotatedTimelineStarted = new Promise((resolve) => {
+    markDiscardedRestoredRotatedTimelineStarted = resolve;
+  });
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -690,6 +699,12 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       discardedPostRecoveryRotatedTimelineRetryClaimed = true;
       markDiscardedPostRecoveryRotatedTimelineRetryStarted();
       await discardedPostRecoveryRotatedTimelineRetryRelease;
+    }
+    if (holdDiscardedRestoredRotatedTimeline
+      && target.pathname === `/api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+      && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      markDiscardedRestoredRotatedTimelineStarted();
+      await discardedRestoredRotatedTimelineRelease;
     }
     return new Response(JSON.stringify(response.body), {
       status: response.status,
@@ -1692,8 +1707,59 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     transition: restoredRotatedController.canTransition(),
     closure: restoredRotatedController.canAuthorizeClosure()
   }, replacementCapabilities);
+
+  const readsBeforeDiscardedRestoredSelection = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  holdDiscardedRestoredRotatedTimeline = true;
+  const pendingDiscardedRestoredSelection = restoredRotatedController.select(ROTATED_SCOPE_EVENT_ID);
+  await discardedRestoredRotatedTimelineStarted;
+  assert.deepEqual(routes.slice(readsBeforeDiscardedRestoredSelection.routes), [
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeDiscardedRestoredSelection.identities), [
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    },
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    }
+  ]);
+  assert.equal(timelineReads - readsBeforeDiscardedRestoredSelection.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeDiscardedRestoredSelection.mutations);
+  const discardedRestoredState = restoredRotatedController.discardBrowserSession();
+  assert.equal(discardedRestoredState.phase, 'loading');
+  assert.deepEqual(discardedRestoredState.events, []);
+  assert.equal(discardedRestoredState.selected, null);
+  assert.deepEqual(discardedRestoredState.timeline, []);
+  assert.equal(discardedRestoredState.stale, false);
+  assert.equal(discardedRestoredState.error, null);
+  assert.equal(restoredRotatedController.canRetrySelection(), false);
+  assert.equal(restoredRotatedController.canTransition(), false);
+  assert.equal(restoredRotatedController.canAuthorizeClosure(), false);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+  releaseDiscardedRestoredRotatedTimeline();
+  const discardedRestoredSelectionCompletion = await pendingDiscardedRestoredSelection;
+  holdDiscardedRestoredRotatedTimeline = false;
+  assert.equal(discardedRestoredSelectionCompletion, discardedRestoredState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(restoredRotatedController.canRetrySelection(), false);
+  assert.equal(restoredRotatedController.canTransition(), false);
+  assert.equal(restoredRotatedController.canAuthorizeClosure(), false);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+  assert.equal(laterReplacementController.canRetrySelection(), false);
+  assert.equal(laterReplacementController.canTransition(), false);
+  assert.equal(laterReplacementController.canAuthorizeClosure(), false);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 12);
-  assert.equal(timelineReads, 28);
+  assert.equal(timelineReads, 30);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1719,6 +1785,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
