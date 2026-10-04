@@ -587,6 +587,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     markPostRecoveryRotatedTimelineRetryStarted = resolve;
   });
   let holdDiscardedPostRecoveryRotatedTimelineRetry = false;
+  let discardedPostRecoveryRotatedTimelineRetryClaimed = false;
   let releaseDiscardedPostRecoveryRotatedTimelineRetry;
   let markDiscardedPostRecoveryRotatedTimelineRetryStarted;
   const discardedPostRecoveryRotatedTimelineRetryRelease = new Promise((resolve) => {
@@ -683,8 +684,10 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       await postRecoveryRotatedTimelineRetryRelease;
     }
     if (holdDiscardedPostRecoveryRotatedTimelineRetry
+      && !discardedPostRecoveryRotatedTimelineRetryClaimed
       && target.pathname === `/api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
       && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      discardedPostRecoveryRotatedTimelineRetryClaimed = true;
       markDiscardedPostRecoveryRotatedTimelineRetryStarted();
       await discardedPostRecoveryRotatedTimelineRetryRelease;
     }
@@ -1602,18 +1605,6 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(laterReplacementController.canRetrySelection(), false);
   assert.equal(laterReplacementController.canTransition(), false);
   assert.equal(laterReplacementController.canAuthorizeClosure(), false);
-  releaseDiscardedPostRecoveryRotatedTimelineRetry();
-  const [firstDiscardedPostRecoveryTimelineCompletion, secondDiscardedPostRecoveryTimelineCompletion] = await Promise.all([
-    firstDiscardedPostRecoveryTimelineRetry,
-    secondDiscardedPostRecoveryTimelineRetry
-  ]);
-  holdDiscardedPostRecoveryRotatedTimelineRetry = false;
-  assert.equal(firstDiscardedPostRecoveryTimelineCompletion, discardedPostRecoveryTimelineState);
-  assert.equal(secondDiscardedPostRecoveryTimelineCompletion, discardedPostRecoveryTimelineState);
-  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
-  assert.equal(laterReplacementController.canRetrySelection(), false);
-  assert.equal(laterReplacementController.canTransition(), false);
-  assert.equal(laterReplacementController.canAuthorizeClosure(), false);
 
   const readsBeforeRestoredRotatedSession = {
     routes: routes.length,
@@ -1683,6 +1674,24 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   ]);
   assert.equal(timelineReads - readsBeforeRestoredRotatedSession.timeline, 2);
   assert.equal(mutationRequests, readsBeforeRestoredRotatedSession.mutations);
+  releaseDiscardedPostRecoveryRotatedTimelineRetry();
+  const [firstDiscardedPostRecoveryTimelineCompletion, secondDiscardedPostRecoveryTimelineCompletion] = await Promise.all([
+    firstDiscardedPostRecoveryTimelineRetry,
+    secondDiscardedPostRecoveryTimelineRetry
+  ]);
+  holdDiscardedPostRecoveryRotatedTimelineRetry = false;
+  assert.equal(firstDiscardedPostRecoveryTimelineCompletion, discardedPostRecoveryTimelineState);
+  assert.equal(secondDiscardedPostRecoveryTimelineCompletion, discardedPostRecoveryTimelineState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+  assert.equal(laterReplacementController.canRetrySelection(), false);
+  assert.equal(laterReplacementController.canTransition(), false);
+  assert.equal(laterReplacementController.canAuthorizeClosure(), false);
+  assert.equal(restoredRotatedController.state, restoredRotatedSelection);
+  assert.deepEqual({
+    retry: restoredRotatedController.canRetrySelection(),
+    transition: restoredRotatedController.canTransition(),
+    closure: restoredRotatedController.canAuthorizeClosure()
+  }, replacementCapabilities);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 12);
   assert.equal(timelineReads, 28);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [

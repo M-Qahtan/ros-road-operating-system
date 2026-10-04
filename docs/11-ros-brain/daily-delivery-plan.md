@@ -2305,6 +2305,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **AFTER THE DISCARDED RETRY COMPLETES, ONLY A FRESH ROTATED SESSION CAN LOAD QUEUE AND PUBLISH THE EXACT REVISION-4 DETAIL/TIMELINE STATE; THE OLD CONTROLLER REMAINS EMPTY AND INERT.** |
 | Next handoff | Start the fresh rotated controller while the discarded retry Timeline is still pending and prove the new session can publish independently before the obsolete completion is released, after which the old completion still cannot overwrite either controller. |
 
+### Fresh rotated session publishes while the discarded retry remains pending
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-04, GitHub candidate `41be1c31e821ff1def06d69fb7bb8998ec737f22` was two hundred and twenty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | While the discarded controller's shared post-outage retry Timeline remains deliberately pending, a new controller for the same rotated scope independently loads Queue and publishes one exact revision-4 Detail/Timeline selection. Only after that new state is observable is the obsolete Timeline released; both old callers still resolve to their clean discarded state and the new controller retains the exact state object and bounded capabilities it published. |
+| Concurrency and authority boundary | The test hold claims only the obsolete Timeline request, so it cannot accidentally serialize the fresh controller. The new controller independently resolves the server-trusted actor, Tenant, and Purpose for Queue, Detail, and Timeline. The old controller remains empty with retry, transition, and closure disabled; the fresh controller receives only the existing bounded capabilities derived from the exact revision-4 pair. No Queue replay occurs beyond the new controller's initial load and no mutation route is reached. |
+| Local evidence | Uncached build passed **5/5**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). The root API-to-dashboard acceptance passed **6/6** after the build, including publication before obsolete release, exact state-object preservation afterward, three fresh server-resolved identities, unchanged total read counts, and zero mutations. Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A FRESH ROTATED SESSION CAN PUBLISH ITS OWN EXACT REVISION-4 STATE BEFORE THE DISCARDED RETRY COMPLETES; RELEASING THAT OBSOLETE RESPONSE CHANGES NEITHER CONTROLLER.** |
+| Next handoff | Discard the newly restored controller while its own revision-4 Timeline selection is pending and prove its late completion cannot restore state or affect the already inert old controller. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
