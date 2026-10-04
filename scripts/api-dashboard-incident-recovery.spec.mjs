@@ -1614,8 +1614,77 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(laterReplacementController.canRetrySelection(), false);
   assert.equal(laterReplacementController.canTransition(), false);
   assert.equal(laterReplacementController.canAuthorizeClosure(), false);
-  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 11);
-  assert.equal(timelineReads, 26);
+
+  const readsBeforeRestoredRotatedSession = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const restoredRotatedSession = {
+    tenantId: ROTATED_SCOPE_TENANT,
+    purpose: ROTATED_SCOPE_PURPOSE,
+    getAccessToken: async () => ROTATED_SESSION_TOKEN
+  };
+  const restoredRotatedController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', restoredRotatedSession, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const restoredRotatedQueue = await restoredRotatedController.load();
+  assert.equal(restoredRotatedQueue.phase, 'ready');
+  assert.deepEqual(restoredRotatedQueue.events.map(({ id, version }) => ({ id, version })), [
+    { id: ROTATED_SCOPE_EVENT_ID, version: 4 }
+  ]);
+  assert.equal(restoredRotatedQueue.selected, null);
+  assert.deepEqual(restoredRotatedQueue.timeline, []);
+  assert.equal(restoredRotatedQueue.stale, false);
+  assert.equal(restoredRotatedQueue.error, null);
+  assert.equal(restoredRotatedController.canRetrySelection(), false);
+  assert.equal(restoredRotatedController.canTransition(), false);
+  assert.equal(restoredRotatedController.canAuthorizeClosure(), false);
+  const restoredRotatedSelection = await restoredRotatedController.select(ROTATED_SCOPE_EVENT_ID);
+  assert.equal(restoredRotatedSelection.phase, 'ready');
+  assert.equal(restoredRotatedSelection.selected?.id, ROTATED_SCOPE_EVENT_ID);
+  assert.equal(restoredRotatedSelection.selected?.version, 4);
+  assert.deepEqual(restoredRotatedSelection.timeline, rotatedTimeline);
+  assert.equal(restoredRotatedSelection.stale, false);
+  assert.equal(restoredRotatedSelection.error, null);
+  assert.deepEqual({
+    retry: restoredRotatedController.canRetrySelection(),
+    transition: restoredRotatedController.canTransition(),
+    closure: restoredRotatedController.canAuthorizeClosure()
+  }, replacementCapabilities);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+  assert.equal(laterReplacementController.canRetrySelection(), false);
+  assert.equal(laterReplacementController.canTransition(), false);
+  assert.equal(laterReplacementController.canAuthorizeClosure(), false);
+  assert.deepEqual(routes.slice(readsBeforeRestoredRotatedSession.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0',
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.deepEqual(resolvedPrincipals.slice(readsBeforeRestoredRotatedSession.identities), [
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    },
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    },
+    {
+      actorId: ROTATED_SESSION_ACTOR_ID,
+      tenantId: ROTATED_SCOPE_TENANT,
+      purpose: ROTATED_SCOPE_PURPOSE
+    }
+  ]);
+  assert.equal(timelineReads - readsBeforeRestoredRotatedSession.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeRestoredRotatedSession.mutations);
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 12);
+  assert.equal(timelineReads, 28);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1641,6 +1710,9 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
