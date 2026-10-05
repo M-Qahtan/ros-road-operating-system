@@ -2497,6 +2497,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A NEW AUTHENTICATED SESSION RESTORES TERMINAL REVISION 10 AND ITS SEVEN-ENTRY HISTORY THROUGH READS ONLY, WITH EVERY CRITICAL CONTROL STILL DISABLED.** |
 | Next handoff | Refresh the selected terminal incident again and prove one new Detail/Timeline pair preserves revision 10 and the exact seven-entry history without mutation, retry, or authority drift. |
 
+### Selected terminal refresh preserves revision 10 without authority drift
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-06, GitHub candidate `5379694672b81c5e10f0aec3982993edc2be08f3` was two hundred and forty-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, dirty base worktree, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | The already selected terminal incident now undergoes one fresh authenticated Detail/Timeline refresh. The controller replaces its prior read state with a new state object that remains exactly `CLOSED` revision 10 and retains all seven append-only Timeline entries. |
+| Version, persistence, and authority boundary | The refresh performs exactly two reads under the trusted rotated-session Tenant and Purpose. It creates no Queue read, mutation request, mutation attempt, idempotency identity, audit append, retry state, or critical authority. Transition, reopening, and closure authorization remain unavailable, and all earlier controller state objects remain unchanged. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **805/805** tests (API 670, dashboard 70, mobile 36, domain 8, and contracts 21). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove one fresh Detail/Timeline pair, two trusted-principal resolutions, terminal revision 10, the exact seven-entry Timeline ending in `road_event.closed` revision 10, zero mutation delta, no Queue reread, no retry state, and no authority drift. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE FRESH DETAIL/TIMELINE PAIR PRESERVES TERMINAL REVISION 10 AND THE EXACT SEVEN-ENTRY HISTORY WITHOUT MUTATION, RETRY, OR AUTHORITY DRIFT.** |
+| Next handoff | Start a delayed terminal Detail/Timeline refresh, discard the controller before completion, and prove the late read pair cannot restore selection or any critical authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
