@@ -3,7 +3,7 @@
 Status vocabulary: `BUILT`, `PARTIAL`, `SHADOW_ONLY`, `MISSING`, `BLOCKED_EXTERNAL`, `DEPRECATED`.
 
 Baseline inspected: `main@3255a94a7f78607014a410e083174483fa2c2c2f`.
-Executive branch baseline: `agent/whole-body-executive-builder@4ef7147343c7dc69ab5e30f9cdb32e90f97bd504`.
+Executive branch baseline: `agent/whole-body-executive-builder@4bdb0f4434de6d8d02d4d32e449e05f8afb6807f`.
 
 This matrix is an integration control artifact, not a readiness claim. A component is not promoted to BUILT solely because research code or documentation exists; executable integration, tests, telemetry, failure behavior, and evidence are required.
 
@@ -22,7 +22,7 @@ This matrix is an integration control artifact, not a readiness claim. A compone
 | Brain | SHADOW_ONLY | Cognitive Brain research track | Only independently gated modules may enter decision-support path |
 | Cerebellum / coordination | PARTIAL | Planning/4D/counterfactual concepts | Heart-approved advisory sequencing; no authority bypass |
 | Brainstem / homeostasis | PARTIAL | Health/degraded/self-model concepts | Dependency health + degraded/safe mode tests |
-| Heart | PARTIAL | Human Safety / authority gates exist | Machine-testable veto over Brain/planner/vendor outputs |
+| Heart | PARTIAL | Typed fail-closed Heart contract is exported; negative veto tests exist and are wired into `@ros/contracts test` on executive branch | Execute the package gate on an exact candidate SHA, bind CI/test evidence, and obtain independent review before promotion to BUILT |
 | Trusted circulation | PARTIAL | Events/features/evidence refs architecture | No raw high-volume streams in transactional core; bounded flow proven |
 | RCINS / RCIS immunity | PARTIAL | Immune tracks and war-game research | Whole-body containment; compromise can only reduce authority |
 | Liver / data detox | PARTIAL | Validation/quarantine patterns | Explicit sanitize/classify/quarantine boundary with negative tests |
