@@ -2437,6 +2437,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **RELOADING THE DISCARDED FOURTH CONTROLLER PUBLISHES REVISION 8 FROM ONE FRESH QUEUE READ WITHOUT RESTORING SELECTION, TIMELINE, CONFLICT RETRY, OR CRITICAL AUTHORITY.** |
 | Next handoff | Select revision 8 in the reloaded fourth controller and prove one fresh exact Detail/Timeline pair publishes revision 8 while no prior conflict or retry identity returns and closure remains unavailable. |
 
+### Reloaded fourth controller selects exact revision 8 without restoring retry
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-05, GitHub candidate `6efbaf9f98263c0ecf0a19079343da09e52585f3` was two hundred and thirty-nine commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | Selecting the revision-8 Queue entry after the discarded controller reload performs one fresh Detail read and one fresh Timeline read, then publishes the exact revision-8 event with its five-entry append-only Timeline. The old conflict, ambiguous retry identity, stale/error state, and in-flight action do not return. The controller may expose ordinary supervised transitions and a new human closure-authorization path, but direct transition to `CLOSED` remains unavailable because revision 8 has no current closure authorization. |
+| Version, persistence, and authority boundary | Both reads resolve the current trusted actor, Tenant, and Purpose. They create no mutation request, idempotency identity, repository entry, or audit append; the server-owned audit length remains five. All earlier discarded controllers retain their exact inert state objects. No collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove one Detail/Timeline pair, two trusted-principal resolutions, exact revision 8, five Timeline entries, absent prior retry identity, direct closure disabled, unchanged mutation counters, and five server-owned audit entries. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE RELOADED FOURTH CONTROLLER SELECTS EXACT REVISION 8 THROUGH ONE FRESH DETAIL/TIMELINE PAIR WITHOUT RESTORING THE PRIOR CONFLICT OR RETRY IDENTITY, AND DIRECT CLOSURE REMAINS DISABLED.** |
+| Next handoff | Attempt a direct revision-8 transition to `CLOSED` and prove it is rejected locally without a POST, idempotency identity, state mutation, or durable write while the fresh Detail/Timeline state remains intact. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
