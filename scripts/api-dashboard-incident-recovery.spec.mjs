@@ -476,6 +476,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const priorTimeline = recoveryTimeline(PRIOR_SCOPE_EVENT_ID, PRIOR_SESSION_ACTOR_ID, 5);
   const replacementTimeline = recoveryTimeline(REPLACEMENT_SCOPE_EVENT_ID, REPLACEMENT_SESSION_ACTOR_ID);
   const rotatedTimeline = recoveryTimeline(ROTATED_SCOPE_EVENT_ID, ROTATED_SESSION_ACTOR_ID);
+  let servedRotatedTimeline = rotatedTimeline;
   let timelineReads = 0;
   const auditTimeline = {
     async listForRoadEvent(roadEventId, scope) {
@@ -490,7 +491,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       }
       assert.equal(roadEventId, ROTATED_SCOPE_EVENT_ID);
       assert.deepEqual(scope, { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE });
-      return rotatedTimeline;
+      return servedRotatedTimeline;
     }
   };
   const application = new RoadEventApplicationService(
@@ -1881,8 +1882,168 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(resolvedPrincipals.length, readsBeforeDiscardedAuthorityAttempts.identities);
   assert.equal(timelineReads, readsBeforeDiscardedAuthorityAttempts.timeline);
   assert.equal(mutationRequests, readsBeforeDiscardedAuthorityAttempts.mutations);
-  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 13);
-  assert.equal(timelineReads, 32);
+
+  const rotatedScope = { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE };
+  const rotatedSupervisor = {
+    actorId: ROTATED_SESSION_ACTOR_ID,
+    roles: ['SUPERVISOR'],
+    ...rotatedScope
+  };
+  const auditBeforeFourthController = await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope);
+  assert.equal(auditBeforeFourthController.length, 1);
+  const authorizedForFourthController = await application.authorizeClosure({
+    roadEventId: ROTATED_SCOPE_EVENT_ID,
+    expectedVersion: 4,
+    reason: 'تهيئة تفويض موثوق لاختبار تعارض الإصدار',
+    authorizedAt: NOW.toISOString()
+  }, {
+    actor: rotatedSupervisor,
+    traceId: 'trace-fourth-controller-authorization-v5',
+    idempotencyKey: 'fourth-controller-authorization-v5'
+  });
+  assert.equal(authorizedForFourthController.version, 5);
+  assert.notEqual(authorizedForFourthController.closureAuthorization, null);
+  servedRotatedTimeline = await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope);
+  assert.equal(servedRotatedTimeline.length, 2);
+
+  const readsBeforeFourthController = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const fourthRotatedController = new OperationsDashboardController(
+    new HttpRoadEventGateway('http://localhost', restoredRotatedSession, fetcher),
+    { roles: ['SUPERVISOR'] },
+    () => NOW
+  );
+  const fourthRotatedQueue = await fourthRotatedController.load();
+  assert.deepEqual(fourthRotatedQueue.events.map(({ id, version }) => ({ id, version })), [
+    { id: ROTATED_SCOPE_EVENT_ID, version: 5 }
+  ]);
+  const fourthRotatedSelection = await fourthRotatedController.select(ROTATED_SCOPE_EVENT_ID);
+  assert.equal(fourthRotatedSelection.selected?.version, 5);
+  assert.notEqual(fourthRotatedSelection.selected?.closureAuthorization, null);
+  assert.deepEqual(fourthRotatedSelection.timeline, servedRotatedTimeline);
+  assert.equal(fourthRotatedSelection.stale, false);
+  assert.equal(fourthRotatedSelection.error, null);
+  assert.equal(fourthRotatedController.canTransitionTo('CLOSED'), true);
+  assert.deepEqual(routes.slice(readsBeforeFourthController.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0',
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeFourthController.identities, 3);
+  assert.equal(timelineReads - readsBeforeFourthController.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeFourthController.mutations);
+
+  const driftedRotatedEvent = await application.reassessSeverity({
+    roadEventId: ROTATED_SCOPE_EVENT_ID,
+    expectedVersion: 5,
+    assessment: {
+      level: SeverityLevel.Moderate,
+      score: 48,
+      confidence: 0.93,
+      reasonCodes: ['recovery_verified'],
+      requiresHumanReview: true
+    },
+    reason: 'محاكاة تغير موثوق في إصدار الخادم قبل الانتقال'
+  }, {
+    actor: rotatedSupervisor,
+    traceId: 'trace-fourth-controller-server-drift-v6',
+    idempotencyKey: 'fourth-controller-server-drift-v6'
+  });
+  assert.equal(driftedRotatedEvent.version, 6);
+  assert.equal(driftedRotatedEvent.closureAuthorization, null);
+  servedRotatedTimeline = await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope);
+  assert.equal(servedRotatedTimeline.length, 3);
+
+  const readsBeforeStaleTransition = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  await assert.rejects(
+    () => fourthRotatedController.transition('CLOSED', 'محاولة انتقال بإصدار قديم بعد تغير الخادم'),
+    /تغيرت البيانات منذ آخر تحديث/
+  );
+  assert.equal(fourthRotatedController.state.selected, fourthRotatedSelection.selected);
+  assert.equal(fourthRotatedController.state.timeline, fourthRotatedSelection.timeline);
+  assert.equal(fourthRotatedController.state.stale, true);
+  assert.equal(
+    fourthRotatedController.state.error,
+    'تغيرت البيانات منذ آخر تحديث. حدّث الشاشة قبل اتخاذ قرار جديد.'
+  );
+  assert.doesNotMatch(fourthRotatedController.state.error, /RoadEvent|version|stale|CONFLICT/i);
+  assert.equal(fourthRotatedController.canTransition(), false);
+  assert.equal(fourthRotatedController.canAuthorizeClosure(), false);
+  assert.deepEqual(fourthRotatedController.ambiguousCriticalActionView(), {
+    incidentId: ROTATED_SCOPE_EVENT_ID,
+    action: 'TRANSITION',
+    expectedVersion: 5,
+    nextStatus: 'CLOSED',
+    status: 'REFRESH_REQUIRED'
+  });
+  assert.deepEqual(routes.slice(readsBeforeStaleTransition.routes), [
+    `POST /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/transition`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeStaleTransition.identities, 1);
+  assert.equal(timelineReads, readsBeforeStaleTransition.timeline);
+  assert.equal(mutationRequests - readsBeforeStaleTransition.mutations, 1);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 3);
+
+  const readsBeforeFourthControllerRecovery = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  const recoveredFourthRotatedSelection = await fourthRotatedController.select(ROTATED_SCOPE_EVENT_ID);
+  assert.equal(recoveredFourthRotatedSelection.selected?.version, 6);
+  assert.equal(recoveredFourthRotatedSelection.selected?.closureAuthorization, null);
+  assert.deepEqual(recoveredFourthRotatedSelection.timeline, servedRotatedTimeline);
+  assert.equal(recoveredFourthRotatedSelection.stale, false);
+  assert.equal(recoveredFourthRotatedSelection.error, null);
+  assert.equal(fourthRotatedController.canTransition(), true);
+  assert.equal(fourthRotatedController.canTransitionTo('CLOSED'), false);
+  assert.equal(fourthRotatedController.canAuthorizeClosure(), true);
+  assert.equal(fourthRotatedController.canRetryAmbiguousCriticalAction(), false);
+  assert.deepEqual(fourthRotatedController.ambiguousCriticalActionView(), {
+    incidentId: ROTATED_SCOPE_EVENT_ID,
+    action: 'TRANSITION',
+    expectedVersion: 5,
+    nextStatus: 'CLOSED',
+    status: 'INVALIDATED'
+  });
+  assert.deepEqual(routes.slice(readsBeforeFourthControllerRecovery.routes), [
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeFourthControllerRecovery.identities, 2);
+  assert.equal(timelineReads - readsBeforeFourthControllerRecovery.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeFourthControllerRecovery.mutations);
+  const readsBeforeInvalidatedRetry = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  await assert.rejects(
+    () => fourthRotatedController.retryAmbiguousCriticalAction(),
+    /حدّث الحادث وتحقق من بقاء الإصدار والصلاحية/
+  );
+  assert.equal(routes.length, readsBeforeInvalidatedRetry.routes);
+  assert.equal(resolvedPrincipals.length, readsBeforeInvalidatedRetry.identities);
+  assert.equal(timelineReads, readsBeforeInvalidatedRetry.timeline);
+  assert.equal(mutationRequests, readsBeforeInvalidatedRetry.mutations);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 3);
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 14);
+  assert.equal(timelineReads, 36);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -1934,7 +2095,13 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE }
   ]);
-  assert.equal(mutationRequests, 0);
+  assert.equal(mutationRequests, 1);
 });

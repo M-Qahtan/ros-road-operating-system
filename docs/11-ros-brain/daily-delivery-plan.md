@@ -2377,6 +2377,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **A DISCARDED THIRD CONTROLLER REJECTS BOTH TRANSITION AND CLOSURE AUTHORIZATION LOCALLY BEFORE NETWORK ACCESS, WHILE ALL THREE CONTROLLERS REMAIN INERT AND ZERO MUTATIONS OCCUR.** |
 | Next handoff | Restore a fourth controller, create a deliberate server-side revision drift before transition, and prove one sanitized conflict, fresh-read recovery, and no duplicate durable mutation while all discarded controllers remain inert. |
 
+### Fourth controller recovers safely from a server revision conflict
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-05, GitHub candidate `7d05ac48b28f3bfec9d6466ad4c87013843a5cac` was two hundred and thirty-four commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | A fourth controller loads and selects the exact authorized revision 5. After a trusted server-side severity reassessment advances the event to revision 6 and invalidates that authorization, its stale revision-5 closure transition receives one sanitized conflict, marks the view stale, and disables critical capabilities. One explicit fresh Detail/Timeline pair then publishes revision 6, clears the error, and leaves the obsolete ambiguous transition permanently invalidated. |
+| Version, persistence, and authority boundary | The simulated server setup appends exactly one closure-authorization entry and one severity-reassessment entry. The stale browser transition adds one authenticated POST attempt but no repository or audit entry; the fresh read adds no write; and an attempted retry of the invalidated transition rejects locally without network access. All three discarded controllers retain their exact inert state objects. No collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact counters prove one rejected POST, one fresh Detail/Timeline pair, two intentional server setup/drift audit appends, and zero durable writes from the stale transition or its denied retry. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A REVISION-5 TRANSITION AGAINST SERVER REVISION 6 FAILS ONCE WITH A SANITIZED CONFLICT, RECOVERS THROUGH ONE FRESH READ PAIR, AND CANNOT REPLAY OR ADD A DURABLE MUTATION.** |
+| Next handoff | Submit two identical stale transition confirmations concurrently and prove they share one POST and idempotency identity, both receive the same sanitized conflict, and one fresh read invalidates retry without any durable client mutation. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
