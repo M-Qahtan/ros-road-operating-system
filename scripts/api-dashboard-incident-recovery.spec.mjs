@@ -546,6 +546,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const handler = createRoadEventHttpHandler(application, actorResolver);
   const routes = [];
   let mutationRequests = 0;
+  const mutationAttempts = [];
   let holdTrustedRetryTimeline = false;
   let releaseTrustedRetryTimeline;
   let markTrustedRetryTimelineStarted;
@@ -609,14 +610,23 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
-    if (method !== 'GET') mutationRequests += 1;
+    const headers = Object.fromEntries(new Headers(init.headers).entries());
+    const body = init.body === undefined ? null : JSON.parse(String(init.body));
+    if (method !== 'GET') {
+      mutationRequests += 1;
+      mutationAttempts.push({
+        route: `${method} ${target.pathname}${target.search}`,
+        idempotencyKey: headers['idempotency-key'],
+        body
+      });
+    }
     routes.push(`${method} ${target.pathname}${target.search}`);
     const response = await handler({
       method,
       path: target.pathname,
       query: Object.fromEntries(target.searchParams.entries()),
-      headers: Object.fromEntries(new Headers(init.headers).entries()),
-      body: init.body === undefined ? null : JSON.parse(String(init.body)),
+      headers,
+      body,
       traceId: `trace-cross-scope-http-${routes.length}`
     });
     if (holdTrustedRetryTimeline
@@ -1962,12 +1972,27 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     routes: routes.length,
     identities: resolvedPrincipals.length,
     timeline: timelineReads,
-    mutations: mutationRequests
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
   };
-  await assert.rejects(
-    () => fourthRotatedController.transition('CLOSED', 'محاولة انتقال بإصدار قديم بعد تغير الخادم'),
-    /تغيرت البيانات منذ آخر تحديث/
+  const firstStaleTransition = fourthRotatedController.transition(
+    'CLOSED',
+    'محاولة انتقال متزامنة بإصدار قديم بعد تغير الخادم'
   );
+  const secondStaleTransition = fourthRotatedController.transition(
+    'CLOSED',
+    'محاولة انتقال متزامنة بإصدار قديم بعد تغير الخادم'
+  );
+  assert.equal(fourthRotatedController.isCriticalActionInFlight(), true);
+  const [firstStaleResult, secondStaleResult] = await Promise.allSettled([
+    firstStaleTransition,
+    secondStaleTransition
+  ]);
+  assert.equal(firstStaleResult.status, 'rejected');
+  assert.equal(secondStaleResult.status, 'rejected');
+  assert.match(firstStaleResult.reason.message, /تغيرت البيانات منذ آخر تحديث/);
+  assert.equal(secondStaleResult.reason, firstStaleResult.reason);
+  assert.equal(fourthRotatedController.isCriticalActionInFlight(), false);
   assert.equal(fourthRotatedController.state.selected, fourthRotatedSelection.selected);
   assert.equal(fourthRotatedController.state.timeline, fourthRotatedSelection.timeline);
   assert.equal(fourthRotatedController.state.stale, true);
@@ -1988,6 +2013,14 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.deepEqual(routes.slice(readsBeforeStaleTransition.routes), [
     `POST /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/transition`
   ]);
+  const staleMutationAttempts = mutationAttempts.slice(readsBeforeStaleTransition.mutationAttempts);
+  assert.equal(staleMutationAttempts.length, 1);
+  assert.match(staleMutationAttempts[0].idempotencyKey, /^[0-9a-f-]{36}$/i);
+  assert.deepEqual(staleMutationAttempts[0].body, {
+    expectedVersion: 5,
+    nextStatus: 'CLOSED',
+    reason: 'محاولة انتقال متزامنة بإصدار قديم بعد تغير الخادم'
+  });
   assert.equal(resolvedPrincipals.length - readsBeforeStaleTransition.identities, 1);
   assert.equal(timelineReads, readsBeforeStaleTransition.timeline);
   assert.equal(mutationRequests - readsBeforeStaleTransition.mutations, 1);
