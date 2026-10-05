@@ -2425,6 +2425,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **DISCARDING THE FOURTH CONTROLLER WHILE ONE SHARED STALE TRANSITION POST IS PENDING FORCES BOTH LATE CALLERS TO THE SAME SUPERSEDED RESULT AND PRESERVES THE EXACT CLEAN DISCARDED STATE WITHOUT RETRY OR AUTHORITY.** |
 | Next handoff | Reload the discarded fourth controller and prove it starts from one fresh revision-8 Queue read with no inherited selection, Timeline, conflict state, retry identity, or critical capability. |
 
+### Discarded fourth controller reloads only the current Queue
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-05, GitHub candidate `b43a032c5f50d745198e8e096dcd14c363530c27` was two hundred and thirty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | Reloading the discarded fourth controller performs exactly one authenticated Queue read and publishes the server's current revision 8. The reloaded state contains no selected Detail, Timeline, stale/error state, conflict retry identity, in-flight action, transition capability, or closure-authorization capability inherited from the discarded session. |
+| Version, persistence, and authority boundary | The fresh Queue read resolves the current trusted actor, Tenant, and Purpose once. It performs no Detail or Timeline read and creates no mutation request, idempotency identity, repository entry, or audit append; the server-owned audit length remains five. All earlier discarded controllers retain their exact inert state objects. No collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove one Queue GET, one trusted-principal resolution, revision 8 in the Queue, empty selection and Timeline, disabled retry and critical capabilities, unchanged mutation counters, and five server-owned audit entries. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **RELOADING THE DISCARDED FOURTH CONTROLLER PUBLISHES REVISION 8 FROM ONE FRESH QUEUE READ WITHOUT RESTORING SELECTION, TIMELINE, CONFLICT RETRY, OR CRITICAL AUTHORITY.** |
+| Next handoff | Select revision 8 in the reloaded fourth controller and prove one fresh exact Detail/Timeline pair publishes revision 8 while no prior conflict or retry identity returns and closure remains unavailable. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

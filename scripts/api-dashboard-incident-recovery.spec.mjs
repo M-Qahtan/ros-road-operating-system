@@ -2248,7 +2248,45 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(restoredRotatedController.state, discardedRestoredState);
   assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
 
-  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 14);
+  const readsBeforeDiscardedFourthControllerReload = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  const reloadedDiscardedFourthController = await fourthRotatedController.load();
+  assert.deepEqual(
+    reloadedDiscardedFourthController.events.map(({ id, version }) => ({ id, version })),
+    [{ id: ROTATED_SCOPE_EVENT_ID, version: 8 }]
+  );
+  assert.equal(reloadedDiscardedFourthController.phase, 'ready');
+  assert.equal(reloadedDiscardedFourthController.selected, null);
+  assert.deepEqual(reloadedDiscardedFourthController.timeline, []);
+  assert.equal(reloadedDiscardedFourthController.stale, false);
+  assert.equal(reloadedDiscardedFourthController.error, null);
+  assert.equal(fourthRotatedController.canRetrySelection(), false);
+  assert.equal(fourthRotatedController.canTransition(), false);
+  assert.equal(fourthRotatedController.canAuthorizeClosure(), false);
+  assert.equal(fourthRotatedController.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(fourthRotatedController.ambiguousCriticalActionView(), null);
+  assert.equal(fourthRotatedController.isCriticalActionInFlight(), false);
+  assert.deepEqual(routes.slice(readsBeforeDiscardedFourthControllerReload.routes), [
+    'GET /api/v1/road-events?limit=100&offset=0'
+  ]);
+  assert.equal(
+    resolvedPrincipals.length - readsBeforeDiscardedFourthControllerReload.identities,
+    1
+  );
+  assert.equal(timelineReads, readsBeforeDiscardedFourthControllerReload.timeline);
+  assert.equal(mutationRequests, readsBeforeDiscardedFourthControllerReload.mutations);
+  assert.equal(mutationAttempts.length, readsBeforeDiscardedFourthControllerReload.mutationAttempts);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 5);
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+
+  assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 15);
   assert.equal(timelineReads, 38);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -2275,6 +2313,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
