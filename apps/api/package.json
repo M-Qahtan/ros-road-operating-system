@@ -21,8 +21,8 @@
   "dependencies": {
     "@ros/contracts": "workspace:*",
     "@ros/domain": "workspace:*",
-    "pg": "^8.23.0",
-    "redis": "^6.2.1"
+    "pg": "^8.23.1",
+    "redis": "^6.3.0"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",
