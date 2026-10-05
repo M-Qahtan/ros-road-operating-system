@@ -2521,6 +2521,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **DISCARDING THE TERMINAL SESSION INVALIDATES ITS IN-FLIGHT READ INTENT; THE LATE DETAIL/TIMELINE PAIR CANNOT RESTORE SELECTION, HISTORY VIEW, RETRY, OR CRITICAL AUTHORITY.** |
 | Next handoff | Reload the discarded terminal controller and prove one new Queue read starts a clean session that exposes revision 10 without inheriting selection, Timeline, retry, or authority. |
 
+### Clean terminal session reload exposes revision 10 without inherited authority
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-06, GitHub candidate `fbb3f27d3d6fdb7308b4810145c67a9a66ba68bb` was two hundred and forty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, dirty base worktree, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | The discarded terminal controller starts a new authenticated session with exactly one Queue read. The queue exposes the incident as `CLOSED` revision 10, while selection and Timeline remain empty and no prior retry, ambiguity, in-flight action, or critical capability is inherited. |
+| Version, persistence, and authority boundary | The reload resolves one trusted rotated-session principal under the exact Tenant and Purpose and performs no Detail, Timeline, mutation, mutation attempt, idempotency creation, or audit append. The server-owned seven-entry history remains intact, and all earlier controller state objects remain unchanged. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **805/805** tests (API 670, dashboard 70, mobile 36, domain 8, and contracts 21). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove one Queue GET, one trusted-principal resolution, terminal revision 10 in the queue, zero Detail/Timeline or mutation delta, empty selection and Timeline, no retry or ambiguity, no in-flight action, and no critical authority. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE NEW QUEUE READ STARTS A CLEAN TERMINAL SESSION AT REVISION 10 WITHOUT INHERITING SELECTION, TIMELINE, RETRY, AMBIGUITY, OR CRITICAL AUTHORITY.** |
+| Next handoff | Select the revision-10 incident in the clean session and prove one new Detail/Timeline pair restores exactly seven entries while all terminal controls remain disabled. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
