@@ -2365,6 +2365,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **DISCARDING THE THIRD ROTATED CONTROLLER AFTER A SUCCESSFUL SELECTION CLEARS ITS QUEUE, DETAIL, TIMELINE, AND ALL BOUNDED CAPABILITIES WITHOUT CHANGING EITHER PRIOR CONTROLLER OR ISSUING A MUTATION.** |
 | Next handoff | Attempt transition and closure actions from the discarded third controller and prove both fail locally before any network request or durable mutation. |
 
+### Discarded third controller rejects critical actions before network
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-05, GitHub candidate `7cb57fe7948bb23a00e98b22372f4f2360b521a6` was two hundred and thirty-three commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | After the third rotated controller has selected revision 4 and then discarded its browser session, direct transition and closure-authorization attempts both reject locally with the existing explicit `اختر حدثًا أولًا` requirement. The controller remains pinned to the exact discarded state object with retry, transition, and closure capability disabled. |
+| Session and authority boundary | Both denied actions add zero HTTP routes, trusted-principal resolutions, application Timeline reads, or mutations. Both earlier controllers remain pinned to their own exact discarded state objects. No browser identity or authority is restored, and no collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact before/after counters prove both denied actions added zero routes, identity resolutions, Timeline reads, or mutations. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **A DISCARDED THIRD CONTROLLER REJECTS BOTH TRANSITION AND CLOSURE AUTHORIZATION LOCALLY BEFORE NETWORK ACCESS, WHILE ALL THREE CONTROLLERS REMAIN INERT AND ZERO MUTATIONS OCCUR.** |
+| Next handoff | Restore a fourth controller, create a deliberate server-side revision drift before transition, and prove one sanitized conflict, fresh-read recovery, and no duplicate durable mutation while all discarded controllers remain inert. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

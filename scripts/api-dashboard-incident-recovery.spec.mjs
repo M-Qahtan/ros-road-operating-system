@@ -1856,6 +1856,31 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(resolvedPrincipals.length, readsBeforeFinalDiscard.identities);
   assert.equal(timelineReads, readsBeforeFinalDiscard.timeline);
   assert.equal(mutationRequests, readsBeforeFinalDiscard.mutations);
+
+  const readsBeforeDiscardedAuthorityAttempts = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests
+  };
+  await assert.rejects(
+    () => finalRestoredRotatedController.transition('ROAD_CLEARANCE', 'محاولة انتقال بعد إسقاط الجلسة'),
+    /اختر حدثًا أولًا/
+  );
+  await assert.rejects(
+    () => finalRestoredRotatedController.authorizeClosure('محاولة تفويض إغلاق بعد إسقاط الجلسة'),
+    /اختر حدثًا أولًا/
+  );
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(finalRestoredRotatedController.canRetrySelection(), false);
+  assert.equal(finalRestoredRotatedController.canTransition(), false);
+  assert.equal(finalRestoredRotatedController.canAuthorizeClosure(), false);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+  assert.equal(routes.length, readsBeforeDiscardedAuthorityAttempts.routes);
+  assert.equal(resolvedPrincipals.length, readsBeforeDiscardedAuthorityAttempts.identities);
+  assert.equal(timelineReads, readsBeforeDiscardedAuthorityAttempts.timeline);
+  assert.equal(mutationRequests, readsBeforeDiscardedAuthorityAttempts.mutations);
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 13);
   assert.equal(timelineReads, 32);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
