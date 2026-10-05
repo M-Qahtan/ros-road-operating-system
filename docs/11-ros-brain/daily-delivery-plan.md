@@ -2509,6 +2509,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE FRESH DETAIL/TIMELINE PAIR PRESERVES TERMINAL REVISION 10 AND THE EXACT SEVEN-ENTRY HISTORY WITHOUT MUTATION, RETRY, OR AUTHORITY DRIFT.** |
 | Next handoff | Start a delayed terminal Detail/Timeline refresh, discard the controller before completion, and prove the late read pair cannot restore selection or any critical authority. |
 
+### Discarded terminal refresh cannot restore selection or authority
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-06, GitHub candidate `5232257344d44960f627356b2a4a0636845a9593` was two hundred and forty-five commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, dirty base worktree, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | A fresh authenticated terminal Detail/Timeline refresh is held in flight, then the browser session is discarded before the Timeline response completes. The late read completion resolves only to the exact clean discarded state and cannot restore the prior `CLOSED` selection, Timeline, or any critical capability. |
+| Version, persistence, and authority boundary | The delayed refresh performs exactly two reads under the trusted rotated-session Tenant and Purpose. Discard invalidates the read intent before response application. No Queue read, mutation request, mutation attempt, idempotency identity, audit append, retry state, transition, reopening, or closure authorization is introduced; the server-owned seven-entry history remains unchanged. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **805/805** tests (API 670, dashboard 70, mobile 36, domain 8, and contracts 21). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove one delayed Detail/Timeline pair, two trusted-principal resolutions, disposal before completion, identity-equal return of the clean discarded state, zero mutation delta, no Queue read, no restored selection or Timeline, no retry state, and no critical authority. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **DISCARDING THE TERMINAL SESSION INVALIDATES ITS IN-FLIGHT READ INTENT; THE LATE DETAIL/TIMELINE PAIR CANNOT RESTORE SELECTION, HISTORY VIEW, RETRY, OR CRITICAL AUTHORITY.** |
+| Next handoff | Reload the discarded terminal controller and prove one new Queue read starts a clean session that exposes revision 10 without inheriting selection, Timeline, retry, or authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

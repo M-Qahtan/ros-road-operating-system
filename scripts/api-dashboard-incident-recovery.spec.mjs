@@ -611,6 +611,16 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const discardedRestoredRotatedTimelineStarted = new Promise((resolve) => {
     markDiscardedRestoredRotatedTimelineStarted = resolve;
   });
+  let holdDiscardedTerminalRotatedTimeline = false;
+  let discardedTerminalRotatedTimelineClaimed = false;
+  let releaseDiscardedTerminalRotatedTimeline;
+  let markDiscardedTerminalRotatedTimelineStarted;
+  const discardedTerminalRotatedTimelineRelease = new Promise((resolve) => {
+    releaseDiscardedTerminalRotatedTimeline = resolve;
+  });
+  const discardedTerminalRotatedTimelineStarted = new Promise((resolve) => {
+    markDiscardedTerminalRotatedTimelineStarted = resolve;
+  });
   let holdFourthControllerStaleTransition = false;
   let fourthControllerStaleTransitionClaimed = false;
   let releaseFourthControllerStaleTransition;
@@ -758,6 +768,14 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
       markDiscardedRestoredRotatedTimelineStarted();
       await discardedRestoredRotatedTimelineRelease;
+    }
+    if (holdDiscardedTerminalRotatedTimeline
+      && !discardedTerminalRotatedTimelineClaimed
+      && target.pathname === `/api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+      && new Headers(init.headers).get('authorization') === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      discardedTerminalRotatedTimelineClaimed = true;
+      markDiscardedTerminalRotatedTimelineStarted();
+      await discardedTerminalRotatedTimelineRelease;
     }
     return new Response(JSON.stringify(response.body), {
       status: response.status,
@@ -2607,8 +2625,53 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(restoredRotatedController.state, discardedRestoredState);
   assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
 
+  const readsBeforeDiscardedTerminalRefresh = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  holdDiscardedTerminalRotatedTimeline = true;
+  const pendingDiscardedTerminalRefresh = terminalReloadController.select(ROTATED_SCOPE_EVENT_ID);
+  await discardedTerminalRotatedTimelineStarted;
+  assert.deepEqual(routes.slice(readsBeforeDiscardedTerminalRefresh.routes), [
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeDiscardedTerminalRefresh.identities, 2);
+  assert.equal(timelineReads - readsBeforeDiscardedTerminalRefresh.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeDiscardedTerminalRefresh.mutations);
+  assert.equal(mutationAttempts.length, readsBeforeDiscardedTerminalRefresh.mutationAttempts);
+  const discardedTerminalState = terminalReloadController.discardBrowserSession();
+  assert.deepEqual(discardedTerminalState, {
+    phase: 'loading',
+    events: [],
+    selected: null,
+    timeline: [],
+    stale: false,
+    error: null,
+    lastUpdatedAt: null
+  });
+  assert.equal(terminalReloadController.canTransition(), false);
+  assert.equal(terminalReloadController.canAuthorizeClosure(), false);
+  assert.equal(terminalReloadController.canRetrySelection(), false);
+  assert.equal(terminalReloadController.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(terminalReloadController.ambiguousCriticalActionView(), null);
+  assert.equal(terminalReloadController.isCriticalActionInFlight(), false);
+  releaseDiscardedTerminalRotatedTimeline();
+  const discardedTerminalRefreshCompletion = await pendingDiscardedTerminalRefresh;
+  holdDiscardedTerminalRotatedTimeline = false;
+  assert.equal(discardedTerminalRefreshCompletion, discardedTerminalState);
+  assert.equal(terminalReloadController.state, discardedTerminalState);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 7);
+  assert.equal(fourthRotatedController.state, revisionTenClosedState);
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 16);
-  assert.equal(timelineReads, 46);
+  assert.equal(timelineReads, 48);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -2634,6 +2697,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
