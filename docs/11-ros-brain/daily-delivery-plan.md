@@ -2449,6 +2449,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **THE RELOADED FOURTH CONTROLLER SELECTS EXACT REVISION 8 THROUGH ONE FRESH DETAIL/TIMELINE PAIR WITHOUT RESTORING THE PRIOR CONFLICT OR RETRY IDENTITY, AND DIRECT CLOSURE REMAINS DISABLED.** |
 | Next handoff | Attempt a direct revision-8 transition to `CLOSED` and prove it is rejected locally without a POST, idempotency identity, state mutation, or durable write while the fresh Detail/Timeline state remains intact. |
 
+### Revision-8 direct closure is rejected before the network
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-05, GitHub candidate `30f3c12652e4411e1f88355bedf99dd5b809fcf4` was two hundred and forty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | A direct attempt to transition the freshly selected revision-8 event to `CLOSED` fails locally with the bounded trusted-authorization message before any network request is created. The controller preserves the exact revision-8 Detail/Timeline state object, exposes no conflict or retry identity, and keeps direct closure disabled while leaving only the explicit human closure-authorization path available. |
+| Version, persistence, and authority boundary | The denied closure attempt leaves route, trusted-principal, Timeline-read, mutation, and mutation-attempt counters unchanged. It creates no idempotency identity, repository entry, or audit append; the server-owned audit length remains five. All earlier discarded controllers retain their exact inert state objects. No collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove the bounded local rejection, exact state-object preservation, zero route or identity change, unchanged mutation counters, absent retry state, and five server-owned audit entries. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **DIRECT REVISION-8 CLOSURE FAILS LOCALLY BEFORE HTTP OR IDEMPOTENCY CREATION, PRESERVING THE EXACT FRESH READ STATE AND ADDING NO DURABLE WRITE.** |
+| Next handoff | Apply an explicit human closure authorization to revision 8 and prove one version-bound POST appends revision 9 without autonomous closure, duplicate write, or loss of the five-entry history. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
