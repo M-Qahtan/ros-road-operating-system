@@ -2461,6 +2461,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **DIRECT REVISION-8 CLOSURE FAILS LOCALLY BEFORE HTTP OR IDEMPOTENCY CREATION, PRESERVING THE EXACT FRESH READ STATE AND ADDING NO DURABLE WRITE.** |
 | Next handoff | Apply an explicit human closure authorization to revision 8 and prove one version-bound POST appends revision 9 without autonomous closure, duplicate write, or loss of the five-entry history. |
 
+### Explicit human authorization advances revision 8 to revision 9 without closure
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-05, GitHub candidate `1c9740a44f032a400d1e61f51e29553bef190bd5` was two hundred and forty-one commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | The freshly selected revision-8 incident now accepts an explicit supervisor closure authorization through the authenticated dashboard boundary. Exactly one version-bound authorization POST publishes revision 9, followed by one Timeline reconciliation read. The selected incident remains in `RECOVERY`; closure is enabled for a separate explicit human transition but is not executed automatically. |
+| Version, persistence, and authority boundary | The POST carries `expectedVersion: 8`, the normalized human reason, and the fixed authorization timestamp under one new idempotency identity. The response binds the authorization to the trusted rotated-session actor, and the append-only Timeline grows from five entries to six with `road_event.closure_authorized` at revision 9. The operation adds one mutation attempt and one durable audit append only; all earlier discarded controllers remain inert. No collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove the single POST plus single Timeline GET, two trusted-principal resolutions, one mutation/idempotency identity, request binding to revision 8, `RECOVERY` at revision 9, exact actor/time/reason authorization data, a six-entry Timeline with a revision-9 authorization tail, and no autonomous closure or stale/retry state. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE EXPLICIT HUMAN AUTHORIZATION ADVANCES REVISION 8 TO REVISION 9 AND APPENDS EXACTLY ONE AUDIT ENTRY WHILE THE INCIDENT REMAINS OPEN.** |
+| Next handoff | Execute the separately confirmed human transition from revision 9 to `CLOSED` and prove one version-bound POST appends terminal revision 10 without replay, reopening, or loss of the six-entry history. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:

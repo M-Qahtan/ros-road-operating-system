@@ -477,6 +477,7 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const replacementTimeline = recoveryTimeline(REPLACEMENT_SCOPE_EVENT_ID, REPLACEMENT_SESSION_ACTOR_ID);
   const rotatedTimeline = recoveryTimeline(ROTATED_SCOPE_EVENT_ID, ROTATED_SESSION_ACTOR_ID);
   let servedRotatedTimeline = rotatedTimeline;
+  let refreshServedRotatedTimelineFromRepository = false;
   let timelineReads = 0;
   const auditTimeline = {
     async listForRoadEvent(roadEventId, scope) {
@@ -491,6 +492,9 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       }
       assert.equal(roadEventId, ROTATED_SCOPE_EVENT_ID);
       assert.deepEqual(scope, { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE });
+      if (refreshServedRotatedTimelineFromRepository) {
+        servedRotatedTimeline = await repository.listForRoadEvent(roadEventId, scope);
+      }
       return servedRotatedTimeline;
     }
   };
@@ -2367,8 +2371,58 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(restoredRotatedController.state, discardedRestoredState);
   assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
 
+  const readsBeforeRevisionEightAuthorization = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  refreshServedRotatedTimelineFromRepository = true;
+  const revisionNineAuthorizedState = await fourthRotatedController.authorizeClosure(
+    'تفويض بشري صريح بعد مراجعة سلامة الإصدار الثامن'
+  );
+  refreshServedRotatedTimelineFromRepository = false;
+  assert.deepEqual(routes.slice(readsBeforeRevisionEightAuthorization.routes), [
+    `POST /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/closure-authorization`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeRevisionEightAuthorization.identities, 2);
+  assert.equal(timelineReads - readsBeforeRevisionEightAuthorization.timeline, 1);
+  assert.equal(mutationRequests - readsBeforeRevisionEightAuthorization.mutations, 1);
+  assert.equal(mutationAttempts.length - readsBeforeRevisionEightAuthorization.mutationAttempts, 1);
+  const [revisionEightAuthorizationAttempt] = mutationAttempts.slice(
+    readsBeforeRevisionEightAuthorization.mutationAttempts
+  );
+  assert.deepEqual(revisionEightAuthorizationAttempt.body, {
+    expectedVersion: 8,
+    reason: 'تفويض بشري صريح بعد مراجعة سلامة الإصدار الثامن',
+    authorizedAt: NOW.toISOString()
+  });
+  assert.match(revisionEightAuthorizationAttempt.idempotencyKey, /^[0-9a-f-]{36}$/i);
+  assert.equal(revisionNineAuthorizedState.selected?.version, 9);
+  assert.equal(revisionNineAuthorizedState.selected?.status, 'RECOVERY');
+  assert.notEqual(revisionNineAuthorizedState.selected?.closureAuthorization, null);
+  assert.equal(revisionNineAuthorizedState.selected?.closureAuthorization?.actorId, ROTATED_SESSION_ACTOR_ID);
+  assert.equal(revisionNineAuthorizedState.selected?.closureAuthorization?.authorizedAt, NOW.toISOString());
+  assert.equal(revisionNineAuthorizedState.selected?.closureAuthorization?.reason,
+    'تفويض بشري صريح بعد مراجعة سلامة الإصدار الثامن');
+  assert.deepEqual(revisionNineAuthorizedState.timeline, servedRotatedTimeline);
+  assert.equal(revisionNineAuthorizedState.timeline.length, 6);
+  assert.equal(revisionNineAuthorizedState.timeline.at(-1)?.action, 'road_event.closure_authorized');
+  assert.equal(revisionNineAuthorizedState.timeline.at(-1)?.afterState.version, 9);
+  assert.equal(fourthRotatedController.canTransitionTo('CLOSED'), true);
+  assert.equal(fourthRotatedController.canAuthorizeClosure(), true);
+  assert.equal(fourthRotatedController.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(fourthRotatedController.ambiguousCriticalActionView(), null);
+  assert.equal(fourthRotatedController.isCriticalActionInFlight(), false);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 6);
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 15);
-  assert.equal(timelineReads, 40);
+  assert.equal(timelineReads, 41);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -2432,7 +2486,9 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE }
   ]);
-  assert.equal(mutationRequests, 2);
+  assert.equal(mutationRequests, 3);
 });
