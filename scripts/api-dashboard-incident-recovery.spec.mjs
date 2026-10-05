@@ -607,6 +607,16 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const discardedRestoredRotatedTimelineStarted = new Promise((resolve) => {
     markDiscardedRestoredRotatedTimelineStarted = resolve;
   });
+  let holdFourthControllerStaleTransition = false;
+  let fourthControllerStaleTransitionClaimed = false;
+  let releaseFourthControllerStaleTransition;
+  let markFourthControllerStaleTransitionStarted;
+  const fourthControllerStaleTransitionRelease = new Promise((resolve) => {
+    releaseFourthControllerStaleTransition = resolve;
+  });
+  const fourthControllerStaleTransitionStarted = new Promise((resolve) => {
+    markFourthControllerStaleTransitionStarted = resolve;
+  });
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -629,6 +639,15 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       body,
       traceId: `trace-cross-scope-http-${routes.length}`
     });
+    if (holdFourthControllerStaleTransition
+      && !fourthControllerStaleTransitionClaimed
+      && method === 'POST'
+      && target.pathname === `/api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/transition`
+      && headers.authorization === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      fourthControllerStaleTransitionClaimed = true;
+      markFourthControllerStaleTransitionStarted();
+      await fourthControllerStaleTransitionRelease;
+    }
     if (holdTrustedRetryTimeline
       && target.pathname === `/api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`) {
       markTrustedRetryTimelineStarted();
@@ -1975,15 +1994,38 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     mutations: mutationRequests,
     mutationAttempts: mutationAttempts.length
   };
+  holdFourthControllerStaleTransition = true;
   const firstStaleTransition = fourthRotatedController.transition(
     'CLOSED',
     'محاولة انتقال متزامنة بإصدار قديم بعد تغير الخادم'
   );
+  await fourthControllerStaleTransitionStarted;
   const secondStaleTransition = fourthRotatedController.transition(
     'CLOSED',
     'محاولة انتقال متزامنة بإصدار قديم بعد تغير الخادم'
   );
   assert.equal(fourthRotatedController.isCriticalActionInFlight(), true);
+  const readsBeforeCompetingClosureAuthorization = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  await assert.rejects(
+    () => fourthRotatedController.authorizeClosure(
+      'محاولة تفويض إغلاق منافسة أثناء انتقال متزامن قيد التنفيذ'
+    ),
+    /يوجد إجراء حرج قيد التنفيذ/
+  );
+  assert.deepEqual({
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  }, readsBeforeCompetingClosureAuthorization);
+  releaseFourthControllerStaleTransition();
   const [firstStaleResult, secondStaleResult] = await Promise.allSettled([
     firstStaleTransition,
     secondStaleTransition

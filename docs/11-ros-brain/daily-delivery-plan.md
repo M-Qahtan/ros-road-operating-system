@@ -2401,6 +2401,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **TWO IDENTICAL CONCURRENT STALE TRANSITIONS SHARE ONE POST, ONE IDEMPOTENCY IDENTITY, AND ONE SANITIZED CONFLICT; A FRESH READ INVALIDATES RETRY WITHOUT A DURABLE CLIENT MUTATION.** |
 | Next handoff | While the shared stale transition remains in flight, attempt a competing closure-authorization action and prove it rejects locally without a second POST or idempotency identity, while both original callers still share the single conflict. |
 
+### Competing closure authorization is blocked behind the shared transition
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-05, GitHub candidate `03d0ce7df40e99eb49f3f744a625a03ee02c1b6f` was two hundred and thirty-six commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, local modification on the remote candidate, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | The fourth controller holds the single stale transition response in flight after the request reaches the server. A competing closure-authorization attempt then rejects locally with the existing critical-action lock before any HTTP request or new idempotency identity is created. Releasing the held response preserves the prior result: both identical transition callers receive the same sanitized conflict and the controller requires a fresh read. |
+| Concurrency, persistence, and authority boundary | The competing action leaves route, trusted-principal, Timeline-read, mutation, and mutation-attempt counters byte-for-byte unchanged. The two original callers still share exactly one expected-version-5 transition POST and one UUID idempotency key. The deliberate server setup remains the only source of two audit appends; neither the rejected transition nor the locally denied authorization adds a durable entry. No collection, dispatch, closure, control, or activation authority is introduced. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **784/784** tests (API 670, dashboard 70, mobile 36, domain 8). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **WHILE TWO IDENTICAL STALE TRANSITIONS SHARE ONE IN-FLIGHT POST, A COMPETING CLOSURE AUTHORIZATION FAILS LOCALLY WITHOUT A SECOND ROUTE OR IDEMPOTENCY IDENTITY; THE ORIGINAL CALLERS STILL SHARE ONE SANITIZED CONFLICT.** |
+| Next handoff | Discard the fourth controller while the shared stale transition response is still pending and prove both late callers resolve only to the clean discarded state without restoring stale selection, conflict state, retry identity, or critical capability. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
