@@ -617,6 +617,16 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   const fourthControllerStaleTransitionStarted = new Promise((resolve) => {
     markFourthControllerStaleTransitionStarted = resolve;
   });
+  let holdDiscardedFourthControllerStaleTransition = false;
+  let discardedFourthControllerStaleTransitionClaimed = false;
+  let releaseDiscardedFourthControllerStaleTransition;
+  let markDiscardedFourthControllerStaleTransitionStarted;
+  const discardedFourthControllerStaleTransitionRelease = new Promise((resolve) => {
+    releaseDiscardedFourthControllerStaleTransition = resolve;
+  });
+  const discardedFourthControllerStaleTransitionStarted = new Promise((resolve) => {
+    markDiscardedFourthControllerStaleTransitionStarted = resolve;
+  });
   const fetcher = async (input, init = {}) => {
     const target = new URL(String(input), 'http://localhost');
     const method = init.method ?? 'GET';
@@ -647,6 +657,15 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
       fourthControllerStaleTransitionClaimed = true;
       markFourthControllerStaleTransitionStarted();
       await fourthControllerStaleTransitionRelease;
+    }
+    if (holdDiscardedFourthControllerStaleTransition
+      && !discardedFourthControllerStaleTransitionClaimed
+      && method === 'POST'
+      && target.pathname === `/api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/transition`
+      && headers.authorization === `Bearer ${ROTATED_SESSION_TOKEN}`) {
+      discardedFourthControllerStaleTransitionClaimed = true;
+      markDiscardedFourthControllerStaleTransitionStarted();
+      await discardedFourthControllerStaleTransitionRelease;
     }
     if (holdTrustedRetryTimeline
       && target.pathname === `/api/v1/road-events/${REPLACEMENT_SCOPE_EVENT_ID}/timeline`) {
@@ -2117,8 +2136,120 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(restoredRotatedController.state, discardedRestoredState);
   assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
 
+  const reauthorizedForDiscardedFourthController = await application.authorizeClosure({
+    roadEventId: ROTATED_SCOPE_EVENT_ID,
+    expectedVersion: 6,
+    reason: 'تهيئة تفويض موثوق لاختبار إسقاط الانتقال المعلق',
+    authorizedAt: NOW.toISOString()
+  }, {
+    actor: rotatedSupervisor,
+    traceId: 'trace-discarded-fourth-controller-authorization-v7',
+    idempotencyKey: 'discarded-fourth-controller-authorization-v7'
+  });
+  assert.equal(reauthorizedForDiscardedFourthController.version, 7);
+  assert.notEqual(reauthorizedForDiscardedFourthController.closureAuthorization, null);
+  servedRotatedTimeline = await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope);
+  assert.equal(servedRotatedTimeline.length, 4);
+  const selectionBeforeDiscardedFourthControllerTransition =
+    await fourthRotatedController.select(ROTATED_SCOPE_EVENT_ID);
+  assert.equal(selectionBeforeDiscardedFourthControllerTransition.selected?.version, 7);
+  assert.notEqual(selectionBeforeDiscardedFourthControllerTransition.selected?.closureAuthorization, null);
+  assert.equal(fourthRotatedController.canTransitionTo('CLOSED'), true);
+
+  const driftBeforeDiscardedFourthControllerTransition = await application.reassessSeverity({
+    roadEventId: ROTATED_SCOPE_EVENT_ID,
+    expectedVersion: 7,
+    assessment: {
+      level: SeverityLevel.Moderate,
+      score: 46,
+      confidence: 0.94,
+      reasonCodes: ['discard_recovery_verified'],
+      requiresHumanReview: true
+    },
+    reason: 'محاكاة تغير موثوق قبل إسقاط انتقال معلق'
+  }, {
+    actor: rotatedSupervisor,
+    traceId: 'trace-discarded-fourth-controller-server-drift-v8',
+    idempotencyKey: 'discarded-fourth-controller-server-drift-v8'
+  });
+  assert.equal(driftBeforeDiscardedFourthControllerTransition.version, 8);
+  assert.equal(driftBeforeDiscardedFourthControllerTransition.closureAuthorization, null);
+  servedRotatedTimeline = await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope);
+  assert.equal(servedRotatedTimeline.length, 5);
+
+  const readsBeforeDiscardedFourthControllerTransition = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  holdDiscardedFourthControllerStaleTransition = true;
+  const firstDiscardedStaleTransition = fourthRotatedController.transition(
+    'CLOSED',
+    'محاولة انتقال متزامنة تُسقط جلستها قبل اكتمال التعارض'
+  );
+  await discardedFourthControllerStaleTransitionStarted;
+  const secondDiscardedStaleTransition = fourthRotatedController.transition(
+    'CLOSED',
+    'محاولة انتقال متزامنة تُسقط جلستها قبل اكتمال التعارض'
+  );
+  assert.equal(fourthRotatedController.isCriticalActionInFlight(), true);
+  const discardedFourthControllerState = fourthRotatedController.discardBrowserSession();
+  assert.deepEqual(discardedFourthControllerState, {
+    phase: 'loading',
+    events: [],
+    selected: null,
+    timeline: [],
+    stale: false,
+    error: null,
+    lastUpdatedAt: null
+  });
+  assert.equal(fourthRotatedController.canRetrySelection(), false);
+  assert.equal(fourthRotatedController.canTransition(), false);
+  assert.equal(fourthRotatedController.canAuthorizeClosure(), false);
+  assert.equal(fourthRotatedController.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(fourthRotatedController.ambiguousCriticalActionView(), null);
+  releaseDiscardedFourthControllerStaleTransition();
+  const [firstDiscardedResult, secondDiscardedResult] = await Promise.allSettled([
+    firstDiscardedStaleTransition,
+    secondDiscardedStaleTransition
+  ]);
+  assert.equal(firstDiscardedResult.status, 'rejected');
+  assert.equal(secondDiscardedResult.status, 'rejected');
+  assert.equal(firstDiscardedResult.reason.name, 'SupersededCriticalActionError');
+  assert.equal(secondDiscardedResult.reason, firstDiscardedResult.reason);
+  assert.equal(fourthRotatedController.isCriticalActionInFlight(), false);
+  assert.equal(fourthRotatedController.state, discardedFourthControllerState);
+  assert.equal(fourthRotatedController.state.stale, false);
+  assert.equal(fourthRotatedController.state.error, null);
+  assert.equal(fourthRotatedController.ambiguousCriticalActionView(), null);
+  assert.deepEqual(routes.slice(readsBeforeDiscardedFourthControllerTransition.routes), [
+    `POST /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/transition`
+  ]);
+  const discardedStaleMutationAttempts = mutationAttempts.slice(
+    readsBeforeDiscardedFourthControllerTransition.mutationAttempts
+  );
+  assert.equal(discardedStaleMutationAttempts.length, 1);
+  assert.match(discardedStaleMutationAttempts[0].idempotencyKey, /^[0-9a-f-]{36}$/i);
+  assert.deepEqual(discardedStaleMutationAttempts[0].body, {
+    expectedVersion: 7,
+    nextStatus: 'CLOSED',
+    reason: 'محاولة انتقال متزامنة تُسقط جلستها قبل اكتمال التعارض'
+  });
+  assert.equal(
+    resolvedPrincipals.length - readsBeforeDiscardedFourthControllerTransition.identities,
+    1
+  );
+  assert.equal(timelineReads, readsBeforeDiscardedFourthControllerTransition.timeline);
+  assert.equal(mutationRequests - readsBeforeDiscardedFourthControllerTransition.mutations, 1);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 5);
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 14);
-  assert.equal(timelineReads, 36);
+  assert.equal(timelineReads, 38);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -2176,7 +2307,10 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE }
   ]);
-  assert.equal(mutationRequests, 1);
+  assert.equal(mutationRequests, 2);
 });
