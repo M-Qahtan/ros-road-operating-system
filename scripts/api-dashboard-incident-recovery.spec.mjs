@@ -2421,8 +2421,80 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(restoredRotatedController.state, discardedRestoredState);
   assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
 
+  const readsBeforeRevisionNineClosure = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  refreshServedRotatedTimelineFromRepository = true;
+  const revisionTenClosedState = await fourthRotatedController.transition(
+    'CLOSED',
+    'إغلاق بشري صريح بعد اكتمال مراجعة الإصدار التاسع'
+  );
+  refreshServedRotatedTimelineFromRepository = false;
+  assert.deepEqual(routes.slice(readsBeforeRevisionNineClosure.routes), [
+    `POST /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/transition`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeRevisionNineClosure.identities, 2);
+  assert.equal(timelineReads - readsBeforeRevisionNineClosure.timeline, 1);
+  assert.equal(mutationRequests - readsBeforeRevisionNineClosure.mutations, 1);
+  assert.equal(mutationAttempts.length - readsBeforeRevisionNineClosure.mutationAttempts, 1);
+  const [revisionNineClosureAttempt] = mutationAttempts.slice(readsBeforeRevisionNineClosure.mutationAttempts);
+  assert.deepEqual(revisionNineClosureAttempt.body, {
+    expectedVersion: 9,
+    nextStatus: 'CLOSED',
+    reason: 'إغلاق بشري صريح بعد اكتمال مراجعة الإصدار التاسع'
+  });
+  assert.match(revisionNineClosureAttempt.idempotencyKey, /^[0-9a-f-]{36}$/i);
+  assert.notEqual(revisionNineClosureAttempt.idempotencyKey, revisionEightAuthorizationAttempt.idempotencyKey);
+  assert.equal(revisionTenClosedState.selected?.version, 10);
+  assert.equal(revisionTenClosedState.selected?.status, 'CLOSED');
+  assert.deepEqual(revisionTenClosedState.timeline, servedRotatedTimeline);
+  assert.equal(revisionTenClosedState.timeline.length, 7);
+  assert.equal(revisionTenClosedState.timeline.at(-1)?.action, 'road_event.closed');
+  assert.equal(revisionTenClosedState.timeline.at(-1)?.afterState.version, 10);
+  assert.equal(fourthRotatedController.canTransition(), false);
+  assert.equal(fourthRotatedController.canTransitionTo('RECOVERY'), false);
+  assert.equal(fourthRotatedController.canAuthorizeClosure(), false);
+  assert.equal(fourthRotatedController.canRetrySelection(), false);
+  assert.equal(fourthRotatedController.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(fourthRotatedController.ambiguousCriticalActionView(), null);
+  assert.equal(fourthRotatedController.isCriticalActionInFlight(), false);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 7);
+
+  const readsBeforeTerminalAuthorityAttempts = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  await assert.rejects(
+    () => fourthRotatedController.transition('RECOVERY', 'محاولة إعادة فتح الحدث النهائي'),
+    /الحالة النهائية لا تقبل انتقالات جديدة/
+  );
+  await assert.rejects(
+    () => fourthRotatedController.authorizeClosure('محاولة تفويض إغلاق بعد الحالة النهائية'),
+    /الحالة النهائية لا تقبل تفويض إغلاق جديد/
+  );
+  assert.deepEqual({
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  }, readsBeforeTerminalAuthorityAttempts);
+  assert.equal(fourthRotatedController.state, revisionTenClosedState);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 7);
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 15);
-  assert.equal(timelineReads, 41);
+  assert.equal(timelineReads, 42);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -2488,7 +2560,9 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE }
   ]);
-  assert.equal(mutationRequests, 3);
+  assert.equal(mutationRequests, 4);
 });
