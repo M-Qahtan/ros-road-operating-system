@@ -1,0 +1,31 @@
+{
+  "schema": "ros-experience-tokens-v1",
+  "status": "baseline",
+  "brand": {
+    "navy": "#081D33",
+    "blue": "#1565FF",
+    "sky": "#4DB7FF",
+    "neutral": "#A7B0BB",
+    "lightNeutral": "#E6EAF0"
+  },
+  "principles": {
+    "brandColorIsNotSafetyStateColor": true,
+    "humanSafetyFirst": true,
+    "advisoryOnlyVehicle": true,
+    "rtlPrimary": true
+  },
+  "surfaceProfiles": {
+    "handheld": {"density": "low", "primaryInput": "touch", "distance": "near"},
+    "tablet": {"density": "low-medium", "primaryInput": "touch", "distance": "near-medium"},
+    "desktop": {"density": "medium-high", "primaryInput": "keyboard-mouse", "distance": "medium"},
+    "wall": {"density": "spatial-high-interaction-low", "primaryInput": "external-controller", "distance": "far"},
+    "vehicleMoving": {"density": "minimal", "primaryInput": "glance-oem-controls-voice", "distance": "medium"}
+  },
+  "spacing": {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "2xl": 32, "3xl": 48},
+  "radius": {"sm": 6, "md": 10, "lg": 16, "pill": 999},
+  "motionMs": {"instant": 0, "fast": 120, "calm": 180, "context": 240},
+  "minimumTouchTargetPx": 44,
+  "decisions": ["RECOMMEND", "ABSTAIN", "REQUEST_MORE_EVIDENCE", "HUMAN_REVIEW"],
+  "states": ["NORMAL", "EMERGING_RISK", "CONFIRMED_INCIDENT", "CONFLICTING_EVIDENCE", "EMERGENCY_MISSION", "DEGRADED", "OFFLINE", "STALE", "HUMAN_ONLY_SAFE_MODE"],
+  "semanticColorRule": "Safety-state colors are implementation tokens separate from brand palette and must pass contrast tests in light/dark."
+}
