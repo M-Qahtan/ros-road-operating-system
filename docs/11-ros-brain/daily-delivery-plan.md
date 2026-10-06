@@ -2569,6 +2569,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **DISCARDING THE POST-DENIAL TERMINAL CONTROLLER CLEARS ITS LOCAL READ STATE WITHOUT NETWORK, MUTATION, RETRY, OR AUDIT SIDE EFFECTS.** |
 | Next handoff | Reload the post-denial discarded controller and prove exactly one Queue read restores only the terminal revision-10 queue projection without selection, Timeline, retry, ambiguity, or critical authority. |
 
+### Post-denial reload restores only the terminal Queue projection
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-06, GitHub candidate `8f283f922f243c4b5cb4fc654a491c853a7485a9` was two hundred and fifty commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, dirty base worktree, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | Reloading the post-denial discarded terminal controller performs exactly one fresh authenticated Queue read and exposes only the incident's `CLOSED` revision-10 queue projection. The new session has no selected Detail, Timeline, stale/error state, retry identity, ambiguity, in-flight action, or critical capability. |
+| Version, persistence, and authority boundary | The Queue read resolves the trusted rotated-session actor under the exact Tenant and Purpose once. It performs no Detail or Timeline read and creates no mutation request, mutation attempt, idempotency identity, or audit append. The server-owned seven-entry history remains unchanged, and every earlier controller state object remains unchanged. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **805/805** tests (API 670, dashboard 70, mobile 36, domain 8, and contracts 21). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove one Queue GET, one trusted-principal resolution, terminal revision 10 in the queue, zero Detail/Timeline or mutation delta, empty selection and Timeline, no retry or ambiguity, no in-flight action, no critical authority, seven unchanged server-owned entries, and exact preservation of all earlier controller states. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **ONE POST-DENIAL QUEUE READ STARTS A CLEAN TERMINAL SESSION AT REVISION 10 WITHOUT RESTORING DETAIL, TIMELINE, RETRY, AMBIGUITY, OR CRITICAL AUTHORITY.** |
+| Next handoff | Select revision 10 once more after this post-denial reload and prove one fresh Detail/Timeline pair restores exactly seven append-only entries while all terminal controls remain disabled. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
