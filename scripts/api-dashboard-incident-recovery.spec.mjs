@@ -3000,8 +3000,49 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(restoredRotatedController.state, discardedRestoredState);
   assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
 
+  const readsBeforeFinalPostDenialTerminalSelection = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  const finalPostDenialTerminalSelection = await terminalReloadController.select(ROTATED_SCOPE_EVENT_ID);
+  assert.deepEqual(routes.slice(readsBeforeFinalPostDenialTerminalSelection.routes), [
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}`,
+    `GET /api/v1/road-events/${ROTATED_SCOPE_EVENT_ID}/timeline`
+  ]);
+  assert.equal(resolvedPrincipals.length - readsBeforeFinalPostDenialTerminalSelection.identities, 2);
+  assert.equal(timelineReads - readsBeforeFinalPostDenialTerminalSelection.timeline, 2);
+  assert.equal(mutationRequests, readsBeforeFinalPostDenialTerminalSelection.mutations);
+  assert.equal(mutationAttempts.length, readsBeforeFinalPostDenialTerminalSelection.mutationAttempts);
+  assert.notEqual(finalPostDenialTerminalSelection, reloadedPostDenialDiscardedTerminalState);
+  assert.equal(finalPostDenialTerminalSelection.phase, 'ready');
+  assert.equal(finalPostDenialTerminalSelection.selected.id, ROTATED_SCOPE_EVENT_ID);
+  assert.equal(finalPostDenialTerminalSelection.selected.status, 'CLOSED');
+  assert.equal(finalPostDenialTerminalSelection.selected.version, 10);
+  assert.deepEqual(finalPostDenialTerminalSelection.timeline, servedRotatedTimeline);
+  assert.equal(finalPostDenialTerminalSelection.timeline.length, 7);
+  assert.equal(finalPostDenialTerminalSelection.timeline.at(-1).action, 'road_event.closed');
+  assert.equal(finalPostDenialTerminalSelection.timeline.at(-1).afterState.version, 10);
+  assert.equal(finalPostDenialTerminalSelection.stale, false);
+  assert.equal(finalPostDenialTerminalSelection.error, null);
+  assert.equal(terminalReloadController.state, finalPostDenialTerminalSelection);
+  assert.equal(terminalReloadController.canTransition(), false);
+  assert.equal(terminalReloadController.canTransitionTo('RECOVERY'), false);
+  assert.equal(terminalReloadController.canAuthorizeClosure(), false);
+  assert.equal(terminalReloadController.canRetrySelection(), false);
+  assert.equal(terminalReloadController.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(terminalReloadController.ambiguousCriticalActionView(), null);
+  assert.equal(terminalReloadController.isCriticalActionInFlight(), false);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 7);
+  assert.equal(fourthRotatedController.state, revisionTenClosedState);
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 19);
-  assert.equal(timelineReads, 54);
+  assert.equal(timelineReads, 56);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
     { tenantId: PRIOR_SCOPE_TENANT, purpose: PRIOR_SCOPE_PURPOSE },
@@ -3027,6 +3068,8 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: REPLACEMENT_SCOPE_TENANT, purpose: REPLACEMENT_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
+    { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
     { tenantId: ROTATED_SCOPE_TENANT, purpose: ROTATED_SCOPE_PURPOSE },
