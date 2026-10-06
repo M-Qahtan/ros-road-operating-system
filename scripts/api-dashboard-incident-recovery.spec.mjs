@@ -2743,6 +2743,42 @@ test('replacement Tenant and Purpose stay isolated from a delayed response owned
   assert.equal(restoredRotatedController.state, discardedRestoredState);
   assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
 
+  const readsBeforeCleanTerminalAuthorityAttempts = {
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  };
+  await assert.rejects(
+    () => terminalReloadController.transition('RECOVERY', 'محاولة إعادة فتح من الجلسة النهائية النظيفة'),
+    /الحالة النهائية لا تقبل انتقالات جديدة/
+  );
+  await assert.rejects(
+    () => terminalReloadController.authorizeClosure('محاولة إعادة تفويض من الجلسة النهائية النظيفة'),
+    /الحالة النهائية لا تقبل تفويض إغلاق جديد/
+  );
+  assert.deepEqual({
+    routes: routes.length,
+    identities: resolvedPrincipals.length,
+    timeline: timelineReads,
+    mutations: mutationRequests,
+    mutationAttempts: mutationAttempts.length
+  }, readsBeforeCleanTerminalAuthorityAttempts);
+  assert.equal(terminalReloadController.state, cleanTerminalSelection);
+  assert.equal((await repository.listForRoadEvent(ROTATED_SCOPE_EVENT_ID, rotatedScope)).length, 7);
+  assert.equal(terminalReloadController.canTransition(), false);
+  assert.equal(terminalReloadController.canTransitionTo('RECOVERY'), false);
+  assert.equal(terminalReloadController.canAuthorizeClosure(), false);
+  assert.equal(terminalReloadController.canRetrySelection(), false);
+  assert.equal(terminalReloadController.canRetryAmbiguousCriticalAction(), false);
+  assert.equal(terminalReloadController.ambiguousCriticalActionView(), null);
+  assert.equal(terminalReloadController.isCriticalActionInFlight(), false);
+  assert.equal(fourthRotatedController.state, revisionTenClosedState);
+  assert.equal(finalRestoredRotatedController.state, finalDiscardedRotatedState);
+  assert.equal(restoredRotatedController.state, discardedRestoredState);
+  assert.equal(laterReplacementController.state, discardedPostRecoveryTimelineState);
+
   assert.equal(routes.filter((route) => route.includes('?limit=100&offset=0')).length, 17);
   assert.equal(timelineReads, 50);
   assert.deepEqual(resolvedPrincipals.map(({ tenantId, purpose }) => ({ tenantId, purpose })), [

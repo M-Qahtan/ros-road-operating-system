@@ -2545,6 +2545,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE FRESH DETAIL/TIMELINE PAIR RESTORES THE CLEAN SESSION'S TERMINAL REVISION 10 AND EXACTLY SEVEN AUDIT ENTRIES WITHOUT MUTATION OR TERMINAL AUTHORITY.** |
 | Next handoff | Attempt both reopening and closure reauthorization from the newly selected clean terminal session and prove local rejection without HTTP, idempotency creation, state mutation, or audit append. |
 
+### Clean terminal session rejects reopening and reauthorization locally
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-06, GitHub candidate `913b9400d162012af3768b8330942fe411334d2f` was two hundred and forty-eight commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, dirty base worktree, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | From the freshly selected `CLOSED` revision-10 incident, both a reopening transition and a new closure-authorization attempt reject locally with the terminal-state policy errors. The exact selected Detail/Timeline state remains identity-equal and the seven-entry audit history remains unchanged. |
+| Version, persistence, and authority boundary | Neither denial performs HTTP, trusted-principal resolution, Timeline refresh, mutation request, mutation attempt, idempotency creation, or audit append. Transition, reopening, closure authorization, retry, ambiguity, and in-flight authority remain unavailable, and every earlier controller state object remains unchanged. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **805/805** tests (API 670, dashboard 70, mobile 36, domain 8, and contracts 21). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove both terminal commands reject with their specific local policy errors, the full route/principal/Timeline/mutation-attempt counters remain unchanged, the selected state object remains identity-equal, the server-owned Timeline remains seven entries, every critical capability remains disabled, and all earlier controller state objects remain unchanged. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **THE CLEAN TERMINAL SESSION REJECTS BOTH REOPENING AND REAUTHORIZATION LOCALLY WITHOUT HTTP, IDEMPOTENCY, STATE CHANGE, OR AUDIT APPEND.** |
+| Next handoff | Discard the selected clean terminal controller after both denied actions and prove the discarded session clears its read state without issuing network requests, mutations, retries, or audit writes. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
