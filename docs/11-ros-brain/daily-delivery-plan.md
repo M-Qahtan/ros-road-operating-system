@@ -2593,6 +2593,18 @@ If snapshot/runtime work is too broad for one daily cycle, split it by a behavio
 | Result | **ONE FRESH DETAIL/TIMELINE PAIR RESTORES THE POST-DENIAL SESSION'S TERMINAL REVISION 10 AND EXACTLY SEVEN AUDIT ENTRIES WITHOUT MUTATION OR TERMINAL AUTHORITY.** |
 | Next handoff | Discard this newly selected terminal session while a fresh Detail/Timeline pair is delayed and prove the late completion cannot restore state or authority. |
 
+### Post-denial delayed terminal refresh cannot survive discard
+
+| Field | Current record |
+|---|---|
+| Resume point | On 2026-10-06, GitHub candidate `5bf42adafc4a573b32e3087eeb4437cfc476e6bb` was two hundred and fifty-two commits ahead of current `main` at `3255a94a7f78607014a410e083174483fa2c2c2f` and zero behind. Both integration documents remained present, and no branch pull request, candidate workflow run, dirty base worktree, or overlapping repository execution existed. The approved cadence remains hourly. |
+| Delivered behavior | A fresh authenticated terminal Detail/Timeline pair is held in flight after the post-denial selection, then the browser session is discarded before the Timeline response completes. The late completion resolves only to the exact clean discarded state and cannot restore the prior `CLOSED` selection, Timeline, retry state, or critical capability. |
+| Version, persistence, and authority boundary | The delayed refresh performs exactly two reads under the trusted rotated-session Tenant and Purpose. Discard invalidates the read intent before response application. No Queue read, mutation request, mutation attempt, idempotency identity, audit append, transition, reopening, or closure authorization is introduced; the server-owned seven-entry history remains unchanged. |
+| Local evidence | Uncached build passed **5/5**, the focused API-to-dashboard acceptance passed **6/6**, uncached no-emit TypeScript passed **7/7**, and uncached workspace tests passed **7/7**, including **805/805** tests (API 670, dashboard 70, mobile 36, domain 8, and contracts 21). Repository/runtime composition, retention, negative, archive conditional-write, and external-evidence policy **8/8** gates passed. Exact assertions prove one delayed Detail/Timeline pair, two trusted-principal resolutions, disposal before completion, identity-equal return of the clean discarded state, zero Queue or mutation delta, no restored selection or Timeline, no retry or ambiguity, no critical authority, and seven unchanged server-owned entries. The live PostgreSQL journey exited `127` without execution because neither Docker nor Podman is installed. |
+| Safety limits | This changes acceptance evidence only, not production code, persisted ownership, authorization policy, deployment, cloud resources, or immutable archive evidence. It does not replace REL-013 external immutable archival. `RECOMMENDATION_ONLY`, `SHADOW_ONLY`, and `activationAuthorized=false` remain unchanged. |
+| Result | **DISCARDING THE POST-DENIAL TERMINAL SESSION INVALIDATES ITS IN-FLIGHT READ INTENT; THE LATE DETAIL/TIMELINE PAIR CANNOT RESTORE STATE, RETRY, OR CRITICAL AUTHORITY.** |
+| Next handoff | Reload the post-denial discarded terminal session and prove one fresh Queue read restores only revision 10 without inherited selection, Timeline, retry, or authority. |
+
 ## Hourly report and definition of done
 
 The report must stand alone and lead with observable progress. Use this compact record:
