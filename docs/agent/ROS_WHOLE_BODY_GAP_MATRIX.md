@@ -3,7 +3,7 @@
 Status vocabulary: `BUILT`, `PARTIAL`, `SHADOW_ONLY`, `MISSING`, `BLOCKED_EXTERNAL`, `DEPRECATED`.
 
 Baseline inspected: `main@3255a94a7f78607014a410e083174483fa2c2c2f`.
-Executive branch baseline: `agent/whole-body-executive-builder@9dc415710e9d3349cf725e0b1d1e562c4204242d`.
+Executive branch baseline: `agent/whole-body-executive-builder@d163c21e5d2f27283ee91c05053d155315ef1be7` (pre-reconciliation head).
 PR review surface: #185 (DRAFT). CI evidence is bounded to its tested PR merge candidate; independent review is still required.
 
 This matrix is an integration control artifact, not a readiness claim. A component is not promoted to BUILT solely because research code or documentation exists; executable integration, tests, telemetry, failure behavior, and evidence are required.
@@ -54,7 +54,7 @@ This matrix is an integration control artifact, not a readiness claim. A compone
 
 **Restore reproducible local/CI object-storage evidence without weakening the Evidence Service contract, then extend the proven runtime substrate through Evidence Assurance → CPAL/EIL → CRS → Heart → Operations/Audit and prove that full cross-organ path on one candidate SHA.**
 
-Current blocker evidence: PR #185 Object Storage Integration reaches the isolated-storage startup step and fails before EvidenceService execution because the pinned MinIO image cannot be pulled anonymously from Quay (`unauthorized`). CI and Operational Readiness therefore remain non-green. Treat this as a distribution/supply-chain blocker, not as EvidenceService proof or a reason to weaken retention/WORM assertions. Reuse the bounded candidate-evaluation work in #183; any replacement must be immutable-digest pinned and pass the existing Evidence Service contract plus retention/legal-hold/fail-closed gates before adoption.
+Current blocker evidence: PR #185 Object Storage Integration reaches the isolated-storage startup step and fails before EvidenceService execution because the pinned MinIO image cannot be pulled anonymously from Quay (`unauthorized`). CI and Operational Readiness therefore remain non-green. Treat this as a distribution/supply-chain blocker, not as EvidenceService proof or a reason to weaken retention/WORM assertions. Reuse the bounded candidate-evaluation work in #183 as the canonical qualification surface; do not create a second harness. ADR-005 does not preselect an implementation: SeaweedFS is only the first prototype candidate, while Ceph/RustFS/other candidates remain test-qualification options under the same gate. Any replacement must be exact-version and immutable-digest pinned and pass OS-C01…OS-C13 plus the unchanged Evidence Service contract, including retention/legal-hold/fail-closed gates, before adoption. Candidate selection is evidence-driven, not predetermined.
 
 Reconciliation finding: PR #92 head `ce098ef16af4cc901fe9744bcaf14a456111e6fb` is not a divergent stack that still needs replay onto main. Git compare shows it is an ancestor of current `main@3255a94a7f78607014a410e083174483fa2c2c2f` (`ahead_by=0`, `behind_by=277`, merge base equals #92 head). PR #82 was merged, and the runtime-resilience implementation files are present on current main. Therefore the previous `#82 → #91 → #92 → current main` reconciliation framing was stale. Historical green evidence remains bounded to its tested SHA and must not be treated as final-candidate proof; the final Whole-Body SHA still requires fresh reproducible runtime evidence.
 
