@@ -203,6 +203,21 @@ test('WB-INT-01: synthetic observation to CRS to advisory, then separately autho
   await assert.rejects(
     service.getById(EVENT_ID, { ...supervisor, purpose: 'commercial-analytics' })
   );
+  // WB-INT-14/15: operations read models and audit timeline must remain scope-bound.
+  const page = { limit: 20, offset: 0 };
+  const authorizedPage = await service.list(page, supervisor);
+  assert.equal(authorizedPage.total, 1);
+  assert.deepEqual(authorizedPage.items.map((item) => item.id), [EVENT_ID]);
+  for (const foreignSupervisor of [
+    { ...supervisor, tenantId: 'another-tenant' },
+    { ...supervisor, purpose: 'commercial-analytics' }
+  ]) {
+    const foreignPage = await service.list(page, foreignSupervisor);
+    assert.equal(foreignPage.total, 0);
+    assert.deepEqual(foreignPage.items, []);
+    await assert.rejects(service.timeline(EVENT_ID, foreignSupervisor));
+  }
+  assert.deepEqual(await service.timeline(EVENT_ID, supervisor), timeline);
   await assert.rejects(
     service.create({ ...command, longitude: 46.7 }, context),
     IdempotencyConflictError
