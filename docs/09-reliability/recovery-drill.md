@@ -29,3 +29,26 @@ The drill fails and blocks release when the backup is missing or empty, restore 
 ## Production boundary
 
 This automated drill does not access production data. Production recovery requires an approved runbook, designated incident command, privacy and security oversight, backup-key access, and explicit restoration authorization.
+
+## Isolated CI durable round-trip fixture
+
+Requirement: restored PostgreSQL state must preserve scoped RoadEvent data, PostGIS
+coordinates, transactional Outbox, append-only Audit, immutable command replay,
+and an outstanding idempotency fence. Hazard: a schema-only restore check may
+return PASS while safety-critical durable records are missing or altered.
+
+The Operational Readiness PostgreSQL job uses generated test-only credentials
+and an isolated service. After migration and persistence checks, it seeds
+`scripts/fixtures/postgres-recovery-seed.sql`, verifies the source with
+`scripts/fixtures/postgres-recovery-assert.sql`, creates a SHA-256-digested
+logical backup, restores into a separate empty database, and repeats the
+assertions on the restored state. Any missing or altered record fails closed.
+The restore timer includes the post-restore assertions.
+
+Evidence: `artifacts/reliability/postgres-restore.log` and
+`postgres-recovery.json`, tied to candidate head/base/tested merge SHAs by the
+existing CI evidence manifest. The JSON records `dataRoundTrip` only after
+successful assertions, and `rpoStatus=UNVERIFIED_REQUIRES_CONTROLLED_SOURCE_TIMESTAMP`.
+The five-minute RPO is a target, **not** a measured achievement. This drill
+does not prove production RPO, long-duration durability, or field readiness.
+Independent Safety/Security review and all other release gates remain mandatory.

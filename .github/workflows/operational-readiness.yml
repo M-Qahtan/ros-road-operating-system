@@ -113,13 +113,20 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/reliability
           createdb -h localhost -U ros ros_restore
+          # Test-only, durable round-trip markers: verify both source and restored state.
+          # These fixtures never run against production or shared databases.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/fixtures/postgres-recovery-seed.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/fixtures/postgres-recovery-assert.sql
           BACKUP_DIR="$RUNNER_TEMP/backups" bash scripts/postgres-backup.sh
           BACKUP_FILE=$(find "$RUNNER_TEMP/backups" -name '*.dump' -type f | head -1)
           started=$(date +%s)
-          RESTORE_DATABASE_URL="postgresql://ros:${CI_POSTGRES_PASSWORD}@localhost:5432/ros_restore" BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh 2>&1 | tee artifacts/reliability/postgres-restore.log
+          RESTORE_DATABASE_URL="postgresql://ros:${CI_POSTGRES_PASSWORD}@localhost:5432/ros_restore"
+          RESTORE_DATABASE_URL="$RESTORE_DATABASE_URL" BACKUP_FILE="$BACKUP_FILE" bash scripts/postgres-restore-verify.sh 2>&1 | tee artifacts/reliability/postgres-restore.log
+          psql "$RESTORE_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/fixtures/postgres-recovery-assert.sql 2>&1 | tee -a artifacts/reliability/postgres-restore.log
           elapsed=$(($(date +%s)-started))
           test "$elapsed" -le 1800
-          printf '{"candidateHeadSha":"%s","candidateBaseSha":"%s","testedMergeSha":"%s","status":"passed","rpoMinutes":5,"rtoTargetSeconds":1800,"restoreElapsedSeconds":%s}\n' "$CANDIDATE_HEAD_SHA" "$CANDIDATE_BASE_SHA" "$TESTED_MERGE_SHA" "$elapsed" > artifacts/reliability/postgres-recovery.json
+          # RPO is a target, not a measured result in this isolated backup/restore drill.
+          printf '{"candidateHeadSha":"%s","candidateBaseSha":"%s","testedMergeSha":"%s","status":"passed","scope":"ISOLATED_RESTORE_ONLY","dataRoundTrip":"verified_ci_fixture","rpoTargetMinutes":5,"rpoStatus":"UNVERIFIED_REQUIRES_CONTROLLED_SOURCE_TIMESTAMP","rtoTargetSeconds":1800,"restoreElapsedSeconds":%s}\n' "$CANDIDATE_HEAD_SHA" "$CANDIDATE_BASE_SHA" "$TESTED_MERGE_SHA" "$elapsed" > artifacts/reliability/postgres-recovery.json
       - name: Write and validate PostgreSQL evidence
         if: always()
         shell: bash
