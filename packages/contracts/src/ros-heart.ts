@@ -1,4 +1,4 @@
-import type { HumanSafetyActorRole } from './human-safety.js';
+import { HUMAN_SAFETY_ALLOWED_TRANSITIONS, type HumanSafetyActorRole, type HumanSafetyCaseContract } from './human-safety.js';
 
 export type RosHeartDisposition =
   | 'VETO'
@@ -121,7 +121,11 @@ export interface RosHeartBinding {
   readonly roadEventId: string;
   readonly humanSafetyCaseId: string;
   readonly caseVersion: number;
+  readonly humanSafetyState: HumanSafetyCaseContract['state'];
+  readonly humanSafetySeverity: HumanSafetyCaseContract['severity'];
+  readonly severityAssessmentVersion: number;
   readonly evidenceRevision: number;
+  readonly indicatorRevision: number;
   readonly crsDigest: string;
   readonly crsVersion: number;
   readonly crsExpiresAt: string;
@@ -172,7 +176,8 @@ export interface RosHeartBindingPorts {
 }
 
 const BINDING_KEYS = [
-  'roadEventId', 'humanSafetyCaseId', 'caseVersion', 'evidenceRevision',
+  'roadEventId', 'humanSafetyCaseId', 'caseVersion', 'humanSafetyState',
+  'humanSafetySeverity', 'severityAssessmentVersion', 'evidenceRevision', 'indicatorRevision',
   'crsDigest', 'crsVersion', 'crsExpiresAt',
   'recommendationDigest', 'recommendationVersion', 'recommendationExpiresAt',
   'recommendationAuthority', 'directVehicleControl',
@@ -182,15 +187,19 @@ const BINDING_KEYS = [
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const ROLES = new Set<HumanSafetyActorRole>(['SYSTEM', 'OPERATOR', 'SUPERVISOR', 'SAFETY_LEAD']);
+const SEVERITIES = new Set<HumanSafetyCaseContract['severity']>(['S0', 'S1', 'S2', 'S3', 'S4']);
 
 function validBinding(binding: RosHeartBinding): boolean {
   const ids = [binding.roadEventId, binding.humanSafetyCaseId, binding.policyVersion,
     binding.actorId, binding.traceId, binding.idempotencyKey,
     binding.tenantId, binding.purpose, binding.jurisdiction];
   if (!ids.every(value => typeof value === 'string' && value.trim().length > 0)) return false;
-  if (![binding.caseVersion, binding.crsVersion, binding.recommendationVersion]
+  if (![binding.caseVersion, binding.severityAssessmentVersion, binding.crsVersion, binding.recommendationVersion]
     .every(value => Number.isSafeInteger(value) && value > 0)) return false;
-  if (!Number.isSafeInteger(binding.evidenceRevision) || binding.evidenceRevision < 0) return false;
+  if (![binding.evidenceRevision, binding.indicatorRevision]
+    .every(value => Number.isSafeInteger(value) && value >= 0)) return false;
+  if (!SEVERITIES.has(binding.humanSafetySeverity) ||
+      !Object.prototype.hasOwnProperty.call(HUMAN_SAFETY_ALLOWED_TRANSITIONS, binding.humanSafetyState)) return false;
   if (![binding.crsDigest, binding.recommendationDigest, binding.policyDigest]
     .every(value => typeof value === 'string' && SHA256.test(value))) return false;
   if (binding.recommendationAuthority !== 'NONE' || binding.directVehicleControl !== false) return false;
@@ -208,8 +217,6 @@ export async function evaluateRosHeartBound(
   ports: RosHeartBindingPorts
 ): Promise<RosHeartDecision> {
   if (!input?.claim || !validBinding(input.claim)) return decision('VETO', 'binding_invalid');
-  if (!Number.isFinite(ports.trustedNowEpochMs())) return decision('VETO', 'trusted_clock_invalid');
-
   try {
     const snapshot = await ports.resolveTrustedSnapshot({
       roadEventId: input.claim.roadEventId,
@@ -224,7 +231,7 @@ export async function evaluateRosHeartBound(
     }
 
     const now = ports.trustedNowEpochMs();
-    if (!Number.isFinite(now)) return decision('VETO', 'trusted_clock_invalid');
+    if (!Number.isFinite(now) || now < 0) return decision('VETO', 'trusted_clock_invalid');
     const crsExpiry = Date.parse(snapshot.binding.crsExpiresAt);
     const recommendationExpiry = Date.parse(snapshot.binding.recommendationExpiresAt);
     if (!Number.isFinite(crsExpiry) || !Number.isFinite(recommendationExpiry)) {

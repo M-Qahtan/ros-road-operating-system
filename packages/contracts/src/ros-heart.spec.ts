@@ -63,7 +63,11 @@ const claim: RosHeartBinding = {
   roadEventId: 'event-001',
   humanSafetyCaseId: 'case-001',
   caseVersion: 7,
+  humanSafetyState: 'HUMAN_REVIEW',
+  humanSafetySeverity: 'S3',
+  severityAssessmentVersion: 5,
   evidenceRevision: 3,
+  indicatorRevision: 2,
   crsDigest: DIGEST_A,
   crsVersion: 2,
   crsExpiresAt: '2026-10-08T04:10:00.000Z',
@@ -124,7 +128,9 @@ await expectBound(claim, ports(), 'ALLOW_ADVISORY', 'advisory_prerequisites_sati
 
 const mismatches: ReadonlyArray<readonly [keyof RosHeartBinding, unknown]> = [
   ['roadEventId', 'event-other'], ['humanSafetyCaseId', 'case-other'],
-  ['caseVersion', 8], ['evidenceRevision', 4],
+  ['caseVersion', 8], ['humanSafetyState', 'ESCALATED'],
+  ['humanSafetySeverity', 'S4'], ['severityAssessmentVersion', 6],
+  ['evidenceRevision', 4], ['indicatorRevision', 3],
   ['crsDigest', DIGEST_B], ['crsVersion', 3],
   ['crsExpiresAt', '2026-10-08T04:09:00.000Z'],
   ['recommendationDigest', DIGEST_C], ['recommendationVersion', 5],
@@ -145,6 +151,10 @@ await expectBound(claim, ports(null), 'VETO', 'trusted_snapshot_missing');
 await expectBound({ ...claim, crsDigest: 'bad' }, ports(), 'VETO', 'binding_invalid');
 await expectBound({ ...claim, policyVersion: '' }, ports(), 'VETO', 'binding_invalid');
 await expectBound({ ...claim, caseVersion: 0 }, ports(), 'VETO', 'binding_invalid');
+await expectBound({ ...claim, severityAssessmentVersion: 0 }, ports(), 'VETO', 'binding_invalid');
+await expectBound({ ...claim, indicatorRevision: -1 }, ports(), 'VETO', 'binding_invalid');
+await expectBound({ ...claim, humanSafetySeverity: 'S5' } as unknown as RosHeartBinding, ports(), 'VETO', 'binding_invalid');
+await expectBound({ ...claim, humanSafetyState: 'NOT_A_STATE' } as unknown as RosHeartBinding, ports(), 'VETO', 'binding_invalid');
 await expectBound({ ...claim, directVehicleControl: true } as unknown as RosHeartBinding, ports(), 'VETO', 'binding_invalid');
 await expectBound({ ...claim, recommendationAuthority: 'EXECUTE' } as unknown as RosHeartBinding, ports(), 'VETO', 'binding_invalid');
 
@@ -158,6 +168,7 @@ await expectBound(claim, { ...ports(), consumeIdempotency: async () => 'UNAVAILA
 await expectBound(claim, { ...ports(), persistDecisionAudit: async () => 'FAILED' }, 'VETO', 'audit_not_persisted');
 await expectBound(claim, { ...ports(), resolveTrustedSnapshot: async () => { throw new Error('offline'); } }, 'VETO', 'trusted_binding_dependency_failure');
 await expectBound(claim, { ...ports(), trustedNowEpochMs: () => Number.NaN }, 'VETO', 'trusted_clock_invalid');
+await expectBound(claim, { ...ports(), trustedNowEpochMs: () => { throw new Error('clock unavailable'); } }, 'VETO', 'trusted_binding_dependency_failure');
 
 await expectBound(claim, ports({ ...trusted, checks: { ...trusted.checks, evidence: { present: true, fresh: false, quality: 'TRUSTED' } } }), 'REQUEST_MORE_EVIDENCE', 'evidence_stale');
 await expectBound(claim, ports({ ...trusted, checks: { ...trusted.checks, integrity: { replayDetected: false, compromised: true, degraded: false } } }), 'VETO', 'component_compromised');
